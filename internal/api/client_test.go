@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -257,6 +258,83 @@ func TestRawBlocksUnknownAndWriteOperations(t *testing.T) {
 	}
 	if calls.Load() != 0 {
 		t.Fatalf("非法操作触发了 %d 个请求", calls.Load())
+	}
+}
+
+func TestContextUsesAPIKeyAndNormalizesPermissions(t *testing.T) {
+	var gotPath string
+	var gotKey string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotKey = r.Header.Get("X-API-Key")
+		_, _ = w.Write([]byte(`{"code":0,"msg":"ok","data":{"instance_uuid":"instance-a","workspace_uuid":"workspace-a","api_key_id":"key-id-a","permissions":["write","read","write"]}}`))
+	}))
+	defer server.Close()
+
+	identity, err := (Client{}).Context(context.Background(), Target{
+		Endpoint: server.URL + "/proxy/", APIKey: "secret-key",
+	})
+	if err != nil {
+		t.Fatalf("Context() error = %v", err)
+	}
+	if gotPath != "/proxy/api/v1/system/context" || gotKey != "secret-key" {
+		t.Fatalf("request = path %q key %q", gotPath, gotKey)
+	}
+	if identity.InstanceUUID != "instance-a" || identity.WorkspaceUUID != "workspace-a" || identity.APIKeyID != "key-id-a" {
+		t.Fatalf("identity = %#v", identity)
+	}
+	if got := strings.Join(identity.Permissions, ","); got != "read,write" {
+		t.Fatalf("permissions = %q, want sorted unique values", got)
+	}
+}
+
+func TestContextRejectsIncompleteOrWronglyTypedPayloads(t *testing.T) {
+	bodies := []string{
+		`{"code":0,"data":{}}`,
+		`{"code":0,"data":{"instance_uuid":"i","workspace_uuid":"w","api_key_id":"k","permissions":"read"}}`,
+		`{"code":0,"data":{"instance_uuid":"i","workspace_uuid":"w","api_key_id":"k","permissions":["read",1]}}`,
+		`{"code":0,"data":{"instance_uuid":"","workspace_uuid":"w","api_key_id":"k","permissions":[]}}`,
+	}
+	for _, body := range bodies {
+		t.Run(body, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(body))
+			}))
+			defer server.Close()
+			_, err := (Client{}).Context(context.Background(), Target{Endpoint: server.URL})
+			if result.AsError(err).Kind != "incompatible" {
+				t.Fatalf("Context() error = %+v, want incompatible", result.AsError(err))
+			}
+		})
+	}
+}
+
+func TestContextAuthenticationErrorsAndSecretRedaction(t *testing.T) {
+	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
+		t.Run(strconv.Itoa(status), func(t *testing.T) {
+			secret := "context-secret-value"
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Header.Get("X-API-Key") != secret {
+					t.Fatalf("API Key header = %q", r.Header.Get("X-API-Key"))
+				}
+				w.Header().Set("X-Request-Id", secret+"-request")
+				w.WriteHeader(status)
+				_, _ = fmt.Fprintf(w, `{"code":%d,"msg":%q}`, status, secret)
+			}))
+			defer server.Close()
+			_, err := (Client{}).Context(context.Background(), Target{Endpoint: server.URL, APIKey: secret})
+			got := result.AsError(err)
+			wantKind := "auth"
+			if status == http.StatusForbidden {
+				wantKind = "permission"
+			}
+			if got.Kind != wantKind || got.HTTPStatus != status {
+				t.Fatalf("error = %+v, want kind=%q status=%d", got, wantKind, status)
+			}
+			if strings.Contains(fmt.Sprintf("%+v", got), secret) {
+				t.Fatalf("error exposed API Key: %+v", got)
+			}
+		})
 	}
 }
 

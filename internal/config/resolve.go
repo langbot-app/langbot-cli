@@ -79,11 +79,11 @@ func (c Connection) WithCredential(opts Options, lookup func(string) (string, bo
 	copy.APIKey = ""
 	if opts.APIKeyStdin {
 		if stdin == nil {
-			return Connection{}, authError("无法读取 stdin 中的 API Key")
+			return copy, authError("无法读取 stdin 中的 API Key")
 		}
 		value, err := readSecret(stdin)
 		if err != nil {
-			return Connection{}, err
+			return copy, err
 		}
 		copy.APIKey = value
 		copy.CredentialSource = "stdin"
@@ -91,23 +91,23 @@ func (c Connection) WithCredential(opts Options, lookup func(string) (string, bo
 	}
 	if copy.credentialType == "" {
 		if copy.requiresExplicitCredential {
-			return Connection{}, authError("endpoint 已覆盖，必须显式提供新的 API Key")
+			return copy, authError("endpoint 已覆盖，必须显式提供新的 API Key")
 		}
 		return copy, nil
 	}
 	if copy.credentialType != "env" {
-		return Connection{}, authError("不支持的凭据来源")
+		return copy, authError("不支持的凭据来源")
 	}
 	getenv := envLookup(lookup)
 	value, ok := getenv(copy.credentialRef)
 	if !ok || strings.TrimSpace(value) == "" {
-		return Connection{}, authError("凭据来源不可用")
+		return copy, authError("凭据来源不可用")
 	}
 	if len(value) > maxSecretBytes {
-		return Connection{}, authError("API Key 过长")
+		return copy, authError("API Key 过长")
 	}
 	if err := validateSecret(value); err != nil {
-		return Connection{}, err
+		return copy, err
 	}
 	copy.APIKey = value
 	return copy, nil
