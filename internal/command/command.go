@@ -350,9 +350,15 @@ func newRawCommand(service *app.Service, deps Dependencies, flags *globalFlags) 
 
 func newIdentityCommand(service *app.Service, deps Dependencies, flags *globalFlags, name string) *cobra.Command {
 	return &cobra.Command{
-		Use: name, Short: name + "（待服务端发现接口）", Args: cobra.NoArgs,
+		Use: name, Short: name + "（服务端发现）", Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return emitCall(deps, flags, func() (app.Result, error) { return service.Identity(name) })
+			return emitCall(deps, flags, func() (app.Result, error) {
+				return service.WithContext(cmd.Context()).Identity(cmd.Context(), name, app.CheckOptions{
+					Context: flags.context, Endpoint: flags.endpoint, Timeout: flags.timeout,
+					ContextSet: flags.contextSet, EndpointSet: flags.endpointSet,
+					TimeoutSet: flags.timeoutSet, APIKeyStdin: flags.apiKeyStdin,
+				})
+			})
 		},
 	}
 }

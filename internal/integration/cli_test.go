@@ -199,7 +199,11 @@ func TestAllChecksRetainFailuresAndRejectOverrides(t *testing.T) {
 		calls.Add(1)
 		switch r.Header.Get("X-API-Key") {
 		case "good-key-value":
-			fmt.Fprint(w, `{"code":0,"data":{"version":"4.10.10","edition":"community"}}`)
+			if r.URL.Path == "/api/v1/system/context" {
+				fmt.Fprint(w, `{"code":0,"data":{"instance_uuid":"instance-a","workspace_uuid":"workspace-a","api_key_id":"key-a","permissions":["read"]}}`)
+			} else {
+				fmt.Fprint(w, `{"code":0,"data":{"version":"4.10.10","edition":"community"}}`)
+			}
 		case "denied-key-value":
 			w.WriteHeader(http.StatusForbidden)
 			fmt.Fprint(w, `{"code":403,"msg":"forbidden"}`)
@@ -214,7 +218,7 @@ func TestAllChecksRetainFailuresAndRejectOverrides(t *testing.T) {
 	}
 	keys := map[string]string{"GOOD_KEY": "good-key-value", "DENIED_KEY": "denied-key-value"}
 	r := run(t, path, keys, "", "context", "check", "--all")
-	if r.code == 0 || calls.Load() != 2 {
+	if r.code == 0 || calls.Load() != 4 {
 		t.Fatalf("unexpected batch result: calls=%d %s", calls.Load(), r.out)
 	}
 	if wrongCredential.Load() {
@@ -269,11 +273,13 @@ func TestInputErrorsNeverMutateOrExposeArguments(t *testing.T) {
 
 func TestIdentityCommandsKeepPreconditionWithContextOverride(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
-	for _, name := range []string{"whoami", "capabilities"} {
-		result := run(t, path, nil, "", "--context", "demo", name)
-		if result.code != 6 || result.data["ok"] != false {
-			t.Fatalf("%s with context override should remain a precondition failure: %s", name, result.out)
-		}
+	result := run(t, path, nil, "", "--context", "demo", "whoami")
+	if result.code != 2 || result.data["ok"] != false {
+		t.Fatalf("whoami with missing context should be an input failure: %s", result.out)
+	}
+	result = run(t, path, nil, "", "--context", "demo", "capabilities")
+	if result.code != 6 || result.data["ok"] != false || !strings.Contains(result.out, `"capabilities": "unknown"`) {
+		t.Fatalf("capabilities should report unknown protocol boundary as a precondition: %s", result.out)
 	}
 }
 
@@ -302,5 +308,126 @@ func TestRawRejectsUnknownOperationsBeforeCallingServer(t *testing.T) {
 	requireSuccess(t, run(t, path, nil, "", "--endpoint", s.URL, "raw", "GET", "/api/v1/system/info"))
 	if calls.Load() != 1 {
 		t.Fatal("known raw operation did not execute exactly once")
+	}
+}
+
+func TestWhoamiAndContextCheckUseAuthenticatedIdentity(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	const key = "identity-key-value"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-API-Key") != key {
+			w.WriteHeader(http.StatusUnauthorized)
+			fmt.Fprint(w, `{"code":401,"msg":"unauthorized"}`)
+			return
+		}
+		switch r.URL.Path {
+		case "/api/v1/system/info":
+			fmt.Fprint(w, `{"code":0,"data":{"version":"4.10.10","edition":"community"}}`)
+		case "/api/v1/system/context":
+			fmt.Fprint(w, `{"code":0,"data":{"instance_uuid":"instance-a","workspace_uuid":"workspace-a","api_key_id":"key-a","permissions":["write","read","read"]}}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprint(w, `{"code":404,"msg":"missing"}`)
+		}
+	}))
+	defer server.Close()
+
+	requireSuccess(t, run(t, path, map[string]string{"IDENTITY_KEY": key}, "", "context", "add", "production", "--endpoint", server.URL, "--api-key-env", "IDENTITY_KEY", "--expect-workspace", "workspace-a"))
+	whoami := run(t, path, map[string]string{"IDENTITY_KEY": key}, "", "--context", "production", "whoami")
+	requireSuccess(t, whoami)
+	if !strings.Contains(whoami.out, `"instance_uuid": "instance-a"`) || !strings.Contains(whoami.out, `"workspace_uuid": "workspace-a"`) || strings.Contains(whoami.out, key) {
+		t.Fatalf("whoami identity or secret handling is wrong: %s", whoami.out)
+	}
+	checked := run(t, path, map[string]string{"IDENTITY_KEY": key}, "", "context", "check", "production")
+	requireSuccess(t, checked)
+	data := checked.data["data"].(map[string]any)
+	if data["reachable"] != true || data["diagnostic_ok"] != true {
+		t.Fatalf("successful check flags are wrong: %s", checked.out)
+	}
+	identity := data["identity"].(map[string]any)
+	if identity["workspace_uuid"] != "workspace-a" || identity["api_key_id"] != "key-a" {
+		t.Fatalf("check identity = %#v", identity)
+	}
+}
+
+func TestContextCheckDistinguishesPublicDiagnosticFromAuthentication(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/system/info" {
+			fmt.Fprint(w, `{"code":0,"data":{"version":"4.10.10","edition":"community"}}`)
+			return
+		}
+		w.WriteHeader(http.StatusUnauthorized)
+		fmt.Fprint(w, `{"code":401,"msg":"unauthorized"}`)
+	}))
+	defer server.Close()
+	requireSuccess(t, run(t, path, nil, "", "context", "add", "production", "--endpoint", server.URL, "--api-key-env", "MISSING_KEY"))
+	checked := run(t, path, map[string]string{"MISSING_KEY": "invalid-key"}, "", "context", "check", "production")
+	if checked.code != 3 {
+		t.Fatalf("invalid identity did not return auth exit code: %s", checked.out)
+	}
+	data := checked.data["data"].(map[string]any)
+	if data["reachable"] != true || data["diagnostic_ok"] != false || data["identity"] != "unknown" {
+		t.Fatalf("public diagnosis was confused with identity: %s", checked.out)
+	}
+}
+
+func TestContextCheckKeepsReachableWhenIdentityRequestHasNoHTTPResponse(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/system/info" {
+			fmt.Fprint(w, `{"code":0,"data":{"version":"4.10.10","edition":"community"}}`)
+			return
+		}
+		hijacker, ok := w.(http.Hijacker)
+		if !ok {
+			t.Fatal("test server does not support connection hijacking")
+		}
+		connection, _, err := hijacker.Hijack()
+		if err != nil {
+			t.Fatalf("hijack: %v", err)
+		}
+		_ = connection.Close()
+	}))
+	defer server.Close()
+	requireSuccess(t, run(t, path, nil, "", "context", "add", "production", "--endpoint", server.URL))
+	checked := run(t, path, nil, "", "context", "check", "production")
+	if checked.code != 7 {
+		t.Fatalf("identity network failure did not return network exit code: %s", checked.out)
+	}
+	data := checked.data["data"].(map[string]any)
+	if data["reachable"] != true || data["diagnostic_ok"] != false || data["identity"] != "unknown" {
+		t.Fatalf("identity network failure lost public reachability: %s", checked.out)
+	}
+}
+
+func TestExpectedWorkspaceMismatchIsPreconditionAndPreservesIdentity(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/system/info" {
+			fmt.Fprint(w, `{"code":0,"data":{"version":"4.10.10","edition":"community"}}`)
+			return
+		}
+		fmt.Fprint(w, `{"code":0,"data":{"instance_uuid":"instance-a","workspace_uuid":"actual-workspace","api_key_id":"key-a","permissions":[]}}`)
+	}))
+	defer server.Close()
+	requireSuccess(t, run(t, path, nil, "", "context", "add", "production", "--endpoint", server.URL, "--expect-workspace", "expected-workspace"))
+	whoami := run(t, path, nil, "", "--context", "production", "whoami")
+	if whoami.code != 6 || whoami.data["error"].(map[string]any)["type"] != "target_mismatch" {
+		t.Fatalf("whoami workspace mismatch was not a precondition: %s", whoami.out)
+	}
+	whoamiData := whoami.data["data"].(map[string]any)
+	whoamiIdentity := whoamiData["instance_uuid"]
+	if whoamiIdentity != "instance-a" || whoamiData["workspace_uuid"] != "actual-workspace" {
+		t.Fatalf("whoami mismatch lost actual identity: %s", whoami.out)
+	}
+	checked := run(t, path, nil, "", "context", "check", "production")
+	if checked.code != 6 || checked.data["error"].(map[string]any)["type"] != "target_mismatch" {
+		t.Fatalf("workspace mismatch was not a precondition: %s", checked.out)
+	}
+	data := checked.data["data"].(map[string]any)
+	identity := data["identity"].(map[string]any)
+	if identity["workspace_uuid"] != "actual-workspace" || strings.Contains(checked.out, "expected-workspace") {
+		t.Fatalf("mismatch lost safe actual identity or exposed unexpected data: %s", checked.out)
 	}
 }

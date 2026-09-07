@@ -1,6 +1,6 @@
 # langbot-cli
 
-LangBot 的独立命令行工具，二进制名为 `lbctl`。当前实现：多 context 配置、连接诊断与统一输出。
+LangBot 的独立命令行工具，二进制名为 `lbctl`。当前实现：多 context 配置、连接诊断、身份查询与统一输出。
 
 ## 构建
 
@@ -36,7 +36,7 @@ lbctl context update production --clear-credential --clear-binding
 lbctl context remove dev --yes
 ```
 
-删除当前项需 `--yes`，并清空默认选择。`--expect-workspace` 目前只保存约束，在线验证等待阶段 1B。更新为不同 endpoint 时，旧凭据引用和 Workspace 约束会清除；需要保留时必须在本次更新中显式重新指定。
+删除当前项需 `--yes`，并清空默认选择。`--expect-workspace` 会在 `whoami` 和 `context check` 中与服务端返回的 Workspace 比较，不一致时返回前提冲突且不会自动更新。更新为不同 endpoint 时，旧凭据引用和 Workspace 约束会清除；需要保留时必须在本次更新中显式重新指定。
 
 连接参数按以下优先级生效，显式来源无效时直接报错：
 
@@ -53,7 +53,7 @@ Key 可由上游程序通过管道传入 `--api-key-stdin`，不提供明文 Key
 
 ## 当前 HTTP 边界
 
-`status`、`version --server`、`context check` 使用公开的 `GET /api/v1/system/info`。成功只表示基础诊断完成；`status` 和 `context check` 明确显示 `identity: unknown` / `capabilities: unknown`，不能证明 Key 有效或实例内资源健康。`whoami`、`capabilities` 返回前提未满足，等待服务端契约就绪。
+`status` 和 `version --server` 使用公开的 `GET /api/v1/system/info`；`context check` 还会请求 API Key 鉴权的 `GET /api/v1/system/context`。公开诊断成功不代表 Key 有效：`context check` 会分别报告服务可达、基础诊断和身份结果，认证失败时返回非零退出码。`whoami` 输出服务端确认的实例、Workspace、Key 标识和权限；`capabilities` 在服务端尚未提供能力契约时返回 unknown，并以退出码 6 表示前提未满足。
 
 ```sh
 lbctl raw GET /api/v1/system/info

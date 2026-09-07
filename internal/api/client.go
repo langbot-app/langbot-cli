@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -20,6 +21,7 @@ import (
 
 const (
 	infoPath          = "/api/v1/system/info"
+	contextPath       = "/api/v1/system/context"
 	defaultTimeout    = 30 * time.Second
 	maxResponseBytes  = 1 << 20
 	maxServerCodeSize = 128
@@ -42,6 +44,14 @@ type Client struct {
 type Info struct {
 	Version string `json:"version" yaml:"version"`
 	Edition string `json:"edition" yaml:"edition"`
+}
+
+// Context 是 API Key 对应的可信服务端身份与权限。
+type Context struct {
+	InstanceUUID  string   `json:"instance_uuid" yaml:"instance_uuid"`
+	WorkspaceUUID string   `json:"workspace_uuid" yaml:"workspace_uuid"`
+	APIKeyID      string   `json:"api_key_id" yaml:"api_key_id"`
+	Permissions   []string `json:"permissions" yaml:"permissions"`
 }
 
 type envelope struct {
@@ -75,6 +85,19 @@ func (c Client) Info(ctx context.Context, target Target) (Info, error) {
 	}, nil
 }
 
+// Context 请求需要 API Key 鉴权的服务端身份接口。
+func (c Client) Context(ctx context.Context, target Target) (Context, error) {
+	resp, err := c.fetch(ctx, target, http.MethodGet, contextPath)
+	if err != nil {
+		return Context{}, err
+	}
+	identity, ok := parseContextData(resp.Data)
+	if !ok {
+		return Context{}, protocolError("服务返回的身份数据格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.APIKey))
+	}
+	return identity, nil
+}
+
 // Raw 返回 /system/info 的安全投影。接口有意不接受任意路径，避免把 Raw 变成
 // 绕过操作定义的通用 HTTP 入口。
 func (c Client) Raw(ctx context.Context, target Target, method, path string) (any, error) {
@@ -97,14 +120,14 @@ func (c Client) fetch(ctx context.Context, target Target, method, path string) (
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if method != http.MethodGet || path != infoPath {
-		return response{}, result.New("incompatible", "只允许读取已确认的 system/info 接口")
+	if method != http.MethodGet || (path != infoPath && path != contextPath) {
+		return response{}, result.New("incompatible", "只允许读取已确认的 system 接口")
 	}
 	base, err := endpoint.Normalize(target.Endpoint)
 	if err != nil {
 		return response{}, result.New("input", "服务地址无效")
 	}
-	requestURL := strings.TrimRight(base, "/") + infoPath
+	requestURL := strings.TrimRight(base, "/") + path
 
 	request, err := http.NewRequestWithContext(ctx, method, requestURL, nil)
 	if err != nil {
@@ -164,7 +187,7 @@ func (c Client) fetch(ctx context.Context, target Target, method, path string) (
 	if !ok {
 		return response{}, protocolError("服务返回的诊断数据格式无效", resp.StatusCode, requestID)
 	}
-	if !validInfoData(data, target.APIKey) {
+	if path == infoPath && !validInfoData(data, target.APIKey) {
 		return response{}, protocolError("服务返回的诊断数据缺少有效版本", resp.StatusCode, requestID)
 	}
 	return response{
@@ -173,6 +196,41 @@ func (c Client) fetch(ctx context.Context, target Target, method, path string) (
 		Body:       parsed,
 		Data:       data,
 	}, nil
+}
+
+func parseContextData(data map[string]any) (Context, bool) {
+	instanceUUID, instanceOK := data["instance_uuid"].(string)
+	workspaceUUID, workspaceOK := data["workspace_uuid"].(string)
+	apiKeyID, keyOK := data["api_key_id"].(string)
+	permissionsValue, permissionsOK := data["permissions"].([]any)
+	if !instanceOK || !workspaceOK || !keyOK || !permissionsOK ||
+		strings.TrimSpace(instanceUUID) == "" || strings.TrimSpace(workspaceUUID) == "" || strings.TrimSpace(apiKeyID) == "" {
+		return Context{}, false
+	}
+	permissions := make([]string, 0, len(permissionsValue))
+	seen := make(map[string]struct{}, len(permissionsValue))
+	for _, item := range permissionsValue {
+		permission, ok := item.(string)
+		if !ok {
+			return Context{}, false
+		}
+		permission = strings.TrimSpace(permission)
+		if permission == "" {
+			return Context{}, false
+		}
+		if _, exists := seen[permission]; exists {
+			continue
+		}
+		seen[permission] = struct{}{}
+		permissions = append(permissions, permission)
+	}
+	sort.Strings(permissions)
+	return Context{
+		InstanceUUID:  instanceUUID,
+		WorkspaceUUID: workspaceUUID,
+		APIKeyID:      apiKeyID,
+		Permissions:   permissions,
+	}, true
 }
 
 func readLimited(body io.Reader) ([]byte, bool, error) {

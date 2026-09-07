@@ -331,15 +331,45 @@ func (s *Service) Check(ctx context.Context, options CheckOptions) (Result, erro
 		return Result{Meta: connectionMeta(conn)}, err
 	}
 	info, err := s.info(ctx, conn)
-	data := checkData(conn, info, err)
-	if err != nil {
-		return Result{Data: data, Meta: connectionMeta(conn)}, err
+	var identity api.Context
+	var identityErr error
+	if err == nil || hasHTTPResponse(err) {
+		identity, identityErr = s.identity(ctx, conn)
+	}
+	data := checkData(conn, info, err, identity, identityErr)
+	callErr := firstError(err, identityErr)
+	if callErr == nil {
+		callErr = workspaceBindingError(conn, identity)
+		if callErr != nil {
+			data["error"] = result.AsError(callErr)
+		}
+	}
+	if callErr != nil {
+		return Result{Data: data, Meta: connectionMeta(conn)}, callErr
 	}
 	return Result{Data: data, Meta: connectionMeta(conn)}, nil
 }
 
 func (s *Service) Status(ctx context.Context, options CheckOptions) (Result, error) {
-	return s.Check(ctx, options)
+	file, err := s.load()
+	if err != nil {
+		return Result{}, err
+	}
+	conn, err := s.resolve(ctx, file, config.Options{
+		Context: options.Context, Endpoint: options.Endpoint, Timeout: options.Timeout,
+		ContextSet: options.ContextSet, EndpointSet: options.EndpointSet,
+		TimeoutSet: options.TimeoutSet, APIKeyStdin: options.APIKeyStdin,
+	})
+	if err != nil {
+		return Result{Meta: connectionMeta(conn)}, err
+	}
+	info, infoErr := s.info(ctx, conn)
+	data := checkData(conn, info, infoErr, api.Context{}, nil)
+	data["identity"] = "unknown"
+	if infoErr != nil {
+		return Result{Data: data, Meta: connectionMeta(conn)}, infoErr
+	}
+	return Result{Data: data, Meta: connectionMeta(conn)}, nil
 }
 
 func (s *Service) RawInfo(ctx context.Context, options CheckOptions, methodAndPath ...string) (Result, error) {
@@ -370,8 +400,35 @@ func (s *Service) RawInfo(ctx context.Context, options CheckOptions, methodAndPa
 	return Result{Data: data, Meta: connectionMeta(conn)}, nil
 }
 
-func (s *Service) Identity(kind string) (Result, error) {
-	return Result{}, result.New("precondition", kind+" 尚未接入可信服务端发现接口")
+func (s *Service) Identity(ctx context.Context, kind string, options CheckOptions) (Result, error) {
+	if kind == "capabilities" {
+		data := map[string]any{
+			"capabilities": "unknown",
+			"reason":       "服务端尚未提供能力契约",
+		}
+		return Result{Data: data}, result.New("precondition", "服务端尚未提供能力契约")
+	}
+	file, err := s.load()
+	if err != nil {
+		return Result{}, err
+	}
+	conn, err := s.resolve(ctx, file, config.Options{
+		Context: options.Context, Endpoint: options.Endpoint, Timeout: options.Timeout,
+		ContextSet: options.ContextSet, EndpointSet: options.EndpointSet,
+		TimeoutSet: options.TimeoutSet, APIKeyStdin: options.APIKeyStdin,
+	})
+	if err != nil {
+		return Result{Meta: connectionMeta(conn)}, err
+	}
+	identity, err := s.identity(ctx, conn)
+	if err != nil {
+		return Result{Meta: connectionMeta(conn)}, err
+	}
+	data := identityView(identity)
+	if err := workspaceBindingError(conn, identity); err != nil {
+		return Result{Data: data, Meta: connectionMeta(conn)}, err
+	}
+	return Result{Data: data, Meta: connectionMeta(conn)}, nil
 }
 
 func localContextResult(name string, saved config.Context, current string) Result {
@@ -435,6 +492,11 @@ func (s *Service) info(ctx context.Context, conn config.Connection) (api.Info, e
 	return client.Info(ctx, api.Target{Endpoint: conn.Endpoint, APIKey: conn.APIKey, Timeout: conn.Timeout})
 }
 
+func (s *Service) identity(ctx context.Context, conn config.Connection) (api.Context, error) {
+	client := api.Client{Transport: s.deps.Transport}
+	return client.Context(ctx, api.Target{Endpoint: conn.Endpoint, APIKey: conn.APIKey, Timeout: conn.Timeout})
+}
+
 func validateBatchTimeout(options CheckOptions, lookup func(string) (string, bool)) error {
 	value := options.Timeout
 	present := options.TimeoutSet
@@ -488,7 +550,8 @@ func (s *Service) checkAll(ctx context.Context, options CheckOptions) (Result, e
 					Context: name, ContextSet: true, Timeout: options.Timeout, TimeoutSet: options.TimeoutSet,
 				})
 				if resolveErr != nil {
-					data := checkData(conn, api.Info{}, resolveErr)
+					data := checkData(conn, api.Info{}, resolveErr, api.Context{}, nil)
+					data["identity"] = "unknown"
 					if data["context"] == "" {
 						data["context"] = name
 					}
@@ -499,7 +562,20 @@ func (s *Service) checkAll(ctx context.Context, options CheckOptions) (Result, e
 					continue
 				}
 				info, infoErr := s.info(ctx, conn)
-				results[index] = item{name: name, data: checkData(conn, info, infoErr), err: infoErr}
+				var identity api.Context
+				var identityErr error
+				if infoErr == nil || hasHTTPResponse(infoErr) {
+					identity, identityErr = s.identity(ctx, conn)
+				}
+				data := checkData(conn, info, infoErr, identity, identityErr)
+				callErr := firstError(infoErr, identityErr)
+				if callErr == nil {
+					callErr = workspaceBindingError(conn, identity)
+					if callErr != nil {
+						data["error"] = result.AsError(callErr)
+					}
+				}
+				results[index] = item{name: name, data: data, err: callErr}
 			}
 		}()
 	}
@@ -546,12 +622,9 @@ func (s *Service) update(fn func(*config.File) error) error {
 	return (config.Store{Path: path}).Update(s.ctx, fn)
 }
 
-func checkData(conn config.Connection, info api.Info, err error) map[string]any {
-	diagnosticOK := err == nil
-	reachable := diagnosticOK
-	if err != nil {
-		reachable = result.AsError(err).HTTPStatus != 0
-	}
+func checkData(conn config.Connection, info api.Info, infoErr error, identity api.Context, identityErr error) map[string]any {
+	diagnosticOK := infoErr == nil && identityErr == nil
+	reachable := infoErr == nil || hasHTTPResponse(infoErr) || hasHTTPResponse(identityErr)
 	data := map[string]any{
 		"context":       conn.Context,
 		"endpoint":      conn.Endpoint,
@@ -560,14 +633,48 @@ func checkData(conn config.Connection, info api.Info, err error) map[string]any 
 		"identity":      "unknown",
 		"capabilities":  "unknown",
 	}
-	if err == nil {
+	if infoErr == nil {
 		data["server_version"] = info.Version
 		data["server_edition"] = info.Edition
 	}
-	if err != nil {
-		data["error"] = result.AsError(err)
+	if identityErr == nil && identity.InstanceUUID != "" && identity.WorkspaceUUID != "" && identity.APIKeyID != "" {
+		data["identity"] = identityView(identity)
+	}
+	if infoErr != nil {
+		data["error"] = result.AsError(infoErr)
+	} else if identityErr != nil {
+		data["error"] = result.AsError(identityErr)
 	}
 	return data
+}
+
+func identityView(identity api.Context) map[string]any {
+	return map[string]any{
+		"instance_uuid":  identity.InstanceUUID,
+		"workspace_uuid": identity.WorkspaceUUID,
+		"api_key_id":     identity.APIKeyID,
+		"permissions":    identity.Permissions,
+	}
+}
+
+func workspaceBindingError(conn config.Connection, identity api.Context) error {
+	if conn.ExpectedWorkspaceUUID == "" || conn.ExpectedWorkspaceUUID == identity.WorkspaceUUID {
+		return nil
+	}
+	err := result.New("precondition", "服务端 Workspace 与 context 预期不一致")
+	err.Type = "target_mismatch"
+	return err
+}
+
+func hasHTTPResponse(err error) bool {
+	return err != nil && result.AsError(err).HTTPStatus != 0
+}
+
+func firstError(first, second error) error {
+	if first != nil {
+		return first
+	}
+	return second
 }
 
 func connectionMeta(conn config.Connection) map[string]any {

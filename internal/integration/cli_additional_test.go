@@ -216,7 +216,11 @@ func TestContextShowInvalidOverridePreservesSavedView(t *testing.T) {
 
 func TestCheckAllExplicitTimeoutOverridesInvalidEnvironment(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/system/context" {
+			fmt.Fprint(w, `{"code":0,"data":{"instance_uuid":"instance-a","workspace_uuid":"workspace-a","api_key_id":"key-a","permissions":[]}}`)
+			return
+		}
 		fmt.Fprint(w, `{"code":0,"data":{"version":"4.10.10","edition":"community"}}`)
 	}))
 	defer server.Close()

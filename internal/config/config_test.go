@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/gofrs/flock"
+	"github.com/langbot-app/langbot-cli/internal/result"
 )
 
 func TestStoreUpdateAcrossProcesses(t *testing.T) {
@@ -352,5 +353,28 @@ func TestCredentialInputErrorsDoNotExposeValue(t *testing.T) {
 	}
 	if errors.Is(err, os.ErrNotExist) {
 		t.Fatal("raw filesystem error leaked")
+	}
+}
+
+func TestWithCredentialPreservesMetadataWhenEnvironmentCredentialIsMissing(t *testing.T) {
+	file := File{Version: 1, CurrentContext: "production", Contexts: map[string]Context{
+		"production": {
+			Endpoint:              "https://bot.example.test/langbot",
+			Credential:            &Credential{Type: "env", Name: "PRODUCTION_KEY"},
+			ExpectedWorkspaceUUID: "workspace-a",
+		},
+	}}
+	connection, err := Resolve(file, Options{}, func(string) (string, bool) { return "", false })
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := connection.WithCredential(Options{}, func(string) (string, bool) { return "", false }, nil)
+	if result.AsError(err).Kind != "auth" {
+		t.Fatalf("missing environment credential error = %+v, want auth", result.AsError(err))
+	}
+	if resolved.APIKey != "" || resolved.Context != "production" ||
+		resolved.Endpoint != connection.Endpoint || resolved.CredentialSource != "env:PRODUCTION_KEY" ||
+		resolved.ExpectedWorkspaceUUID != "workspace-a" || resolved.Temporary {
+		t.Fatalf("credential failure lost safe connection metadata: %+v", resolved)
 	}
 }

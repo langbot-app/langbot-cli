@@ -10,7 +10,9 @@ import (
 func TestRenderPreservesNumbersAndRedactsSecrets(t *testing.T) {
 	var out bytes.Buffer
 	value := map[string]any{
-		"api_key": "secret-value",
+		"api_key":        "secret-value",
+		"api_key_secret": "another-secret",
+		"api_key_id":     "safe-key-id",
 		"error": map[string]any{
 			"http_status": int64(403),
 			"server_code": int64(9223372036854770000),
@@ -20,7 +22,7 @@ func TestRenderPreservesNumbersAndRedactsSecrets(t *testing.T) {
 		t.Fatal(err)
 	}
 	jsonOutput := out.String()
-	if strings.Contains(jsonOutput, "secret-value") || !strings.Contains(jsonOutput, `"http_status": 403`) {
+	if strings.Contains(jsonOutput, "secret-value") || strings.Contains(jsonOutput, "another-secret") || !strings.Contains(jsonOutput, "safe-key-id") || !strings.Contains(jsonOutput, `"http_status": 403`) {
 		t.Fatalf("unexpected JSON output: %s", jsonOutput)
 	}
 	out.Reset()
@@ -28,7 +30,7 @@ func TestRenderPreservesNumbersAndRedactsSecrets(t *testing.T) {
 		t.Fatal(err)
 	}
 	yamlOutput := out.String()
-	if strings.Contains(yamlOutput, "secret-value") || !strings.Contains(yamlOutput, "server_code: 9223372036854770000") {
+	if strings.Contains(yamlOutput, "secret-value") || strings.Contains(yamlOutput, "another-secret") || !strings.Contains(yamlOutput, "safe-key-id") || !strings.Contains(yamlOutput, "server_code: 9223372036854770000") {
 		t.Fatalf("unexpected YAML output: %s", yamlOutput)
 	}
 }
