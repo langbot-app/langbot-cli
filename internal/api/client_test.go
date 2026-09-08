@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -334,6 +335,102 @@ func TestCapabilitiesUsesPrefixAndKeepsMissingOperationsUnknown(t *testing.T) {
 	}
 	if _, ok := capabilities.Operations["ignored-secret-operation"]; ok {
 		t.Fatal("unknown operation was exposed")
+	}
+}
+
+func TestTaskAndKnowledgeBaseClientMethods(t *testing.T) {
+	var paths []string
+	transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		paths = append(paths, request.URL.Path)
+		var body string
+		switch request.URL.Path {
+		case "/api/v1/system/tasks/17":
+			body = `{"code":0,"data":{"id":17,"task_type":"user","kind":"knowledge_base.store","status":"running","error":null,"result":null,"created_at":1.0}}`
+		case "/api/v1/knowledge/bases/kb-a":
+			body = `{"code":0,"data":{"base":{"uuid":"kb-a","name":"KB","engine_plugin_id":"engine"}}}`
+		case "/api/v1/knowledge/bases/kb-a/files":
+			body = `{"code":0,"data":{"task_id":18}}`
+		case "/api/v1/files/documents":
+			if !strings.HasPrefix(request.Header.Get("Content-Type"), "multipart/form-data;") {
+				t.Fatalf("upload content type = %q", request.Header.Get("Content-Type"))
+			}
+			body = `{"code":0,"data":{"file_id":"file-a"}}`
+		default:
+			return nil, fmt.Errorf("unexpected path %s", request.URL.Path)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(body)),
+		}, nil
+	})
+	client := Client{Transport: transport}
+	target := Target{Endpoint: "http://example.test", APIKey: "key"}
+	task, err := client.Task(context.Background(), target, "17")
+	if err != nil || task.ID.String() != "17" || task.Status != "running" || task.CreatedAt.String() != "1.0" {
+		t.Fatalf("Task() = %#v, error = %v", task, err)
+	}
+	base, err := client.KnowledgeBase(context.Background(), target, "kb-a")
+	if err != nil || base["uuid"] != "kb-a" {
+		t.Fatalf("KnowledgeBase() = %#v, error = %v", base, err)
+	}
+	taskID, err := client.KnowledgeBaseStoreFile(context.Background(), target, "kb-a", "file-a", "")
+	if err != nil || taskID != "18" {
+		t.Fatalf("KnowledgeBaseStoreFile() = %q, error = %v", taskID, err)
+	}
+	fileID, err := client.UploadDocument(context.Background(), target, "sample.txt", strings.NewReader("hello"))
+	if err != nil || fileID != "file-a" {
+		t.Fatalf("UploadDocument() = %q, error = %v", fileID, err)
+	}
+	want := []string{
+		"/api/v1/system/tasks/17",
+		"/api/v1/knowledge/bases/kb-a",
+		"/api/v1/knowledge/bases/kb-a/files",
+		"/api/v1/files/documents",
+	}
+	if !reflect.DeepEqual(paths, want) {
+		t.Fatalf("paths = %#v, want %#v", paths, want)
+	}
+}
+
+func TestTaskRejectsUnstableStatusAndIdentifier(t *testing.T) {
+	transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body: io.NopCloser(strings.NewReader(
+				`{"code":0,"data":{"id":17,"status":"queued"}}`,
+			)),
+		}, nil
+	})
+	_, err := (Client{Transport: transport}).Task(context.Background(), Target{Endpoint: "http://example.test"}, "17")
+	if result.AsError(err).Kind != "incompatible" {
+		t.Fatalf("Task() error = %+v, want incompatible", result.AsError(err))
+	}
+	for _, identifier := range []string{"../17", "-1", "+1", "01", "task"} {
+		if _, err := (Client{}).Task(context.Background(), Target{Endpoint: "http://example.test"}, identifier); result.AsError(err).Kind != "input" {
+			t.Fatalf("task ID %q error = %+v, want input", identifier, result.AsError(err))
+		}
+	}
+}
+
+func TestTaskRejectsInconsistentTerminalData(t *testing.T) {
+	for _, body := range []string{
+		`{"code":0,"data":{"id":17,"task_type":"user","kind":"knowledge-operation","status":"failed","error":null,"result":null,"created_at":1}}`,
+		`{"code":0,"data":{"id":17,"task_type":"user","kind":"knowledge-operation","status":"running","error":{"type":"task_failed","message":"failed"},"result":null,"created_at":1}}`,
+		`{"code":0,"data":{"id":17,"task_type":"user","kind":"knowledge-operation","status":"cancelled","error":{"type":"task_cancelled","message":"cancelled"},"result":{"unexpected":true},"created_at":1}}`,
+	} {
+		transport := roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(body)),
+			}, nil
+		})
+		_, err := (Client{Transport: transport}).Task(context.Background(), Target{Endpoint: "http://example.test"}, "17")
+		if result.AsError(err).Kind != "incompatible" {
+			t.Fatalf("Task() error = %+v, want incompatible for %s", result.AsError(err), body)
+		}
 	}
 }
 

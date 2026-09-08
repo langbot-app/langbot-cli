@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -30,6 +31,13 @@ type Dependencies struct {
 type Result struct {
 	Data any
 	Meta map[string]any
+}
+
+// WaitOptions 控制异步任务的本地轮询，不会向服务端发送取消请求。
+type WaitOptions struct {
+	Wait         bool
+	PollInterval time.Duration
+	WaitTimeout  time.Duration
 }
 
 // WritePreflight 是经过身份、绑定、权限和能力确认后的写连接快照。
@@ -507,6 +515,243 @@ func (s *Service) PipelineGet(ctx context.Context, identifier string, options Ch
 		return Result{Meta: resourceMeta(conn, identity)}, err
 	}
 	return Result{Data: map[string]any{"pipeline": pipeline}, Meta: resourceMeta(conn, identity)}, nil
+}
+
+// TaskGet 返回异步任务公共状态。
+func (s *Service) TaskGet(ctx context.Context, identifier string, options CheckOptions) (Result, error) {
+	conn, identity, err := s.resourceConnection(ctx, options)
+	if err != nil {
+		return Result{Meta: resourceMeta(conn, identity)}, err
+	}
+	capabilities, err := s.capabilities(ctx, conn)
+	if err != nil {
+		return Result{Meta: resourceMeta(conn, identity)}, err
+	}
+	preflight := WritePreflight{Connection: conn, Identity: identity, Capabilities: capabilities}
+	if err := requireCapability(preflight, "task.get"); err != nil {
+		return Result{Meta: resourceMeta(conn, identity)}, err
+	}
+	task, err := (api.Client{Transport: s.deps.Transport}).Task(ctx, api.Target{
+		Endpoint: conn.Endpoint, APIKey: conn.APIKey, Timeout: conn.Timeout,
+	}, identifier)
+	if err != nil {
+		return Result{Meta: resourceMeta(conn, identity)}, err
+	}
+	return Result{Data: map[string]any{"task": task}, Meta: resourceMeta(conn, identity)}, nil
+}
+
+// TaskWait 等待异步任务进入终态，只在本地停止轮询。
+func (s *Service) TaskWait(ctx context.Context, identifier string, wait WaitOptions, options CheckOptions) (Result, error) {
+	if ctx != nil && ctx.Err() != nil {
+		return Result{Data: map[string]any{"task_id": identifier, "server_cancelled": false}}, taskStatusError("wait_cancelled", "等待已取消，服务端任务未被取消")
+	}
+	conn, identity, err := s.resourceConnection(ctx, options)
+	if err != nil {
+		return Result{Meta: resourceMeta(conn, identity)}, err
+	}
+	capabilities, err := s.capabilities(ctx, conn)
+	if err != nil {
+		return Result{Meta: resourceMeta(conn, identity)}, err
+	}
+	preflight := WritePreflight{Connection: conn, Identity: identity, Capabilities: capabilities}
+	if err := requireCapability(preflight, "task.get"); err != nil {
+		return Result{Meta: resourceMeta(conn, identity)}, err
+	}
+	task, waitErr := waitForTask(ctx, api.Client{Transport: s.deps.Transport}, api.Target{
+		Endpoint: conn.Endpoint, APIKey: conn.APIKey, Timeout: conn.Timeout,
+	}, identifier, wait)
+	data := map[string]any{"task_id": identifier, "server_cancelled": false}
+	if task != nil {
+		data["task"] = task
+	}
+	if waitErr != nil {
+		return Result{Data: data, Meta: resourceMeta(conn, identity)}, waitErr
+	}
+	return Result{Data: data, Meta: resourceMeta(conn, identity)}, nil
+}
+
+// KnowledgeBaseIngest 上传文件并提交知识库入库任务。
+func (s *Service) KnowledgeBaseIngest(
+	ctx context.Context,
+	identifier string,
+	filename string,
+	parserPluginID string,
+	dryRun bool,
+	wait WaitOptions,
+	options CheckOptions,
+) (Result, error) {
+	if strings.TrimSpace(identifier) == "" {
+		return Result{}, result.New("input", "知识库 ID 不能为空")
+	}
+	if strings.TrimSpace(filename) == "" {
+		return Result{}, result.New("input", "上传文件不能为空")
+	}
+	fileInfo, err := os.Stat(filename)
+	if err != nil {
+		return Result{}, result.New("input", "无法读取上传文件")
+	}
+	if !fileInfo.Mode().IsRegular() {
+		return Result{}, result.New("input", "上传路径必须是普通文件")
+	}
+	preflight, err := s.WritePreflight(ctx, "knowledge_base.file.store", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	if err := requireCapability(preflight, "file.document.upload"); err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	if err := requireCapability(preflight, "knowledge_base.get"); err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	if wait.Wait && !dryRun {
+		if err := requireCapability(preflight, "task.get"); err != nil {
+			return Result{Meta: preflight.Meta()}, err
+		}
+	}
+	client, target := s.writeClient(preflight)
+	base, err := client.KnowledgeBase(ctx, target, identifier)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	if dryRun {
+		return Result{Data: map[string]any{
+			"operation":               "knowledge_base.ingest",
+			"dry_run":                 true,
+			"server_write":            false,
+			"preconditions_confirmed": true,
+			"business_validation":     "not_run",
+			"knowledge_base":          base,
+			"file": map[string]any{
+				"name":       filepath.Base(filename),
+				"size_bytes": fileInfo.Size(),
+			},
+		}, Meta: preflight.Meta()}, nil
+	}
+	file, err := os.Open(filename)
+	if err != nil {
+		return Result{Data: map[string]any{"step": "validated", "knowledge_base": base}, Meta: preflight.Meta()}, result.New("input", "无法读取上传文件")
+	}
+	defer file.Close()
+	fileID, err := client.UploadDocument(ctx, target, filepath.Base(filename), file)
+	if err != nil {
+		data := map[string]any{"step": "validated", "knowledge_base": base}
+		if result.AsError(err).Type == "result_unknown" {
+			data["step"] = "upload_unknown"
+		}
+		return Result{Data: data, Meta: preflight.Meta()}, err
+	}
+	data := map[string]any{
+		"step":                "uploaded",
+		"knowledge_base":      base,
+		"file_id":             fileID,
+		"server_write":        true,
+		"submitted":           false,
+		"preflight_confirmed": true,
+	}
+	taskID, err := client.KnowledgeBaseStoreFile(ctx, target, identifier, fileID, parserPluginID)
+	if err != nil {
+		failure := result.AsError(err)
+		if failure.Type == "result_unknown" {
+			data["step"] = "store_unknown"
+			data["submitted"] = "unknown"
+			data["submission_result"] = "unknown"
+			return Result{Data: data, Meta: preflight.Meta()}, err
+		}
+		if failure.HTTPStatus >= http.StatusBadRequest && failure.HTTPStatus < http.StatusInternalServerError {
+			data["step"] = "store_failed"
+			data["submitted"] = false
+			return Result{Data: data, Meta: preflight.Meta()}, partialIngestError(err)
+		}
+		data["step"] = "store_unknown"
+		data["submitted"] = "unknown"
+		data["submission_result"] = "unknown"
+		return Result{Data: data, Meta: preflight.Meta()}, err
+	}
+	data["step"] = "submitted"
+	data["submitted"] = true
+	data["task_id"] = taskID
+	if !wait.Wait {
+		return Result{Data: data, Meta: preflight.Meta()}, nil
+	}
+	task, waitErr := waitForTask(ctx, client, target, taskID, wait)
+	data["task"] = task
+	if waitErr != nil {
+		return Result{Data: data, Meta: preflight.Meta()}, waitErr
+	}
+	data["step"] = "completed"
+	return Result{Data: data, Meta: preflight.Meta()}, nil
+}
+
+func waitForTask(ctx context.Context, client api.Client, target api.Target, identifier string, options WaitOptions) (*api.Task, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	interval := options.PollInterval
+	if interval <= 0 {
+		interval = time.Second
+	}
+	timeout := options.WaitTimeout
+	if timeout <= 0 {
+		timeout = 5 * time.Minute
+	}
+	waitCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	var lastTask *api.Task
+	for {
+		task, err := client.Task(waitCtx, target, identifier)
+		if err != nil {
+			if waitCtx.Err() != nil {
+				if ctx.Err() != nil {
+					return lastTask, taskStatusError("wait_cancelled", "等待已取消，服务端任务未被取消")
+				}
+				return lastTask, taskStatusError("wait_timeout", "等待异步任务超时")
+			}
+			failure := result.AsError(err)
+			if failure.Kind == "not_found" {
+				failure.Type = "task_not_found"
+				failure.Message = "异步任务记录不存在或已被清理"
+			}
+			return nil, err
+		}
+		taskValue := &task
+		lastTask = taskValue
+		switch task.Status {
+		case "succeeded":
+			return taskValue, nil
+		case "failed":
+			return taskValue, taskStatusError("task_failed", "异步任务执行失败")
+		case "cancelled":
+			return taskValue, taskStatusError("task_cancelled", "异步任务已取消")
+		}
+		timer := time.NewTimer(interval)
+		select {
+		case <-waitCtx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			if ctx.Err() != nil {
+				return taskValue, taskStatusError("wait_cancelled", "等待已取消，服务端任务未被取消")
+			}
+			return taskValue, taskStatusError("wait_timeout", "等待异步任务超时")
+		case <-timer.C:
+		}
+	}
+}
+
+func taskStatusError(kind, message string) *result.Error {
+	err := result.New("server", message)
+	err.Type = kind
+	return err
+}
+
+func partialIngestError(cause error) *result.Error {
+	failure := result.AsError(cause)
+	err := result.New(failure.Kind, "文件已上传，但知识库入库提交失败")
+	err.Type = "partial_write"
+	err.HTTPStatus = failure.HTTPStatus
+	err.ServerCode = failure.ServerCode
+	err.RequestID = failure.RequestID
+	return err
 }
 
 func (s *Service) BotCreate(ctx context.Context, body map[string]any, dryRun bool, options CheckOptions) (Result, error) {

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/langbot-app/langbot-cli/internal/app"
 	"github.com/langbot-app/langbot-cli/internal/config"
@@ -133,6 +134,8 @@ func newRoot(deps Dependencies, flags *globalFlags, service *app.Service) *cobra
 	root.AddCommand(newIdentityCommand(service, deps, flags, "capabilities"))
 	root.AddCommand(newBotCommand(service, deps, flags))
 	root.AddCommand(newPipelineCommand(service, deps, flags))
+	root.AddCommand(newTaskCommand(service, deps, flags))
+	root.AddCommand(newKnowledgeBaseCommand(service, deps, flags))
 	return root
 }
 
@@ -287,6 +290,72 @@ func newPipelineDeleteCommand(service *app.Service, deps Dependencies, flags *gl
 	}
 	command.Flags().BoolVar(&yes, "yes", false, "确认删除")
 	command.Flags().BoolVar(&dryRun, "dry-run", false, "只检查目标和操作前提，不写入")
+	return command
+}
+
+func newTaskCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
+	command := &cobra.Command{Use: "task", Short: "查看异步任务", Args: cobra.NoArgs}
+	var wait bool
+	var pollInterval time.Duration
+	var waitTimeout time.Duration
+	get := &cobra.Command{
+		Use: "get <id>", Short: "读取异步任务状态", Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if wait && (pollInterval <= 0 || waitTimeout <= 0) {
+				return emitCommand(deps, flags, app.Result{}, result.New("input", "等待间隔和等待超时必须为正数"))
+			}
+			return emitCall(deps, flags, func() (app.Result, error) {
+				options := connectionOptions(flags)
+				if !wait {
+					return service.TaskGet(cmd.Context(), args[0], options)
+				}
+				return service.TaskWait(cmd.Context(), args[0], app.WaitOptions{
+					Wait: true, PollInterval: pollInterval, WaitTimeout: waitTimeout,
+				}, options)
+			})
+		},
+	}
+	get.Flags().BoolVar(&wait, "wait", false, "等待任务进入终态")
+	get.Flags().DurationVar(&pollInterval, "poll-interval", time.Second, "任务轮询间隔")
+	get.Flags().DurationVar(&waitTimeout, "wait-timeout", 5*time.Minute, "本地等待超时")
+	command.AddCommand(get)
+	return command
+}
+
+func newKnowledgeBaseCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
+	command := &cobra.Command{Use: "knowledge-base", Aliases: []string{"kb"}, Short: "管理知识库", Args: cobra.NoArgs}
+	var filename string
+	var parserPluginID string
+	var dryRun bool
+	var wait bool
+	var pollInterval time.Duration
+	var waitTimeout time.Duration
+	ingest := &cobra.Command{
+		Use: "ingest <knowledge-base-id>", Short: "上传文件并提交知识库入库", Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if strings.TrimSpace(filename) == "" || filename == "-" {
+				return emitCommand(deps, flags, app.Result{}, result.New("input", "--file 必须指定本地文件，不能使用 stdin"))
+			}
+			if dryRun && wait {
+				return emitCommand(deps, flags, app.Result{}, result.New("input", "--dry-run 不能与 --wait 同时使用"))
+			}
+			if wait && (pollInterval <= 0 || waitTimeout <= 0) {
+				return emitCommand(deps, flags, app.Result{}, result.New("input", "等待间隔和等待超时必须为正数"))
+			}
+			return emitCall(deps, flags, func() (app.Result, error) {
+				return service.KnowledgeBaseIngest(cmd.Context(), args[0], filename, parserPluginID, dryRun, app.WaitOptions{
+					Wait: wait, PollInterval: pollInterval, WaitTimeout: waitTimeout,
+				}, connectionOptions(flags))
+			})
+		},
+	}
+	ingest.Flags().StringVar(&filename, "file", "", "要上传的本地文件")
+	ingest.Flags().StringVar(&parserPluginID, "parser-plugin-id", "", "可选的解析器插件 ID")
+	ingest.Flags().BoolVar(&dryRun, "dry-run", false, "检查前置条件但不上传或提交")
+	ingest.Flags().BoolVar(&wait, "wait", false, "等待入库任务进入终态")
+	ingest.Flags().DurationVar(&pollInterval, "poll-interval", time.Second, "任务轮询间隔")
+	ingest.Flags().DurationVar(&waitTimeout, "wait-timeout", 5*time.Minute, "本地等待超时")
+	command.AddCommand(ingest)
 	return command
 }
 

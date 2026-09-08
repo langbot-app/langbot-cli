@@ -161,6 +161,70 @@ func TestWriteBodyAndAPIKeyCannotShareStdin(t *testing.T) {
 	}
 }
 
+func TestKnowledgeBaseIngestAndTaskGetCommands(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	filePath := filepath.Join(t.TempDir(), "document.txt")
+	if err := os.WriteFile(filePath, []byte("document"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var uploads, submissions int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/system/context":
+			fmt.Fprint(w, `{"code":0,"data":{"instance_uuid":"instance-a","workspace_uuid":"workspace-a","api_key_id":"key-a","permissions":["resource.manage","resource.view"]}}`)
+		case "/api/v1/system/capabilities":
+			fmt.Fprint(w, `{"code":0,"data":{"schema_version":1,"operations":{"knowledge_base.file.store":{"supported":true},"knowledge_base.get":{"supported":true},"file.document.upload":{"supported":true},"task.get":{"supported":true}}}}`)
+		case "/api/v1/knowledge/bases/kb-a":
+			fmt.Fprint(w, `{"code":0,"data":{"base":{"uuid":"kb-a","name":"KB"}}}`)
+		case "/api/v1/files/documents":
+			uploads++
+			fmt.Fprint(w, `{"code":0,"data":{"file_id":"file-a"}}`)
+		case "/api/v1/knowledge/bases/kb-a/files":
+			submissions++
+			fmt.Fprint(w, `{"code":0,"data":{"task_id":17}}`)
+		case "/api/v1/system/tasks/17":
+			fmt.Fprint(w, `{"code":0,"data":{"id":17,"task_type":"user","kind":"knowledge-operation","status":"succeeded","error":null,"result":null,"created_at":1.0}}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprint(w, `{"code":404,"data":null}`)
+		}
+	}))
+	defer server.Close()
+
+	configureWriteContext(t, configPath, server.URL, "KB_KEY")
+	env := map[string]string{"KB_KEY": "secret"}
+	dryRun := run(t, configPath, env, "", "knowledge-base", "ingest", "kb-a", "--file", filePath, "--dry-run")
+	requireSuccess(t, dryRun)
+	if data := dryRun.data["data"].(map[string]any); data["server_write"] != false || data["business_validation"] != "not_run" {
+		t.Fatalf("dry-run output = %s", dryRun.out)
+	}
+	if uploads != 0 || submissions != 0 {
+		t.Fatalf("dry-run wrote data: upload/submission calls = %d/%d", uploads, submissions)
+	}
+	invalidFlags := run(t, configPath, env, "", "knowledge-base", "ingest", "kb-a", "--file", filePath, "--dry-run", "--wait")
+	if invalidFlags.code != 2 || invalidFlags.data["error"].(map[string]any)["type"] != "input" {
+		t.Fatalf("dry-run with wait was not rejected: %s", invalidFlags.out)
+	}
+	ingested := run(
+		t, configPath, env, "", "knowledge-base", "ingest", "kb-a", "--file", filePath,
+		"--wait", "--poll-interval", "1ms", "--wait-timeout", "1s",
+	)
+	requireSuccess(t, ingested)
+	if data := ingested.data["data"].(map[string]any); data["step"] != "completed" || data["file_id"] != "file-a" || data["task_id"] != "17" {
+		t.Fatalf("ingest output = %s", ingested.out)
+	}
+	if uploads != 1 || submissions != 1 {
+		t.Fatalf("upload/submission calls = %d/%d", uploads, submissions)
+	}
+
+	task := run(t, configPath, env, "", "task", "get", "17")
+	requireSuccess(t, task)
+	taskData := task.data["data"].(map[string]any)["task"].(map[string]any)
+	if taskData["id"] != float64(17) || taskData["status"] != "succeeded" {
+		t.Fatalf("task output = %s", task.out)
+	}
+}
+
 func configureWriteContext(t *testing.T, configPath, endpoint, envName string) {
 	t.Helper()
 	requireSuccess(t, run(t, configPath, nil, "", "context", "add", "production", "--endpoint", endpoint, "--api-key-env", envName, "--expect-workspace", "workspace-a"))

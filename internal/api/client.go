@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"sort"
@@ -21,16 +22,20 @@ import (
 )
 
 const (
-	infoPath          = "/api/v1/system/info"
-	contextPath       = "/api/v1/system/context"
-	capabilitiesPath  = "/api/v1/system/capabilities"
-	botsPath          = "/api/v1/platform/bots"
-	pipelinesPath     = "/api/v1/pipelines"
-	defaultTimeout    = 30 * time.Second
-	maxResponseBytes  = 1 << 20
-	maxRequestBytes   = 1 << 20
-	maxServerCodeSize = 128
-	maxRequestIDSize  = 128
+	infoPath           = "/api/v1/system/info"
+	contextPath        = "/api/v1/system/context"
+	capabilitiesPath   = "/api/v1/system/capabilities"
+	botsPath           = "/api/v1/platform/bots"
+	pipelinesPath      = "/api/v1/pipelines"
+	tasksPath          = "/api/v1/system/tasks"
+	knowledgeBasesPath = "/api/v1/knowledge/bases"
+	documentUploadPath = "/api/v1/files/documents"
+	defaultTimeout     = 30 * time.Second
+	maxResponseBytes   = 1 << 20
+	maxRequestBytes    = 1 << 20
+	maxUploadBytes     = 10 << 20
+	maxServerCodeSize  = 128
+	maxRequestIDSize   = 128
 )
 
 // Target 是一次请求使用的不可变连接快照。
@@ -70,6 +75,23 @@ type WriteResult struct {
 	UUID string
 }
 
+// TaskError 是异步任务的稳定错误表示。
+type TaskError struct {
+	Type    string `json:"type" yaml:"type"`
+	Message string `json:"message" yaml:"message"`
+}
+
+// Task 是 API Key 可见的稳定异步任务表示，Result 保持服务端 JSON 不透明传递。
+type Task struct {
+	ID        json.Number `json:"id" yaml:"id"`
+	TaskType  string      `json:"task_type" yaml:"task_type"`
+	Kind      string      `json:"kind" yaml:"kind"`
+	Status    string      `json:"status" yaml:"status"`
+	Error     *TaskError  `json:"error" yaml:"error"`
+	Result    any         `json:"result" yaml:"result"`
+	CreatedAt json.Number `json:"created_at" yaml:"created_at"`
+}
+
 var capabilityOperationIDs = []string{
 	"bot.list",
 	"bot.get",
@@ -82,6 +104,11 @@ var capabilityOperationIDs = []string{
 	"pipeline.update",
 	"pipeline.delete",
 	"pipeline.copy",
+	"task.list",
+	"task.get",
+	"knowledge_base.get",
+	"knowledge_base.file.store",
+	"file.document.upload",
 }
 
 // CapabilityOperationIDs 返回 CLI 支持展示的稳定操作顺序。
@@ -172,6 +199,102 @@ func (c Client) Capabilities(ctx context.Context, target Target) (Capabilities, 
 		parsed[operationID] = supported
 	}
 	return Capabilities{SchemaVersion: schemaVersion, Operations: parsed}, nil
+}
+
+// Task 返回一个异步任务的公共状态，不暴露服务端内部 runtime 字段。
+func (c Client) Task(ctx context.Context, target Target, identifier string) (Task, error) {
+	path, err := taskPath(identifier)
+	if err != nil {
+		return Task{}, err
+	}
+	resp, err := c.fetch(ctx, target, http.MethodGet, path)
+	if err != nil {
+		return Task{}, err
+	}
+	task, ok := parseTaskData(resp.Data, identifier)
+	if !ok {
+		return Task{}, protocolError("服务返回的任务数据格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.APIKey))
+	}
+	return task, nil
+}
+
+// KnowledgeBase 返回指定知识库的安全字段。
+func (c Client) KnowledgeBase(ctx context.Context, target Target, identifier string) (map[string]any, error) {
+	path, err := resourcePath(knowledgeBasesPath, identifier)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.fetch(ctx, target, http.MethodGet, path)
+	if err != nil {
+		return nil, err
+	}
+	base, err := parseResourceObject(resp, "base", projectKnowledgeBase, target.APIKey)
+	if err != nil {
+		return nil, err
+	}
+	if base["uuid"] != identifier {
+		return nil, protocolError("服务返回的知识库 UUID 与请求不一致", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.APIKey))
+	}
+	return base, nil
+}
+
+// UploadDocument 上传文件并返回服务端文件 ID。
+func (c Client) UploadDocument(ctx context.Context, target Target, filename string, file io.Reader) (string, error) {
+	if strings.TrimSpace(filename) == "" || file == nil {
+		return "", result.New("input", "上传文件不能为空")
+	}
+	content, err := io.ReadAll(io.LimitReader(file, maxUploadBytes+1))
+	if err != nil {
+		return "", result.New("input", "读取上传文件失败")
+	}
+	if len(content) > maxUploadBytes {
+		return "", result.New("input", "上传文件超过 10MB 限制")
+	}
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("file", filename)
+	if err != nil {
+		return "", result.New("input", "无法构造上传请求")
+	}
+	if _, err = part.Write(content); err != nil {
+		return "", result.New("input", "无法构造上传请求")
+	}
+	if err = writer.Close(); err != nil {
+		return "", result.New("input", "无法构造上传请求")
+	}
+	if body.Len() > maxUploadBytes {
+		return "", result.New("input", "上传文件连同请求元数据超过 10MB 限制")
+	}
+	resp, err := c.writeMultipart(ctx, target, documentUploadPath, body.Bytes(), writer.FormDataContentType())
+	if err != nil {
+		return "", err
+	}
+	fileID, ok := stringValue(resp.Data["file_id"])
+	if !ok || strings.TrimSpace(fileID) == "" || containsSecret(fileID, target.APIKey) {
+		return "", writeUnknown(&result.Error{HTTPStatus: resp.StatusCode, RequestID: responseRequestID(resp.Header, resp.Body, target.APIKey)})
+	}
+	return fileID, nil
+}
+
+// KnowledgeBaseStoreFile 提交已上传文件到知识库，返回异步任务 ID。
+func (c Client) KnowledgeBaseStoreFile(ctx context.Context, target Target, identifier, fileID, parserPluginID string) (string, error) {
+	path, err := resourcePath(knowledgeBasesPath, identifier)
+	if err != nil {
+		return "", err
+	}
+	body := map[string]any{"file_id": fileID}
+	if parserPluginID != "" {
+		body["parser_plugin_id"] = parserPluginID
+	}
+	resp, err := c.write(ctx, target, http.MethodPost, path+"/files", body)
+	if err != nil {
+		return "", err
+	}
+	taskID, ok := stringValue(resp.Data["task_id"])
+	if !ok || strings.TrimSpace(taskID) == "" || containsSecret(taskID, target.APIKey) {
+		return "", writeUnknown(&result.Error{HTTPStatus: resp.StatusCode, RequestID: responseRequestID(resp.Header, resp.Body, target.APIKey)})
+	}
+	return taskID, nil
 }
 
 // Bots 返回 Bot 的安全字段投影，不输出 adapter_config 等配置内容。
@@ -365,7 +488,22 @@ func (c Client) write(ctx context.Context, target Target, method, path string, b
 	return response, nil
 }
 
+func (c Client) writeMultipart(ctx context.Context, target Target, path string, body []byte, contentType string) (response, error) {
+	if !knownWritePath(http.MethodPost, path) {
+		return response{}, result.New("incompatible", "只允许执行已确认的资源写操作")
+	}
+	response, err := c.doWithContentType(ctx, target, http.MethodPost, path, bytes.NewReader(body), true, contentType)
+	if err != nil {
+		return response, classifyWriteError(err)
+	}
+	return response, nil
+}
+
 func (c Client) do(ctx context.Context, target Target, method, path string, requestBody io.Reader, allowNilData bool) (response, error) {
+	return c.doWithContentType(ctx, target, method, path, requestBody, allowNilData, "application/json")
+}
+
+func (c Client) doWithContentType(ctx context.Context, target Target, method, path string, requestBody io.Reader, allowNilData bool, contentType string) (response, error) {
 	base, err := endpoint.Normalize(target.Endpoint)
 	if err != nil {
 		return response{}, result.New("input", "服务地址无效")
@@ -379,8 +517,8 @@ func (c Client) do(ctx context.Context, target Target, method, path string, requ
 	if target.APIKey != "" {
 		request.Header.Set("X-API-Key", target.APIKey)
 	}
-	if requestBody != nil {
-		request.Header.Set("Content-Type", "application/json")
+	if requestBody != nil && contentType != "" {
+		request.Header.Set("Content-Type", contentType)
 	}
 
 	transport := c.Transport
@@ -449,6 +587,13 @@ func (c Client) do(ctx context.Context, target Target, method, path string, requ
 }
 
 func knownWritePath(method, path string) bool {
+	if method == http.MethodPost && path == documentUploadPath {
+		return true
+	}
+	if method == http.MethodPost && strings.HasPrefix(path, knowledgeBasesPath+"/") && strings.HasSuffix(path, "/files") {
+		identifier := strings.TrimSuffix(strings.TrimPrefix(path, knowledgeBasesPath+"/"), "/files")
+		return identifier != "" && !strings.Contains(identifier, "/")
+	}
 	if method == http.MethodPost && (path == botsPath || path == pipelinesPath) {
 		return true
 	}
@@ -490,7 +635,7 @@ func knownGetPath(path string) bool {
 	if path == infoPath || path == contextPath || path == capabilitiesPath || path == botsPath || path == pipelinesPath {
 		return true
 	}
-	for _, base := range []string{botsPath, pipelinesPath} {
+	for _, base := range []string{botsPath, pipelinesPath, tasksPath, knowledgeBasesPath} {
 		if strings.HasPrefix(path, base+"/") && !strings.Contains(strings.TrimPrefix(path, base+"/"), "/") {
 			return true
 		}
@@ -517,6 +662,17 @@ func resourcePath(base, identifier string) (string, error) {
 		return "", result.New("input", "资源 ID 必须是单个安全的路径段")
 	}
 	return base + "/" + escaped, nil
+}
+
+func taskPath(identifier string) (string, error) {
+	if identifier == "" {
+		return "", result.New("input", "任务 ID 必须是非负整数")
+	}
+	parsed, err := strconv.ParseUint(identifier, 10, 64)
+	if err != nil || strconv.FormatUint(parsed, 10) != identifier {
+		return "", result.New("input", "任务 ID 必须是非负整数")
+	}
+	return tasksPath + "/" + identifier, nil
 }
 
 func parseResourceList(resp response, key string, project func(map[string]any, string) map[string]any, secret string) ([]map[string]any, error) {
@@ -554,6 +710,66 @@ func validResourceUUID(value map[string]any, secret string) bool {
 	return ok && strings.TrimSpace(uuid) != "" && !containsSecret(uuid, secret)
 }
 
+func parseTaskData(value map[string]any, identifier string) (Task, bool) {
+	taskID, ok := value["id"].(json.Number)
+	if !ok || taskID.String() != identifier {
+		return Task{}, false
+	}
+	status, ok := value["status"].(string)
+	if !ok {
+		return Task{}, false
+	}
+	switch status {
+	case "running", "succeeded", "failed", "cancelled":
+	default:
+		return Task{}, false
+	}
+	taskType, taskTypeOK := value["task_type"].(string)
+	kind, kindOK := value["kind"].(string)
+	createdAt, createdAtOK := value["created_at"].(json.Number)
+	if !taskTypeOK || strings.TrimSpace(taskType) == "" || !kindOK || strings.TrimSpace(kind) == "" || !createdAtOK {
+		return Task{}, false
+	}
+	task := Task{
+		ID:        taskID,
+		TaskType:  taskType,
+		Kind:      kind,
+		Status:    status,
+		Result:    value["result"],
+		CreatedAt: createdAt,
+	}
+	if rawError, exists := value["error"]; exists && rawError != nil {
+		errorValue, ok := rawError.(map[string]any)
+		if !ok {
+			return Task{}, false
+		}
+		task.Error = &TaskError{Type: safeString(errorValue["type"]), Message: safeString(errorValue["message"])}
+		if task.Error.Type == "" || task.Error.Message == "" {
+			return Task{}, false
+		}
+	}
+	if (status == "failed" || status == "cancelled") != (task.Error != nil) {
+		return Task{}, false
+	}
+	if status != "succeeded" && task.Result != nil {
+		return Task{}, false
+	}
+	return task, true
+}
+
+func stringValue(value any) (string, bool) {
+	switch typed := value.(type) {
+	case string:
+		return typed, true
+	case json.Number:
+		return typed.String(), true
+	case float64:
+		return strconv.FormatInt(int64(typed), 10), typed == float64(int64(typed))
+	default:
+		return "", false
+	}
+}
+
 func projectBot(value map[string]any, secret string) map[string]any {
 	return projectScalarFields(value, []string{
 		"uuid", "name", "description", "adapter", "enable", "use_pipeline_name", "use_pipeline_uuid", "created_at", "updated_at",
@@ -563,6 +779,12 @@ func projectBot(value map[string]any, secret string) map[string]any {
 func projectPipeline(value map[string]any, secret string) map[string]any {
 	return projectScalarFields(value, []string{
 		"uuid", "name", "description", "emoji", "for_version", "is_default", "created_at", "updated_at",
+	}, secret)
+}
+
+func projectKnowledgeBase(value map[string]any, secret string) map[string]any {
+	return projectScalarFields(value, []string{
+		"uuid", "name", "description", "engine_plugin_id", "created_at", "updated_at",
 	}, secret)
 }
 
