@@ -18,6 +18,8 @@ import (
 	"github.com/langbot-app/langbot-cli/internal/result"
 )
 
+const maxExtensionUploadBytes int64 = 10 << 20
+
 type Dependencies struct {
 	In                io.Reader
 	LookupEnv         func(string) (string, bool)
@@ -680,6 +682,290 @@ func (s *Service) KnowledgeBaseIngest(
 	}
 	data["step"] = "completed"
 	return Result{Data: data, Meta: preflight.Meta()}, nil
+}
+
+// PluginInstallGitHub 安装 GitHub 插件。
+func (s *Service) PluginInstallGitHub(ctx context.Context, body map[string]any, dryRun, wait bool, waitOptions WaitOptions, options CheckOptions) (Result, error) {
+	return s.pluginInstall(ctx, "plugin.install.github", body, "", dryRun, wait, waitOptions, options)
+}
+
+// PluginInstallMarketplace 安装 Marketplace 插件。
+func (s *Service) PluginInstallMarketplace(ctx context.Context, body map[string]any, dryRun, wait bool, waitOptions WaitOptions, options CheckOptions) (Result, error) {
+	return s.pluginInstall(ctx, "plugin.install.marketplace", body, "", dryRun, wait, waitOptions, options)
+}
+
+// PluginInstallLocal 安装本地插件包。
+func (s *Service) PluginInstallLocal(ctx context.Context, filename string, dryRun, wait bool, waitOptions WaitOptions, options CheckOptions) (Result, error) {
+	if err := validateRegularFile(filename); err != nil {
+		return Result{}, err
+	}
+	return s.pluginInstall(ctx, "plugin.install.local", nil, filename, dryRun, wait, waitOptions, options)
+}
+
+func (s *Service) pluginInstall(ctx context.Context, operation string, body map[string]any, filename string, dryRun, wait bool, waitOptions WaitOptions, options CheckOptions) (Result, error) {
+	if dryRun && wait {
+		return Result{}, result.New("input", "dry-run 不能等待异步任务")
+	}
+	preflight, err := s.WritePreflight(ctx, operation, options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	if wait {
+		if err := requireCapability(preflight, "task.get"); err != nil {
+			return Result{Meta: preflight.Meta()}, err
+		}
+	}
+	data := map[string]any{
+		"operation":               operation,
+		"dry_run":                 dryRun,
+		"server_write":            false,
+		"preconditions_confirmed": true,
+		"business_validation":     "not_run",
+	}
+	if dryRun {
+		if filename != "" {
+			if info, statErr := os.Stat(filename); statErr == nil {
+				data["file"] = map[string]any{"name": filepath.Base(filename), "size_bytes": info.Size()}
+			}
+		}
+		return Result{Data: data, Meta: preflight.Meta()}, nil
+	}
+	client, target := s.writeClient(preflight)
+	var taskID string
+	if filename != "" {
+		file, openErr := os.Open(filename)
+		if openErr != nil {
+			return Result{Data: data, Meta: preflight.Meta()}, result.New("input", "无法读取插件包")
+		}
+		defer file.Close()
+		taskID, err = client.PluginInstallLocal(ctx, target, filepath.Base(filename), file)
+	} else if operation == "plugin.install.github" {
+		taskID, err = client.PluginInstallGitHub(ctx, target, body)
+	} else {
+		taskID, err = client.PluginInstallMarketplace(ctx, target, body)
+	}
+	if err != nil {
+		markAsyncSubmissionFailure(data, err)
+		return Result{Data: data, Meta: preflight.Meta()}, err
+	}
+	return s.finishTask(ctx, client, target, taskID, wait, waitOptions, data, preflight.Meta())
+}
+
+// PluginUpgrade 升级已安装插件。
+func (s *Service) PluginUpgrade(ctx context.Context, author, name string, dryRun, wait bool, waitOptions WaitOptions, options CheckOptions) (Result, error) {
+	if dryRun && wait {
+		return Result{}, result.New("input", "dry-run 不能等待异步任务")
+	}
+	preflight, err := s.WritePreflight(ctx, "plugin.upgrade", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	if err := requireCapability(preflight, "plugin.get"); err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	if wait {
+		if err := requireCapability(preflight, "task.get"); err != nil {
+			return Result{Meta: preflight.Meta()}, err
+		}
+	}
+	client, target := s.writeClient(preflight)
+	data := map[string]any{
+		"operation":               "plugin.upgrade",
+		"author":                  author,
+		"name":                    name,
+		"dry_run":                 dryRun,
+		"server_write":            false,
+		"preconditions_confirmed": true,
+		"business_validation":     "not_run",
+	}
+	plugin, getErr := client.PluginGet(ctx, target, author, name)
+	if getErr != nil {
+		return Result{Data: data, Meta: preflight.Meta()}, getErr
+	}
+	data["plugin"] = plugin
+	data["business_validation"] = "target_exists"
+	if dryRun {
+		return Result{Data: data, Meta: preflight.Meta()}, nil
+	}
+	taskID, err := client.PluginUpgrade(ctx, target, author, name)
+	if err != nil {
+		markAsyncSubmissionFailure(data, err)
+		return Result{Data: data, Meta: preflight.Meta()}, err
+	}
+	return s.finishTask(ctx, client, target, taskID, wait, waitOptions, data, preflight.Meta())
+}
+
+// SkillInstallGitHub 安装 GitHub Skill；dry-run 使用服务端预览接口。
+func (s *Service) SkillInstallGitHub(ctx context.Context, body map[string]any, dryRun bool, options CheckOptions) (Result, error) {
+	preflight, err := s.WritePreflight(ctx, "skill.install.github", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	client, target := s.writeClient(preflight)
+	var data map[string]any
+	if dryRun {
+		data, err = client.SkillPreviewGitHub(ctx, target, body)
+	} else {
+		data, err = client.SkillInstallGitHub(ctx, target, body)
+	}
+	if err != nil {
+		return Result{Data: skillFailureData("skill.install.github", dryRun, err), Meta: preflight.Meta()}, err
+	}
+	if data == nil {
+		data = map[string]any{}
+	}
+	data["operation"] = "skill.install.github"
+	data["dry_run"] = dryRun
+	data["server_write"] = !dryRun
+	if dryRun {
+		data["business_validation"] = "server_preview"
+	}
+	return Result{Data: data, Meta: preflight.Meta()}, nil
+}
+
+// SkillInstallUpload 安装 ZIP Skill，并保留 source_paths 多值参数。
+func (s *Service) SkillInstallUpload(ctx context.Context, filename string, sourcePaths []string, dryRun bool, options CheckOptions) (Result, error) {
+	if err := validateRegularFile(filename); err != nil {
+		return Result{}, err
+	}
+	preflight, err := s.WritePreflight(ctx, "skill.install.upload", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	file, err := os.Open(filename)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, result.New("input", "无法读取 Skill ZIP 包")
+	}
+	defer file.Close()
+	client, target := s.writeClient(preflight)
+	var data map[string]any
+	if dryRun {
+		data, err = client.SkillPreviewUpload(ctx, target, filepath.Base(filename), file, sourcePaths)
+	} else {
+		data, err = client.SkillInstallUpload(ctx, target, filepath.Base(filename), file, sourcePaths)
+	}
+	if err != nil {
+		return Result{Data: skillFailureData("skill.install.upload", dryRun, err), Meta: preflight.Meta()}, err
+	}
+	if data == nil {
+		data = map[string]any{}
+	}
+	data["operation"] = "skill.install.upload"
+	data["dry_run"] = dryRun
+	data["server_write"] = !dryRun
+	if dryRun {
+		data["business_validation"] = "server_preview"
+	}
+	return Result{Data: data, Meta: preflight.Meta()}, nil
+}
+
+// MCPServerTest 提交 MCP Server 测试任务。
+func (s *Service) MCPServerTest(ctx context.Context, name string, body map[string]any, dryRun, wait bool, waitOptions WaitOptions, options CheckOptions) (Result, error) {
+	if dryRun && wait {
+		return Result{}, result.New("input", "dry-run 不能等待异步任务")
+	}
+	preflight, err := s.WritePreflight(ctx, "mcp_server.test", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	if wait {
+		if err := requireCapability(preflight, "task.get"); err != nil {
+			return Result{Meta: preflight.Meta()}, err
+		}
+	}
+	client, target := s.writeClient(preflight)
+	data := map[string]any{
+		"operation":               "mcp_server.test",
+		"name":                    name,
+		"dry_run":                 dryRun,
+		"server_write":            false,
+		"preconditions_confirmed": true,
+		"business_validation":     "not_run",
+	}
+	if name != "_" {
+		if err := requireCapability(preflight, "mcp_server.get"); err != nil {
+			return Result{Meta: preflight.Meta()}, err
+		}
+		server, getErr := client.MCPServerGet(ctx, target, name)
+		if getErr != nil {
+			return Result{Data: data, Meta: preflight.Meta()}, getErr
+		}
+		data["server"] = server
+		data["business_validation"] = "target_exists"
+	}
+	if dryRun {
+		return Result{Data: data, Meta: preflight.Meta()}, nil
+	}
+	taskID, err := client.MCPServerTest(ctx, target, name, body)
+	if err != nil {
+		markAsyncSubmissionFailure(data, err)
+		return Result{Data: data, Meta: preflight.Meta()}, err
+	}
+	return s.finishTask(ctx, client, target, taskID, wait, waitOptions, data, preflight.Meta())
+}
+
+func (s *Service) finishTask(ctx context.Context, client api.Client, target api.Target, taskID string, wait bool, waitOptions WaitOptions, data map[string]any, meta map[string]any) (Result, error) {
+	data["server_write"] = true
+	data["submitted"] = true
+	data["task_id"] = taskID
+	data["step"] = "submitted"
+	if !wait {
+		return Result{Data: data, Meta: meta}, nil
+	}
+	task, waitErr := waitForTask(ctx, client, target, taskID, waitOptions)
+	data["task"] = task
+	if waitErr != nil {
+		return Result{Data: data, Meta: meta}, waitErr
+	}
+	data["step"] = "completed"
+	return Result{Data: data, Meta: meta}, nil
+}
+
+func markAsyncSubmissionFailure(data map[string]any, err error) {
+	if result.AsError(err).Type == "result_unknown" {
+		data["submitted"] = "unknown"
+		data["step"] = "submission_unknown"
+		return
+	}
+	data["submitted"] = false
+	data["step"] = "submission_failed"
+}
+
+func skillFailureData(operation string, dryRun bool, err error) map[string]any {
+	data := map[string]any{
+		"operation":    operation,
+		"dry_run":      dryRun,
+		"server_write": false,
+	}
+	if dryRun {
+		data["step"] = "preview_failed"
+		data["business_validation"] = "failed"
+		return data
+	}
+	data["server_write"] = "unconfirmed"
+	data["step"] = "install_failed"
+	if result.AsError(err).Type == "result_unknown" {
+		data["server_write"] = "unknown"
+		data["step"] = "install_unknown"
+	}
+	return data
+}
+
+func validateRegularFile(filename string) error {
+	if strings.TrimSpace(filename) == "" || filename == "-" {
+		return result.New("input", "必须指定本地普通文件")
+	}
+	info, err := os.Stat(filename)
+	if err != nil {
+		return result.New("input", "无法读取上传文件")
+	}
+	if !info.Mode().IsRegular() {
+		return result.New("input", "上传路径必须是普通文件")
+	}
+	if info.Size() > maxExtensionUploadBytes {
+		return result.New("input", "上传文件过大")
+	}
+	return nil
 }
 
 func waitForTask(ctx context.Context, client api.Client, target api.Target, identifier string, options WaitOptions) (*api.Task, error) {

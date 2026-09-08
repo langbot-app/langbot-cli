@@ -393,6 +393,133 @@ func TestTaskAndKnowledgeBaseClientMethods(t *testing.T) {
 	}
 }
 
+func TestExtensionClientMethodsKeepRoutesAndMultipartFields(t *testing.T) {
+	var paths []string
+	transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		paths = append(paths, request.Method+" "+request.URL.EscapedPath())
+		var body string
+		switch request.URL.Path {
+		case "/api/v1/plugins/install/github", "/api/v1/plugins/install/marketplace", "/api/v1/plugins/install/local", "/api/v1/plugins/a/name/upgrade", "/api/v1/mcp/servers/server-a/test", "/api/v1/mcp/servers/server/name/test":
+			body = `{"code":0,"data":{"task_id":19}}`
+		case "/api/v1/plugins/a/name":
+			body = `{"code":0,"data":{"plugin":{"uuid":"plugin-a","author":"a","name":"name","version":"1.0","config":{"token":"secret"}}}}`
+		case "/api/v1/skills/install/github", "/api/v1/skills/install/github/preview":
+			body = `{"code":0,"data":{"skills":[{"name":"demo","instructions":"safe"}]}}`
+		case "/api/v1/skills/install/upload", "/api/v1/skills/install/upload/preview":
+			if err := request.ParseMultipartForm(1 << 20); err != nil {
+				return nil, fmt.Errorf("parse multipart: %w", err)
+			}
+			if got := request.MultipartForm.Value["source_paths"]; !reflect.DeepEqual(got, []string{"one", "two"}) {
+				return nil, fmt.Errorf("source_paths = %#v", got)
+			}
+			body = `{"code":0,"data":{"skills":[{"name":"demo"}]}}`
+		case "/api/v1/mcp/servers/server-a":
+			body = `{"code":0,"data":{"server":{"uuid":"server-a-id","name":"server-a","config":{"token":"secret"}}}}`
+		default:
+			return nil, fmt.Errorf("unexpected path %s", request.URL.Path)
+		}
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
+	})
+	client := Client{Transport: transport}
+	target := Target{Endpoint: "http://example.test", APIKey: "key"}
+	if id, err := client.PluginInstallGitHub(context.Background(), target, map[string]any{"owner": "a"}); err != nil || id != "19" {
+		t.Fatalf("PluginInstallGitHub() = %q, %v", id, err)
+	}
+	if id, err := client.PluginInstallMarketplace(context.Background(), target, map[string]any{}); err != nil || id != "19" {
+		t.Fatalf("PluginInstallMarketplace() = %q, %v", id, err)
+	}
+	if id, err := client.PluginInstallLocal(context.Background(), target, "plugin.lbpkg", strings.NewReader("package")); err != nil || id != "19" {
+		t.Fatalf("PluginInstallLocal() = %q, %v", id, err)
+	}
+	if _, err := client.PluginGet(context.Background(), target, "a", "name"); err != nil {
+		t.Fatalf("PluginGet() error = %v", err)
+	}
+	if id, err := client.PluginUpgrade(context.Background(), target, "a", "name"); err != nil || id != "19" {
+		t.Fatalf("PluginUpgrade() = %q, %v", id, err)
+	}
+	if _, err := client.SkillPreviewGitHub(context.Background(), target, map[string]any{}); err != nil {
+		t.Fatalf("SkillPreviewGitHub() error = %v", err)
+	}
+	if _, err := client.SkillInstallGitHub(context.Background(), target, map[string]any{}); err != nil {
+		t.Fatalf("SkillInstallGitHub() error = %v", err)
+	}
+	if _, err := client.SkillInstallUpload(context.Background(), target, "skill.zip", strings.NewReader("zip"), []string{"one", "two"}); err != nil {
+		t.Fatalf("SkillInstallUpload() error = %v", err)
+	}
+	if _, err := client.SkillPreviewUpload(context.Background(), target, "skill.zip", strings.NewReader("zip"), []string{"one", "two"}); err != nil {
+		t.Fatalf("SkillPreviewUpload() error = %v", err)
+	}
+	if _, err := client.MCPServerGet(context.Background(), target, "server-a"); err != nil {
+		t.Fatalf("MCPServerGet() error = %v", err)
+	}
+	if id, err := client.MCPServerTest(context.Background(), target, "server-a", map[string]any{}); err != nil || id != "19" {
+		t.Fatalf("MCPServerTest() = %q, %v", id, err)
+	}
+	if id, err := client.MCPServerTest(context.Background(), target, "server/name", map[string]any{}); err != nil || id != "19" {
+		t.Fatalf("MCPServerTest(encoded name) = %q, %v", id, err)
+	}
+	if len(paths) != 12 || paths[len(paths)-1] != "POST /api/v1/mcp/servers/server%2Fname/test" {
+		t.Fatalf("paths = %#v", paths)
+	}
+}
+
+func TestSkillPreviewFailureIsNotClassifiedAsUnknownWrite(t *testing.T) {
+	client := Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return nil, errors.New("connection reset")
+	})}
+	target := Target{Endpoint: "http://example.test", APIKey: "key"}
+	_, previewErr := client.SkillPreviewGitHub(context.Background(), target, map[string]any{})
+	if failure := result.AsError(previewErr); failure.Type == "result_unknown" || failure.Kind != "network" {
+		t.Fatalf("preview error = %+v", failure)
+	}
+	_, installErr := client.SkillInstallGitHub(context.Background(), target, map[string]any{})
+	if failure := result.AsError(installErr); failure.Type != "result_unknown" {
+		t.Fatalf("install error = %+v", failure)
+	}
+}
+
+func TestConfirmedWriteRejectionIsNotClassifiedAsUnknown(t *testing.T) {
+	client := Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusTooManyRequests,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"code":"rate_limited","data":null}`)),
+		}, nil
+	})}
+	_, err := client.PluginInstallMarketplace(context.Background(), Target{Endpoint: "http://example.test"}, map[string]any{})
+	if failure := result.AsError(err); failure.Type == "result_unknown" || failure.HTTPStatus != http.StatusTooManyRequests {
+		t.Fatalf("error = %+v", failure)
+	}
+}
+
+func TestExtensionClientRejectsPathInjection(t *testing.T) {
+	client := Client{}
+	target := Target{Endpoint: "http://example.test"}
+	for _, test := range []struct {
+		name string
+		call func() error
+	}{
+		{name: "plugin author", call: func() error {
+			_, err := client.PluginUpgrade(context.Background(), target, "../owner", "plugin")
+			return err
+		}},
+		{name: "plugin name", call: func() error {
+			_, err := client.PluginUpgrade(context.Background(), target, "owner", "../plugin")
+			return err
+		}},
+		{name: "mcp name", call: func() error {
+			_, err := client.MCPServerTest(context.Background(), target, "server/../name", nil)
+			return err
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if result.AsError(test.call()).Kind != "input" {
+				t.Fatalf("path injection was not rejected")
+			}
+		})
+	}
+}
+
 func TestTaskRejectsUnstableStatusAndIdentifier(t *testing.T) {
 	transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		return &http.Response{

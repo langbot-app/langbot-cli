@@ -136,6 +136,9 @@ func newRoot(deps Dependencies, flags *globalFlags, service *app.Service) *cobra
 	root.AddCommand(newPipelineCommand(service, deps, flags))
 	root.AddCommand(newTaskCommand(service, deps, flags))
 	root.AddCommand(newKnowledgeBaseCommand(service, deps, flags))
+	root.AddCommand(newPluginCommand(service, deps, flags))
+	root.AddCommand(newSkillCommand(service, deps, flags))
+	root.AddCommand(newMCPServerCommand(service, deps, flags))
 	return root
 }
 
@@ -359,11 +362,180 @@ func newKnowledgeBaseCommand(service *app.Service, deps Dependencies, flags *glo
 	return command
 }
 
+func newPluginCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
+	command := &cobra.Command{Use: "plugin", Short: "管理 Plugin", Args: cobra.NoArgs}
+	install := &cobra.Command{Use: "install", Short: "安装 Plugin", Args: cobra.NoArgs}
+	newTaskFlags := func(cmd *cobra.Command, dryRun, wait *bool, pollInterval, waitTimeout *time.Duration) {
+		cmd.Flags().BoolVar(dryRun, "dry-run", false, "只检查前置条件，不安装或升级")
+		cmd.Flags().BoolVar(wait, "wait", false, "等待任务进入终态")
+		cmd.Flags().DurationVar(pollInterval, "poll-interval", time.Second, "任务轮询间隔")
+		cmd.Flags().DurationVar(waitTimeout, "wait-timeout", 5*time.Minute, "本地等待超时")
+	}
+	var githubFile string
+	var githubDryRun, githubWait bool
+	var githubPollInterval, githubWaitTimeout time.Duration
+	github := &cobra.Command{Use: "github", Short: "从 GitHub 安装 Plugin", Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			body, err := loadRequestBody(cmd.Context(), githubFile, flags.apiKeyStdin, deps.In)
+			if err != nil {
+				return emitCommand(deps, flags, app.Result{}, err)
+			}
+			if err := validateWaitFlags(githubDryRun, githubWait, githubPollInterval, githubWaitTimeout); err != nil {
+				return emitCommand(deps, flags, app.Result{}, err)
+			}
+			return emitCall(deps, flags, func() (app.Result, error) {
+				return service.PluginInstallGitHub(cmd.Context(), body, githubDryRun, githubWait, app.WaitOptions{Wait: githubWait, PollInterval: githubPollInterval, WaitTimeout: githubWaitTimeout}, connectionOptions(flags))
+			})
+		},
+	}
+	github.Flags().StringVar(&githubFile, "file", "", "JSON/YAML 请求体文件，使用 - 从 stdin 读取")
+	newTaskFlags(github, &githubDryRun, &githubWait, &githubPollInterval, &githubWaitTimeout)
+	install.AddCommand(github)
+
+	var marketplaceFile string
+	var marketplaceDryRun, marketplaceWait bool
+	var marketplacePollInterval, marketplaceWaitTimeout time.Duration
+	marketplace := &cobra.Command{Use: "marketplace", Short: "从 Marketplace 安装 Plugin", Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			body, err := loadRequestBody(cmd.Context(), marketplaceFile, flags.apiKeyStdin, deps.In)
+			if err != nil {
+				return emitCommand(deps, flags, app.Result{}, err)
+			}
+			if err := validateWaitFlags(marketplaceDryRun, marketplaceWait, marketplacePollInterval, marketplaceWaitTimeout); err != nil {
+				return emitCommand(deps, flags, app.Result{}, err)
+			}
+			return emitCall(deps, flags, func() (app.Result, error) {
+				return service.PluginInstallMarketplace(cmd.Context(), body, marketplaceDryRun, marketplaceWait, app.WaitOptions{Wait: marketplaceWait, PollInterval: marketplacePollInterval, WaitTimeout: marketplaceWaitTimeout}, connectionOptions(flags))
+			})
+		},
+	}
+	marketplace.Flags().StringVar(&marketplaceFile, "file", "", "JSON/YAML 请求体文件，使用 - 从 stdin 读取")
+	newTaskFlags(marketplace, &marketplaceDryRun, &marketplaceWait, &marketplacePollInterval, &marketplaceWaitTimeout)
+	install.AddCommand(marketplace)
+
+	var localFile string
+	var localDryRun, localWait bool
+	var localPollInterval, localWaitTimeout time.Duration
+	local := &cobra.Command{Use: "local", Short: "从本地包安装 Plugin", Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := validateWaitFlags(localDryRun, localWait, localPollInterval, localWaitTimeout); err != nil {
+				return emitCommand(deps, flags, app.Result{}, err)
+			}
+			return emitCall(deps, flags, func() (app.Result, error) {
+				return service.PluginInstallLocal(cmd.Context(), localFile, localDryRun, localWait, app.WaitOptions{Wait: localWait, PollInterval: localPollInterval, WaitTimeout: localWaitTimeout}, connectionOptions(flags))
+			})
+		},
+	}
+	local.Flags().StringVar(&localFile, "file", "", "本地 Plugin 包文件")
+	newTaskFlags(local, &localDryRun, &localWait, &localPollInterval, &localWaitTimeout)
+	install.AddCommand(local)
+	command.AddCommand(install)
+
+	var upgradeDryRun, upgradeWait bool
+	var upgradePollInterval, upgradeWaitTimeout time.Duration
+	upgrade := &cobra.Command{Use: "upgrade <author> <name>", Short: "升级已安装 Plugin", Args: cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := validateWaitFlags(upgradeDryRun, upgradeWait, upgradePollInterval, upgradeWaitTimeout); err != nil {
+				return emitCommand(deps, flags, app.Result{}, err)
+			}
+			return emitCall(deps, flags, func() (app.Result, error) {
+				return service.PluginUpgrade(cmd.Context(), args[0], args[1], upgradeDryRun, upgradeWait, app.WaitOptions{Wait: upgradeWait, PollInterval: upgradePollInterval, WaitTimeout: upgradeWaitTimeout}, connectionOptions(flags))
+			})
+		},
+	}
+	newTaskFlags(upgrade, &upgradeDryRun, &upgradeWait, &upgradePollInterval, &upgradeWaitTimeout)
+	command.AddCommand(upgrade)
+	return command
+}
+
+func newSkillCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
+	command := &cobra.Command{Use: "skill", Short: "管理 Skill", Args: cobra.NoArgs}
+	install := &cobra.Command{Use: "install", Short: "安装 Skill", Args: cobra.NoArgs}
+	var githubFile string
+	var githubDryRun bool
+	github := &cobra.Command{Use: "github", Short: "从 GitHub 安装 Skill", Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			body, err := loadRequestBody(cmd.Context(), githubFile, flags.apiKeyStdin, deps.In)
+			if err != nil {
+				return emitCommand(deps, flags, app.Result{}, err)
+			}
+			return emitCall(deps, flags, func() (app.Result, error) {
+				return service.SkillInstallGitHub(cmd.Context(), body, githubDryRun, connectionOptions(flags))
+			})
+		},
+	}
+	github.Flags().StringVar(&githubFile, "file", "", "JSON/YAML 请求体文件，使用 - 从 stdin 读取")
+	github.Flags().BoolVar(&githubDryRun, "dry-run", false, "使用服务端预览，不安装")
+	install.AddCommand(github)
+
+	var sourcePaths []string
+	var uploadFile string
+	var uploadDryRun bool
+	upload := &cobra.Command{Use: "upload", Short: "从 ZIP 安装 Skill", Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return emitCall(deps, flags, func() (app.Result, error) {
+				return service.SkillInstallUpload(cmd.Context(), uploadFile, sourcePaths, uploadDryRun, connectionOptions(flags))
+			})
+		},
+	}
+	upload.Flags().StringVar(&uploadFile, "file", "", "Skill ZIP 文件")
+	upload.Flags().StringSliceVar(&sourcePaths, "source-path", nil, "Skill 包中的 source_paths，可重复指定")
+	upload.Flags().BoolVar(&uploadDryRun, "dry-run", false, "使用服务端预览，不安装")
+	install.AddCommand(upload)
+	command.AddCommand(install)
+	return command
+}
+
+func newMCPServerCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
+	command := &cobra.Command{Use: "mcp-server", Short: "测试 MCP Server", Args: cobra.NoArgs}
+	var file string
+	var dryRun, wait bool
+	var pollInterval, waitTimeout time.Duration
+	testCommand := &cobra.Command{Use: "test <server-name>", Short: "测试 MCP Server 连接", Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			body, err := loadOptionalRequestBody(cmd.Context(), file, flags.apiKeyStdin, deps.In)
+			if err != nil {
+				return emitCommand(deps, flags, app.Result{}, err)
+			}
+			if err := validateWaitFlags(dryRun, wait, pollInterval, waitTimeout); err != nil {
+				return emitCommand(deps, flags, app.Result{}, err)
+			}
+			return emitCall(deps, flags, func() (app.Result, error) {
+				return service.MCPServerTest(cmd.Context(), args[0], body, dryRun, wait, app.WaitOptions{Wait: wait, PollInterval: pollInterval, WaitTimeout: waitTimeout}, connectionOptions(flags))
+			})
+		},
+	}
+	testCommand.Flags().StringVar(&file, "file", "", "JSON/YAML 请求体文件，使用 - 从 stdin 读取；省略时使用空对象")
+	testCommand.Flags().BoolVar(&dryRun, "dry-run", false, "只检查前置条件，不执行测试")
+	testCommand.Flags().BoolVar(&wait, "wait", false, "等待任务进入终态")
+	testCommand.Flags().DurationVar(&pollInterval, "poll-interval", time.Second, "任务轮询间隔")
+	testCommand.Flags().DurationVar(&waitTimeout, "wait-timeout", 5*time.Minute, "本地等待超时")
+	command.AddCommand(testCommand)
+	return command
+}
+
+func validateWaitFlags(dryRun, wait bool, pollInterval, waitTimeout time.Duration) error {
+	if dryRun && wait {
+		return result.New("input", "--dry-run 不能与 --wait 同时使用")
+	}
+	if wait && (pollInterval <= 0 || waitTimeout <= 0) {
+		return result.New("input", "等待间隔和等待超时必须为正数")
+	}
+	return nil
+}
+
 func loadRequestBody(ctx context.Context, file string, apiKeyStdin bool, stdin io.Reader) (map[string]any, error) {
 	if err := requestbody.ValidateSources(file, apiKeyStdin); err != nil {
 		return nil, err
 	}
 	return requestbody.Load(ctx, file, stdin)
+}
+
+func loadOptionalRequestBody(ctx context.Context, file string, apiKeyStdin bool, stdin io.Reader) (map[string]any, error) {
+	if strings.TrimSpace(file) == "" {
+		return map[string]any{}, nil
+	}
+	return loadRequestBody(ctx, file, apiKeyStdin, stdin)
 }
 
 func connectionOptions(flags *globalFlags) app.CheckOptions {

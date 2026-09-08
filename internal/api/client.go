@@ -12,6 +12,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -30,6 +31,9 @@ const (
 	tasksPath          = "/api/v1/system/tasks"
 	knowledgeBasesPath = "/api/v1/knowledge/bases"
 	documentUploadPath = "/api/v1/files/documents"
+	pluginsPath        = "/api/v1/plugins"
+	skillsPath         = "/api/v1/skills"
+	mcpServersPath     = "/api/v1/mcp/servers"
 	defaultTimeout     = 30 * time.Second
 	maxResponseBytes   = 1 << 20
 	maxRequestBytes    = 1 << 20
@@ -109,6 +113,15 @@ var capabilityOperationIDs = []string{
 	"knowledge_base.get",
 	"knowledge_base.file.store",
 	"file.document.upload",
+	"plugin.install.github",
+	"plugin.install.marketplace",
+	"plugin.install.local",
+	"plugin.upgrade",
+	"plugin.get",
+	"skill.install.github",
+	"skill.install.upload",
+	"mcp_server.get",
+	"mcp_server.test",
 }
 
 // CapabilityOperationIDs 返回 CLI 支持展示的稳定操作顺序。
@@ -295,6 +308,120 @@ func (c Client) KnowledgeBaseStoreFile(ctx context.Context, target Target, ident
 		return "", writeUnknown(&result.Error{HTTPStatus: resp.StatusCode, RequestID: responseRequestID(resp.Header, resp.Body, target.APIKey)})
 	}
 	return taskID, nil
+}
+
+// PluginInstallGitHub 提交 GitHub 插件安装任务。
+func (c Client) PluginInstallGitHub(ctx context.Context, target Target, body map[string]any) (string, error) {
+	return c.taskWrite(ctx, target, http.MethodPost, pluginsPath+"/install/github", body)
+}
+
+// PluginInstallMarketplace 提交 Marketplace 插件安装任务。
+func (c Client) PluginInstallMarketplace(ctx context.Context, target Target, body map[string]any) (string, error) {
+	return c.taskWrite(ctx, target, http.MethodPost, pluginsPath+"/install/marketplace", body)
+}
+
+// PluginInstallLocal 提交本地插件包安装任务。
+func (c Client) PluginInstallLocal(ctx context.Context, target Target, filename string, file io.Reader) (string, error) {
+	body, contentType, err := multipartBody(filename, file, nil, maxUploadBytes)
+	if err != nil {
+		return "", err
+	}
+	resp, err := c.writeMultipart(ctx, target, pluginsPath+"/install/local", body, contentType)
+	if err != nil {
+		return "", err
+	}
+	return taskID(resp)
+}
+
+// PluginUpgrade 提交已安装插件升级任务。
+func (c Client) PluginUpgrade(ctx context.Context, target Target, author, name string) (string, error) {
+	path, err := resourcePath(pluginsPath, author)
+	if err != nil {
+		return "", err
+	}
+	path, err = resourcePath(path, name)
+	if err != nil {
+		return "", err
+	}
+	return c.taskWrite(ctx, target, http.MethodPost, path+"/upgrade", nil)
+}
+
+// PluginGet 返回插件的安全存在性信息。
+func (c Client) PluginGet(ctx context.Context, target Target, author, name string) (map[string]any, error) {
+	path, err := resourcePath(pluginsPath, author)
+	if err != nil {
+		return nil, err
+	}
+	path, err = resourcePath(path, name)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.fetch(ctx, target, http.MethodGet, path)
+	if err != nil {
+		return nil, err
+	}
+	if _, ok := resp.Data["plugin"].(map[string]any); !ok {
+		return nil, protocolError("服务返回的资源格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.APIKey))
+	}
+	return map[string]any{"author": author, "name": name}, nil
+}
+
+// SkillInstallGitHub 安装 GitHub Skill，服务端同步返回安装结果。
+func (c Client) SkillInstallGitHub(ctx context.Context, target Target, body map[string]any) (map[string]any, error) {
+	return c.skillWrite(ctx, target, "/install/github", body)
+}
+
+// SkillPreviewGitHub 请求服务端预览 GitHub Skill，不产生持久安装。
+func (c Client) SkillPreviewGitHub(ctx context.Context, target Target, body map[string]any) (map[string]any, error) {
+	resp, err := c.previewJSON(ctx, target, skillsPath+"/install/github/preview", body)
+	if err != nil {
+		return nil, err
+	}
+	return resp.Data, nil
+}
+
+// SkillInstallUpload 安装 ZIP Skill，保留 source_paths 的多值表单语义。
+func (c Client) SkillInstallUpload(ctx context.Context, target Target, filename string, file io.Reader, sourcePaths []string) (map[string]any, error) {
+	return c.skillMultipart(ctx, target, "/install/upload", filename, file, sourcePaths)
+}
+
+// SkillPreviewUpload 请求服务端预览 ZIP Skill，不产生持久安装。
+func (c Client) SkillPreviewUpload(ctx context.Context, target Target, filename string, file io.Reader, sourcePaths []string) (map[string]any, error) {
+	body, contentType, err := multipartBody(filename, file, sourcePaths, maxUploadBytes)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.previewMultipart(ctx, target, skillsPath+"/install/upload/preview", body, contentType)
+	if err != nil {
+		return nil, err
+	}
+	return resp.Data, nil
+}
+
+// MCPServerGet 返回 MCP Server 的安全存在性信息。
+func (c Client) MCPServerGet(ctx context.Context, target Target, name string) (map[string]any, error) {
+	path, err := mcpServerPath(name)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.fetch(ctx, target, http.MethodGet, path)
+	if err != nil {
+		return nil, err
+	}
+	server, err := parseProjectedObject(resp, "server", projectMCPServer, target.APIKey)
+	if err != nil {
+		return nil, err
+	}
+	return server, nil
+}
+
+// MCPServerTest 提交 MCP Server 测试任务。
+func (c Client) MCPServerTest(ctx context.Context, target Target, name string, body map[string]any) (string, error) {
+	path, err := mcpServerPath(name)
+	if err != nil {
+		return "", err
+	}
+	return c.taskWrite(ctx, target, http.MethodPost, path+"/test", body)
 }
 
 // Bots 返回 Bot 的安全字段投影，不输出 adapter_config 等配置内容。
@@ -499,6 +626,100 @@ func (c Client) writeMultipart(ctx context.Context, target Target, path string, 
 	return response, nil
 }
 
+func (c Client) taskWrite(ctx context.Context, target Target, method, path string, body map[string]any) (string, error) {
+	resp, err := c.write(ctx, target, method, path, body)
+	if err != nil {
+		return "", err
+	}
+	return taskID(resp)
+}
+
+func taskID(resp response) (string, error) {
+	id, ok := stringValue(resp.Data["task_id"])
+	if !ok || strings.TrimSpace(id) == "" {
+		return "", writeUnknown(&result.Error{
+			HTTPStatus: resp.StatusCode,
+			RequestID:  responseRequestID(resp.Header, resp.Body, ""),
+		})
+	}
+	return id, nil
+}
+
+func (c Client) skillWrite(ctx context.Context, target Target, suffix string, body map[string]any) (map[string]any, error) {
+	resp, err := c.write(ctx, target, http.MethodPost, skillsPath+suffix, body)
+	if err != nil {
+		return nil, err
+	}
+	return resp.Data, nil
+}
+
+func (c Client) skillMultipart(ctx context.Context, target Target, suffix, filename string, file io.Reader, sourcePaths []string) (map[string]any, error) {
+	body, contentType, err := multipartBody(filename, file, sourcePaths, maxUploadBytes)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.writeMultipart(ctx, target, skillsPath+suffix, body, contentType)
+	if err != nil {
+		return nil, err
+	}
+	return resp.Data, nil
+}
+
+func (c Client) previewJSON(ctx context.Context, target Target, path string, body map[string]any) (response, error) {
+	if !knownPreviewPath(path) {
+		return response{}, result.New("incompatible", "只允许调用已确认的预览接口")
+	}
+	encoded, err := json.Marshal(body)
+	if err != nil {
+		return response{}, result.New("input", "请求体格式无法编码")
+	}
+	if len(encoded) > maxRequestBytes {
+		return response{}, result.New("input", "请求体过大")
+	}
+	return c.do(ctx, target, http.MethodPost, path, bytes.NewReader(encoded), true)
+}
+
+func (c Client) previewMultipart(ctx context.Context, target Target, path string, body []byte, contentType string) (response, error) {
+	if !knownPreviewPath(path) {
+		return response{}, result.New("incompatible", "只允许调用已确认的预览接口")
+	}
+	return c.doWithContentType(ctx, target, http.MethodPost, path, bytes.NewReader(body), true, contentType)
+}
+
+func multipartBody(filename string, file io.Reader, sourcePaths []string, maxBytes int64) ([]byte, string, error) {
+	if file == nil {
+		return nil, "", result.New("input", "上传文件不能为空")
+	}
+	content, err := io.ReadAll(io.LimitReader(file, maxBytes+1))
+	if err != nil {
+		return nil, "", result.New("input", "读取上传文件失败")
+	}
+	if int64(len(content)) > maxBytes {
+		return nil, "", result.New("input", "上传文件过大")
+	}
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("file", filepath.Base(filename))
+	if err != nil {
+		return nil, "", result.New("input", "无法构造上传请求")
+	}
+	if _, err := part.Write(content); err != nil {
+		return nil, "", result.New("input", "无法构造上传请求")
+	}
+	for _, sourcePath := range sourcePaths {
+		if err := writer.WriteField("source_paths", sourcePath); err != nil {
+			return nil, "", result.New("input", "无法构造上传请求")
+		}
+	}
+	if err := writer.Close(); err != nil {
+		return nil, "", result.New("input", "无法构造上传请求")
+	}
+	if int64(body.Len()) > maxBytes {
+		return nil, "", result.New("input", "上传请求过大")
+	}
+	return body.Bytes(), writer.FormDataContentType(), nil
+}
+
 func (c Client) do(ctx context.Context, target Target, method, path string, requestBody io.Reader, allowNilData bool) (response, error) {
 	return c.doWithContentType(ctx, target, method, path, requestBody, allowNilData, "application/json")
 }
@@ -608,11 +829,41 @@ func knownWritePath(method, path string) bool {
 		identifier := strings.TrimSuffix(strings.TrimPrefix(path, pipelinesPath+"/"), "/copy")
 		return identifier != "" && !strings.Contains(identifier, "/")
 	}
+	if method == http.MethodPost {
+		for _, suffix := range []string{"/install/github", "/install/marketplace", "/install/local"} {
+			if path == pluginsPath+suffix {
+				return true
+			}
+		}
+		if strings.HasPrefix(path, pluginsPath+"/") && strings.HasSuffix(path, "/upgrade") {
+			return safeNestedPath(path, pluginsPath, "/upgrade", 2)
+		}
+		if strings.HasPrefix(path, skillsPath+"/install/") {
+			return path == skillsPath+"/install/github" || path == skillsPath+"/install/upload"
+		}
+		if strings.HasPrefix(path, mcpServersPath+"/") && strings.HasSuffix(path, "/test") {
+			return safeNestedPath(path, mcpServersPath, "/test", 1)
+		}
+	}
 	return false
+}
+
+func knownPreviewPath(path string) bool {
+	return path == skillsPath+"/install/github/preview" || path == skillsPath+"/install/upload/preview"
+}
+
+func safeNestedPath(path, base, suffix string, segments int) bool {
+	value := strings.TrimSuffix(strings.TrimPrefix(path, base+"/"), suffix)
+	parts := strings.Split(value, "/")
+	return len(parts) == segments && strings.TrimSpace(value) != ""
 }
 
 func classifyWriteError(err error) error {
 	failure := result.AsError(err)
+	if failure.HTTPStatus == http.StatusTooManyRequests ||
+		(failure.HTTPStatus >= http.StatusMultipleChoices && failure.HTTPStatus < http.StatusBadRequest) {
+		return err
+	}
 	if failure.Kind == "network" || failure.Kind == "incompatible" ||
 		(failure.Kind == "server" && failure.HTTPStatus >= http.StatusInternalServerError) {
 		return writeUnknown(failure)
@@ -635,10 +886,13 @@ func knownGetPath(path string) bool {
 	if path == infoPath || path == contextPath || path == capabilitiesPath || path == botsPath || path == pipelinesPath {
 		return true
 	}
-	for _, base := range []string{botsPath, pipelinesPath, tasksPath, knowledgeBasesPath} {
+	for _, base := range []string{botsPath, pipelinesPath, tasksPath, knowledgeBasesPath, pluginsPath, mcpServersPath} {
 		if strings.HasPrefix(path, base+"/") && !strings.Contains(strings.TrimPrefix(path, base+"/"), "/") {
 			return true
 		}
+	}
+	if strings.HasPrefix(path, pluginsPath+"/") && strings.Count(strings.TrimPrefix(path, pluginsPath+"/"), "/") == 1 {
+		return true
 	}
 	return false
 }
@@ -662,6 +916,19 @@ func resourcePath(base, identifier string) (string, error) {
 		return "", result.New("input", "资源 ID 必须是单个安全的路径段")
 	}
 	return base + "/" + escaped, nil
+}
+
+func mcpServerPath(name string) (string, error) {
+	if strings.TrimSpace(name) == "" || strings.ContainsAny(name, "\\?#") ||
+		strings.IndexFunc(name, func(r rune) bool { return r < 0x20 || r == 0x7f }) >= 0 {
+		return "", result.New("input", "MCP Server 名称不是安全的路径参数")
+	}
+	for _, segment := range strings.Split(name, "/") {
+		if strings.TrimSpace(segment) == "" || segment == "." || segment == ".." {
+			return "", result.New("input", "MCP Server 名称不是安全的路径参数")
+		}
+	}
+	return mcpServersPath + "/" + url.PathEscape(name), nil
 }
 
 func taskPath(identifier string) (string, error) {
@@ -701,6 +968,14 @@ func parseResourceObject(resp response, key string, project func(map[string]any,
 	}
 	if !validResourceUUID(item, secret) {
 		return nil, protocolError("服务返回的资源缺少有效 UUID", resp.StatusCode, responseRequestID(resp.Header, resp.Body, secret))
+	}
+	return project(item, secret), nil
+}
+
+func parseProjectedObject(resp response, key string, project func(map[string]any, string) map[string]any, secret string) (map[string]any, error) {
+	item, ok := resp.Data[key].(map[string]any)
+	if !ok {
+		return nil, protocolError("服务返回的资源格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, secret))
 	}
 	return project(item, secret), nil
 }
@@ -779,6 +1054,12 @@ func projectBot(value map[string]any, secret string) map[string]any {
 func projectPipeline(value map[string]any, secret string) map[string]any {
 	return projectScalarFields(value, []string{
 		"uuid", "name", "description", "emoji", "for_version", "is_default", "created_at", "updated_at",
+	}, secret)
+}
+
+func projectMCPServer(value map[string]any, secret string) map[string]any {
+	return projectScalarFields(value, []string{
+		"uuid", "name", "enable", "mode", "created_at", "updated_at",
 	}, secret)
 }
 

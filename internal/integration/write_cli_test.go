@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -222,6 +223,75 @@ func TestKnowledgeBaseIngestAndTaskGetCommands(t *testing.T) {
 	taskData := task.data["data"].(map[string]any)["task"].(map[string]any)
 	if taskData["id"] != float64(17) || taskData["status"] != "succeeded" {
 		t.Fatalf("task output = %s", task.out)
+	}
+}
+
+func TestExtensionCommandsCoverDryRunInstallAndAsyncTest(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	bodyPath := filepath.Join(t.TempDir(), "request.json")
+	if err := os.WriteFile(bodyPath, []byte(`{"owner":"demo","repo":"plugin","release_tag":"v1"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var pluginWrites, skillPreview, skillWrites, mcpWrites atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/system/context":
+			fmt.Fprint(w, `{"code":0,"data":{"instance_uuid":"instance-a","workspace_uuid":"workspace-a","api_key_id":"key-a","permissions":["resource.manage","resource.view"]}}`)
+		case "/api/v1/system/capabilities":
+			fmt.Fprint(w, `{"code":0,"data":{"schema_version":1,"operations":{"plugin.install.github":{"supported":true},"skill.install.github":{"supported":true},"mcp_server.get":{"supported":true},"mcp_server.test":{"supported":true},"task.get":{"supported":true}}}}`)
+		case "/api/v1/plugins/install/github":
+			pluginWrites.Add(1)
+			fmt.Fprint(w, `{"code":0,"data":{"task_id":51}}`)
+		case "/api/v1/skills/install/github/preview":
+			skillPreview.Add(1)
+			fmt.Fprint(w, `{"code":0,"data":{"skills":[{"name":"demo"}]}}`)
+		case "/api/v1/skills/install/github":
+			skillWrites.Add(1)
+			fmt.Fprint(w, `{"code":0,"data":{"skills":[{"name":"demo"}]}}`)
+		case "/api/v1/mcp/servers/saved":
+			fmt.Fprint(w, `{"code":0,"data":{"server":{"uuid":"saved-id","name":"saved","type":"stdio"}}}`)
+		case "/api/v1/mcp/servers/saved/test":
+			mcpWrites.Add(1)
+			fmt.Fprint(w, `{"code":0,"data":{"task_id":52}}`)
+		case "/api/v1/system/tasks/51":
+			fmt.Fprint(w, `{"code":0,"data":{"id":51,"task_type":"user","kind":"extension-operation","status":"succeeded","error":null,"result":null,"created_at":1}}`)
+		case "/api/v1/system/tasks/52":
+			fmt.Fprint(w, `{"code":0,"data":{"id":52,"task_type":"user","kind":"extension-operation","status":"succeeded","error":null,"result":null,"created_at":1}}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprint(w, `{"code":404,"data":null}`)
+		}
+	}))
+	defer server.Close()
+	configureWriteContext(t, configPath, server.URL, "EXT_KEY")
+	env := map[string]string{"EXT_KEY": "secret"}
+
+	dryRun := run(t, configPath, env, "", "plugin", "install", "github", "--file", bodyPath, "--dry-run")
+	requireSuccess(t, dryRun)
+	if pluginWrites.Load() != 0 || dryRun.data["data"].(map[string]any)["server_write"] != false {
+		t.Fatalf("plugin dry-run wrote data: %s", dryRun.out)
+	}
+	installed := run(t, configPath, env, "", "plugin", "install", "github", "--file", bodyPath, "--wait", "--poll-interval", "1ms", "--wait-timeout", "1s")
+	requireSuccess(t, installed)
+	if pluginWrites.Load() != 1 || installed.data["data"].(map[string]any)["task_id"] != "51" {
+		t.Fatalf("plugin install = %s", installed.out)
+	}
+
+	skill := run(t, configPath, env, "", "skill", "install", "github", "--file", bodyPath, "--dry-run")
+	requireSuccess(t, skill)
+	if skillPreview.Load() != 1 || skillWrites.Load() != 0 {
+		t.Fatalf("skill dry-run calls = preview:%d install:%d", skillPreview.Load(), skillWrites.Load())
+	}
+
+	mcpDryRun := run(t, configPath, env, "", "mcp-server", "test", "saved", "--dry-run")
+	requireSuccess(t, mcpDryRun)
+	if mcpWrites.Load() != 0 || mcpDryRun.data["data"].(map[string]any)["server"] == nil {
+		t.Fatalf("MCP dry-run = %s", mcpDryRun.out)
+	}
+	mcp := run(t, configPath, env, "", "mcp-server", "test", "saved", "--wait", "--poll-interval", "1ms", "--wait-timeout", "1s")
+	requireSuccess(t, mcp)
+	if mcpWrites.Load() != 1 || mcp.data["data"].(map[string]any)["task_id"] != "52" {
+		t.Fatalf("MCP test = %s", mcp.out)
 	}
 }
 
