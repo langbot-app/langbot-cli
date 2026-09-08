@@ -421,6 +421,36 @@ func (s *Service) RawInfo(ctx context.Context, options CheckOptions, methodAndPa
 	return Result{Data: data, Meta: connectionMeta(conn)}, nil
 }
 
+// APIRequest 执行受 operation registry 约束的 HTTP 请求。
+func (s *Service) APIRequest(ctx context.Context, method, path string, body map[string]any, options CheckOptions) (Result, error) {
+	operation, ok := api.ResolveOperation(method, path)
+	if !ok {
+		return Result{}, result.New("incompatible", "请求路径或方法未登记，拒绝作为通用 API 调用")
+	}
+	conn, identity, err := s.connectionWithIdentity(ctx, options)
+	meta := resourceMeta(conn, identity)
+	if err != nil {
+		return Result{Meta: meta}, err
+	}
+	if operation.Permission != "" && !hasPermission(identity, operation.Permission) {
+		return Result{Meta: meta}, result.New("permission", "当前 API Key 缺少 "+operation.Permission+" 权限")
+	}
+	capabilities, err := s.capabilities(ctx, conn)
+	if err != nil {
+		return Result{Meta: meta}, err
+	}
+	if err := requireCapability(WritePreflight{Capabilities: capabilities}, operation.ID); err != nil {
+		return Result{Meta: meta}, err
+	}
+	data, err := (api.Client{Transport: s.deps.Transport}).APIRequest(ctx, api.Target{
+		Endpoint: conn.Endpoint, APIKey: conn.APIKey, Timeout: conn.Timeout,
+	}, operation, body)
+	if err != nil {
+		return Result{Meta: meta}, err
+	}
+	return Result{Data: data, Meta: meta}, nil
+}
+
 func (s *Service) Identity(ctx context.Context, kind string, options CheckOptions) (Result, error) {
 	file, err := s.load()
 	if err != nil {
@@ -540,6 +570,29 @@ func (s *Service) TaskGet(ctx context.Context, identifier string, options CheckO
 		return Result{Meta: resourceMeta(conn, identity)}, err
 	}
 	return Result{Data: map[string]any{"task": task}, Meta: resourceMeta(conn, identity)}, nil
+}
+
+// TaskList 返回当前 API Key 可见的任务列表。
+func (s *Service) TaskList(ctx context.Context, taskType, kind string, options CheckOptions) (Result, error) {
+	conn, identity, err := s.resourceConnection(ctx, options)
+	if err != nil {
+		return Result{Meta: resourceMeta(conn, identity)}, err
+	}
+	capabilities, err := s.capabilities(ctx, conn)
+	if err != nil {
+		return Result{Meta: resourceMeta(conn, identity)}, err
+	}
+	preflight := WritePreflight{Connection: conn, Identity: identity, Capabilities: capabilities}
+	if err := requireCapability(preflight, "task.list"); err != nil {
+		return Result{Meta: resourceMeta(conn, identity)}, err
+	}
+	tasks, err := (api.Client{Transport: s.deps.Transport}).Tasks(ctx, api.Target{
+		Endpoint: conn.Endpoint, APIKey: conn.APIKey, Timeout: conn.Timeout,
+	}, api.TaskListFilters{Type: taskType, Kind: kind})
+	if err != nil {
+		return Result{Meta: resourceMeta(conn, identity)}, err
+	}
+	return Result{Data: map[string]any{"tasks": tasks}, Meta: resourceMeta(conn, identity)}, nil
 }
 
 // TaskWait 等待异步任务进入终态，只在本地停止轮询。
@@ -1327,6 +1380,17 @@ func partialWriteError(cause error) *result.Error {
 }
 
 func (s *Service) resourceConnection(ctx context.Context, options CheckOptions) (config.Connection, api.Context, error) {
+	conn, identity, err := s.connectionWithIdentity(ctx, options)
+	if err != nil {
+		return conn, identity, err
+	}
+	if !hasPermission(identity, "resource.view") {
+		return conn, identity, result.New("permission", "当前 API Key 缺少 resource.view 权限")
+	}
+	return conn, identity, nil
+}
+
+func (s *Service) connectionWithIdentity(ctx context.Context, options CheckOptions) (config.Connection, api.Context, error) {
 	file, err := s.load()
 	if err != nil {
 		return config.Connection{}, api.Context{}, err
@@ -1345,9 +1409,6 @@ func (s *Service) resourceConnection(ctx context.Context, options CheckOptions) 
 	}
 	if err := workspaceBindingError(conn, identity); err != nil {
 		return conn, identity, err
-	}
-	if !hasPermission(identity, "resource.view") {
-		return conn, identity, result.New("permission", "当前 API Key 缺少 resource.view 权限")
 	}
 	return conn, identity, nil
 }

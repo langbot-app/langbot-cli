@@ -347,7 +347,8 @@ func formatCell(value any) string {
 
 func isSecretField(name string) bool {
 	name = strings.ToLower(name)
-	if name == "api_key_id" {
+	switch name {
+	case "api_key_id", "token_count", "input_tokens", "output_tokens", "total_tokens", "max_tokens":
 		return false
 	}
 	for _, part := range []string{"apikey", "api_key", "token", "password", "secret", "authorization"} {

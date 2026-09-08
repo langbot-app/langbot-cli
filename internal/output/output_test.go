@@ -13,6 +13,7 @@ func TestRenderPreservesNumbersAndRedactsSecrets(t *testing.T) {
 		"api_key":        "secret-value",
 		"api_key_secret": "another-secret",
 		"api_key_id":     "safe-key-id",
+		"token_count":    12,
 		"error": map[string]any{
 			"http_status": int64(403),
 			"server_code": int64(9223372036854770000),
@@ -22,7 +23,7 @@ func TestRenderPreservesNumbersAndRedactsSecrets(t *testing.T) {
 		t.Fatal(err)
 	}
 	jsonOutput := out.String()
-	if strings.Contains(jsonOutput, "secret-value") || strings.Contains(jsonOutput, "another-secret") || !strings.Contains(jsonOutput, "safe-key-id") || !strings.Contains(jsonOutput, `"http_status": 403`) {
+	if strings.Contains(jsonOutput, "secret-value") || strings.Contains(jsonOutput, "another-secret") || !strings.Contains(jsonOutput, "safe-key-id") || !strings.Contains(jsonOutput, `"token_count": 12`) || !strings.Contains(jsonOutput, `"http_status": 403`) {
 		t.Fatalf("unexpected JSON output: %s", jsonOutput)
 	}
 	out.Reset()

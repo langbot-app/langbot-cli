@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/langbot-app/langbot-cli/internal/api"
 	"github.com/langbot-app/langbot-cli/internal/app"
 	"github.com/langbot-app/langbot-cli/internal/config"
 	"github.com/langbot-app/langbot-cli/internal/output"
@@ -130,6 +131,7 @@ func newRoot(deps Dependencies, flags *globalFlags, service *app.Service) *cobra
 	root.AddCommand(newStatusCommand(service, deps, flags))
 	root.AddCommand(newVersionCommand(service, deps, flags))
 	root.AddCommand(newRawCommand(service, deps, flags))
+	root.AddCommand(newAPICommand(service, deps, flags))
 	root.AddCommand(newIdentityCommand(service, deps, flags, "whoami"))
 	root.AddCommand(newIdentityCommand(service, deps, flags, "capabilities"))
 	root.AddCommand(newBotCommand(service, deps, flags))
@@ -298,6 +300,18 @@ func newPipelineDeleteCommand(service *app.Service, deps Dependencies, flags *gl
 
 func newTaskCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
 	command := &cobra.Command{Use: "task", Short: "查看异步任务", Args: cobra.NoArgs}
+	var taskType, taskKind string
+	list := &cobra.Command{
+		Use: "list", Short: "列出异步任务", Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return emitCall(deps, flags, func() (app.Result, error) {
+				return service.TaskList(cmd.Context(), taskType, taskKind, connectionOptions(flags))
+			})
+		},
+	}
+	list.Flags().StringVar(&taskType, "type", "", "按任务类型筛选")
+	list.Flags().StringVar(&taskKind, "kind", "", "按任务 kind 筛选")
+	command.AddCommand(list)
 	var wait bool
 	var pollInterval time.Duration
 	var waitTimeout time.Duration
@@ -759,6 +773,43 @@ func newRawCommand(service *app.Service, deps Dependencies, flags *globalFlags) 
 	}
 	cmd.Flags().StringVar(&file, "file", "", "请求体输入；阶段 1A 不允许请求体")
 	return cmd
+}
+
+func newAPICommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
+	command := &cobra.Command{Use: "api", Short: "调用已登记的 HTTP 操作", Args: cobra.NoArgs}
+	get := &cobra.Command{
+		Use: "get <path>", Short: "调用受控 GET 接口", Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			operation, ok := api.ResolveOperation("GET", args[0])
+			if !ok || operation.Method != http.MethodGet {
+				return emitCommand(deps, flags, app.Result{}, result.New("incompatible", "GET 路径未登记"))
+			}
+			return emitCall(deps, flags, func() (app.Result, error) {
+				return service.APIRequest(cmd.Context(), http.MethodGet, args[0], nil, connectionOptions(flags))
+			})
+		},
+	}
+	command.AddCommand(get)
+	var file string
+	post := &cobra.Command{
+		Use: "post <path>", Short: "调用受控 POST 接口", Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			operation, ok := api.ResolveOperation("POST", args[0])
+			if !ok || !operation.ReadOnly {
+				return emitCommand(deps, flags, app.Result{}, result.New("incompatible", "POST 路径未登记"))
+			}
+			body, err := loadOptionalRequestBody(cmd.Context(), file, flags.apiKeyStdin, deps.In)
+			if err != nil {
+				return emitCommand(deps, flags, app.Result{}, err)
+			}
+			return emitCall(deps, flags, func() (app.Result, error) {
+				return service.APIRequest(cmd.Context(), http.MethodPost, args[0], body, connectionOptions(flags))
+			})
+		},
+	}
+	post.Flags().StringVar(&file, "file", "", "JSON/YAML 请求体文件，使用 - 从 stdin 读取")
+	command.AddCommand(post)
+	return command
 }
 
 func newIdentityCommand(service *app.Service, deps Dependencies, flags *globalFlags, name string) *cobra.Command {

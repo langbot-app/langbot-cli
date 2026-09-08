@@ -96,6 +96,12 @@ type Task struct {
 	CreatedAt json.Number `json:"created_at" yaml:"created_at"`
 }
 
+// TaskListFilters 限制任务列表的服务端筛选条件。
+type TaskListFilters struct {
+	Type string
+	Kind string
+}
+
 var capabilityOperationIDs = []string{
 	"bot.list",
 	"bot.get",
@@ -112,15 +118,29 @@ var capabilityOperationIDs = []string{
 	"task.get",
 	"knowledge_base.get",
 	"knowledge_base.file.store",
+	"knowledge_base.retrieve",
 	"file.document.upload",
 	"plugin.install.github",
 	"plugin.install.marketplace",
 	"plugin.install.local",
 	"plugin.upgrade",
 	"plugin.get",
+	"plugin.list",
+	"plugin.config.get",
+	"plugin.logs",
+	"skill.list",
+	"skill.get",
+	"skill.files.list",
+	"skill.files.read",
+	"skill.preview",
 	"skill.install.github",
 	"skill.install.upload",
+	"mcp_server.list",
 	"mcp_server.get",
+	"mcp_server.resources",
+	"mcp_server.resource_templates",
+	"mcp_server.resource_read",
+	"mcp_server.logs",
 	"mcp_server.test",
 }
 
@@ -229,6 +249,46 @@ func (c Client) Task(ctx context.Context, target Target, identifier string) (Tas
 		return Task{}, protocolError("服务返回的任务数据格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.APIKey))
 	}
 	return task, nil
+}
+
+// Tasks 返回 API Key 可见的异步任务列表。
+func (c Client) Tasks(ctx context.Context, target Target, filters TaskListFilters) ([]Task, error) {
+	query := url.Values{}
+	if strings.TrimSpace(filters.Type) != "" {
+		query.Set("type", filters.Type)
+	}
+	if strings.TrimSpace(filters.Kind) != "" {
+		query.Set("kind", filters.Kind)
+	}
+	path := tasksPath
+	if encoded := query.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	resp, err := c.fetch(ctx, target, http.MethodGet, path)
+	if err != nil {
+		return nil, err
+	}
+	raw, ok := resp.Data["tasks"].([]any)
+	if !ok {
+		return nil, protocolError("服务返回的任务列表格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.APIKey))
+	}
+	tasks := make([]Task, 0, len(raw))
+	for _, value := range raw {
+		item, ok := value.(map[string]any)
+		if !ok {
+			return nil, protocolError("服务返回的任务格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.APIKey))
+		}
+		id, ok := stringValue(item["id"])
+		if !ok || strings.TrimSpace(id) == "" || containsSecret(id, target.APIKey) {
+			return nil, protocolError("服务返回的任务缺少有效 ID", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.APIKey))
+		}
+		task, ok := parseTaskData(item, id)
+		if !ok {
+			return nil, protocolError("服务返回的任务数据格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.APIKey))
+		}
+		tasks = append(tasks, task)
+	}
+	return tasks, nil
 }
 
 // KnowledgeBase 返回指定知识库的安全字段。
@@ -580,6 +640,45 @@ func (c Client) Raw(ctx context.Context, target Target, method, path string) (an
 	}, nil
 }
 
+// APIRequest 执行登记在 operation registry 中的请求，并返回经过安全投影的 JSON 数据。
+func (c Client) APIRequest(ctx context.Context, target Target, operation Operation, body map[string]any) (any, error) {
+	if resolved, ok := ResolveOperation(operation.Method, operation.Path); !ok || resolved.ID != operation.ID {
+		return nil, result.New("incompatible", "请求不在受控操作登记表中")
+	}
+	if !operation.ReadOnly {
+		return nil, result.New("incompatible", "受控 API 暂不开放资源写入")
+	}
+	var resp response
+	var err error
+	if operation.Method == http.MethodGet {
+		resp, err = c.do(ctx, target, http.MethodGet, operation.Path, nil, false)
+	} else {
+		resp, err = c.readPost(ctx, target, operation.Path, body)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return redactConnectionSecret(resp.Data, target.APIKey), nil
+}
+
+func (c Client) readPost(ctx context.Context, target Target, path string, body map[string]any) (response, error) {
+	encoded, err := json.Marshal(bodyOrEmpty(body))
+	if err != nil {
+		return response{}, result.New("input", "请求体格式无法编码")
+	}
+	if len(encoded) > maxRequestBytes {
+		return response{}, result.New("input", "请求体过大")
+	}
+	return c.do(ctx, target, http.MethodPost, path, bytes.NewReader(encoded), true)
+}
+
+func bodyOrEmpty(body map[string]any) map[string]any {
+	if body == nil {
+		return map[string]any{}
+	}
+	return body
+}
+
 func (c Client) fetch(ctx context.Context, target Target, method, path string) (response, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -883,7 +982,14 @@ func writeUnknown(cause ...*result.Error) *result.Error {
 }
 
 func knownGetPath(path string) bool {
-	if path == infoPath || path == contextPath || path == capabilitiesPath || path == botsPath || path == pipelinesPath {
+	queryIndex := strings.IndexByte(path, '?')
+	if queryIndex >= 0 {
+		if path[:queryIndex] != tasksPath {
+			return false
+		}
+		path = path[:queryIndex]
+	}
+	if path == infoPath || path == contextPath || path == capabilitiesPath || path == botsPath || path == pipelinesPath || path == tasksPath {
 		return true
 	}
 	for _, base := range []string{botsPath, pipelinesPath, tasksPath, knowledgeBasesPath, pluginsPath, mcpServersPath} {
@@ -1089,6 +1195,30 @@ func safeResourceValue(value any, secret string) bool {
 		return !containsSecret(value.(string), secret)
 	default:
 		return false
+	}
+}
+
+func redactConnectionSecret(value any, secret string) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		projected := make(map[string]any, len(typed))
+		for key, item := range typed {
+			projected[key] = redactConnectionSecret(item, secret)
+		}
+		return projected
+	case []any:
+		items := make([]any, len(typed))
+		for index, item := range typed {
+			items[index] = redactConnectionSecret(item, secret)
+		}
+		return items
+	case string:
+		if secret != "" {
+			return strings.ReplaceAll(typed, secret, "***")
+		}
+		return typed
+	default:
+		return value
 	}
 }
 
