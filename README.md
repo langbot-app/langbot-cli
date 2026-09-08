@@ -1,6 +1,6 @@
 # langbot-cli
 
-LangBot 的独立命令行工具，二进制名为 `lbctl`。当前实现：多 context 配置、连接诊断、身份查询与统一输出。
+LangBot 的独立命令行工具，二进制名为 `lbctl`。当前支持多 context、连接与身份检查，以及 Bot/Pipeline 的 HTTP 管理。
 
 ## 构建
 
@@ -51,15 +51,35 @@ lbctl context remove dev --yes
 
 Key 可由上游程序通过管道传入 `--api-key-stdin`，不提供明文 Key 命令行参数。该输入不能与 `--file -` 同用。
 
-## 当前 HTTP 边界
+## HTTP 操作
 
-`status` 和 `version --server` 使用公开的 `GET /api/v1/system/info`；`context check` 还会请求 API Key 鉴权的 `GET /api/v1/system/context`。公开诊断成功不代表 Key 有效：`context check` 会分别报告服务可达、基础诊断和身份结果，认证失败时返回非零退出码。`whoami` 输出服务端确认的实例、Workspace、Key 标识和权限；`capabilities` 在服务端尚未提供能力契约时返回 unknown，并以退出码 6 表示前提未满足。
+`status` 和 `version --server` 使用公开的 `GET /api/v1/system/info`；`context check` 还会请求 API Key 鉴权的 `GET /api/v1/system/context`。公开诊断成功不代表 Key 有效。`whoami` 输出服务端确认的实例、Workspace、Key 标识和权限；`capabilities` 查询当前 Core 对 Bot/Pipeline 操作的运行时支持情况，缺少兼容契约时返回前提错误。
+
+资源命令包括：
+
+```sh
+lbctl bot list
+lbctl bot get <id>
+lbctl bot create --file bot.yaml
+lbctl bot update <id> --file bot.yaml
+lbctl bot delete <id> --yes
+
+lbctl pipeline list
+lbctl pipeline get <id>
+lbctl pipeline apply --file pipeline.yaml
+lbctl pipeline copy <id>
+lbctl pipeline delete <id> --yes
+```
+
+写操作只允许使用已保存且通过 `--expect-workspace` 绑定的 context，并在提交前检查身份、权限和 capability。`--dry-run` 只执行前置检查；删除需要 `--yes`；写入成功后自动回读。结果不确定时返回 `result_unknown` 且不自动重试；新建 Pipeline 的后续配置失败时返回 `partial_write` 和已创建的 UUID。
+
+复杂请求体支持 JSON/YAML 文件，`--file -` 从 stdin 读取。`pipeline apply` 的请求体包含 `uuid` 时更新，否则创建。
 
 ```sh
 lbctl raw GET /api/v1/system/info
 ```
 
-`raw` 目前仅允许这个明确登记的操作，并按字段白名单返回安全投影；其他路径、方法、请求体均拒绝。HTTP 写入尚未开放。客户端保留反向代理前缀，拒绝自动重定向，不自动重试。详见 [当前 HTTP 契约](contracts/system-info.md)。
+`raw` 目前仅允许这个明确登记的只读操作，并按字段白名单返回安全投影；其他路径、方法和请求体均拒绝。客户端保留反向代理前缀并拒绝自动重定向。
 
 ## 输出与验证
 

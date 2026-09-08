@@ -12,6 +12,7 @@ import (
 	"github.com/langbot-app/langbot-cli/internal/app"
 	"github.com/langbot-app/langbot-cli/internal/config"
 	"github.com/langbot-app/langbot-cli/internal/output"
+	"github.com/langbot-app/langbot-cli/internal/requestbody"
 	"github.com/langbot-app/langbot-cli/internal/result"
 	"github.com/spf13/cobra"
 )
@@ -130,7 +131,178 @@ func newRoot(deps Dependencies, flags *globalFlags, service *app.Service) *cobra
 	root.AddCommand(newRawCommand(service, deps, flags))
 	root.AddCommand(newIdentityCommand(service, deps, flags, "whoami"))
 	root.AddCommand(newIdentityCommand(service, deps, flags, "capabilities"))
+	root.AddCommand(newBotCommand(service, deps, flags))
+	root.AddCommand(newPipelineCommand(service, deps, flags))
 	return root
+}
+
+func newBotCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
+	command := &cobra.Command{Use: "bot", Short: "管理 Bot 资源", Args: cobra.NoArgs}
+	command.AddCommand(&cobra.Command{
+		Use: "list", Short: "列出 Bot", Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return emitCall(deps, flags, func() (app.Result, error) {
+				return service.BotList(cmd.Context(), connectionOptions(flags))
+			})
+		},
+	})
+	command.AddCommand(&cobra.Command{
+		Use: "get <id>", Short: "读取指定 Bot", Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return emitCall(deps, flags, func() (app.Result, error) {
+				return service.BotGet(cmd.Context(), args[0], connectionOptions(flags))
+			})
+		},
+	})
+	command.AddCommand(newBotCreateCommand(service, deps, flags))
+	command.AddCommand(newBotUpdateCommand(service, deps, flags))
+	command.AddCommand(newBotDeleteCommand(service, deps, flags))
+	return command
+}
+
+func newBotCreateCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
+	var file string
+	var dryRun bool
+	command := &cobra.Command{
+		Use: "create", Short: "创建 Bot", Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			body, err := loadRequestBody(cmd.Context(), file, flags.apiKeyStdin, deps.In)
+			if err != nil {
+				return emitCommand(deps, flags, app.Result{}, err)
+			}
+			return emitCall(deps, flags, func() (app.Result, error) {
+				return service.BotCreate(cmd.Context(), body, dryRun, connectionOptions(flags))
+			})
+		},
+	}
+	command.Flags().StringVar(&file, "file", "", "JSON/YAML 请求体文件，使用 - 从 stdin 读取")
+	command.Flags().BoolVar(&dryRun, "dry-run", false, "只检查目标和操作前提，不写入")
+	return command
+}
+
+func newBotUpdateCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
+	var file string
+	var dryRun bool
+	command := &cobra.Command{
+		Use: "update <id>", Short: "更新 Bot", Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			body, err := loadRequestBody(cmd.Context(), file, flags.apiKeyStdin, deps.In)
+			if err != nil {
+				return emitCommand(deps, flags, app.Result{}, err)
+			}
+			return emitCall(deps, flags, func() (app.Result, error) {
+				return service.BotUpdate(cmd.Context(), args[0], body, dryRun, connectionOptions(flags))
+			})
+		},
+	}
+	command.Flags().StringVar(&file, "file", "", "JSON/YAML 请求体文件，使用 - 从 stdin 读取")
+	command.Flags().BoolVar(&dryRun, "dry-run", false, "只检查目标和操作前提，不写入")
+	return command
+}
+
+func newBotDeleteCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
+	var yes bool
+	var dryRun bool
+	command := &cobra.Command{
+		Use: "delete <id>", Short: "删除 Bot", Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return emitCall(deps, flags, func() (app.Result, error) {
+				return service.BotDelete(cmd.Context(), args[0], yes, dryRun, connectionOptions(flags))
+			})
+		},
+	}
+	command.Flags().BoolVar(&yes, "yes", false, "确认删除")
+	command.Flags().BoolVar(&dryRun, "dry-run", false, "只检查目标和操作前提，不写入")
+	return command
+}
+
+func newPipelineCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
+	command := &cobra.Command{Use: "pipeline", Short: "管理 Pipeline 资源", Args: cobra.NoArgs}
+	command.AddCommand(&cobra.Command{
+		Use: "list", Short: "列出 Pipeline", Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return emitCall(deps, flags, func() (app.Result, error) {
+				return service.PipelineList(cmd.Context(), connectionOptions(flags))
+			})
+		},
+	})
+	command.AddCommand(&cobra.Command{
+		Use: "get <id>", Short: "读取指定 Pipeline", Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return emitCall(deps, flags, func() (app.Result, error) {
+				return service.PipelineGet(cmd.Context(), args[0], connectionOptions(flags))
+			})
+		},
+	})
+	command.AddCommand(newPipelineApplyCommand(service, deps, flags))
+	command.AddCommand(newPipelineCopyCommand(service, deps, flags))
+	command.AddCommand(newPipelineDeleteCommand(service, deps, flags))
+	return command
+}
+
+func newPipelineApplyCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
+	var file string
+	var dryRun bool
+	command := &cobra.Command{
+		Use: "apply", Short: "创建或更新 Pipeline", Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			body, err := loadRequestBody(cmd.Context(), file, flags.apiKeyStdin, deps.In)
+			if err != nil {
+				return emitCommand(deps, flags, app.Result{}, err)
+			}
+			return emitCall(deps, flags, func() (app.Result, error) {
+				return service.PipelineApply(cmd.Context(), body, dryRun, connectionOptions(flags))
+			})
+		},
+	}
+	command.Flags().StringVar(&file, "file", "", "JSON/YAML 请求体文件，使用 - 从 stdin 读取")
+	command.Flags().BoolVar(&dryRun, "dry-run", false, "只检查目标和操作前提，不写入")
+	return command
+}
+
+func newPipelineCopyCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
+	var dryRun bool
+	command := &cobra.Command{
+		Use: "copy <id>", Short: "复制 Pipeline", Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return emitCall(deps, flags, func() (app.Result, error) {
+				return service.PipelineCopy(cmd.Context(), args[0], dryRun, connectionOptions(flags))
+			})
+		},
+	}
+	command.Flags().BoolVar(&dryRun, "dry-run", false, "只检查目标和操作前提，不写入")
+	return command
+}
+
+func newPipelineDeleteCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
+	var yes bool
+	var dryRun bool
+	command := &cobra.Command{
+		Use: "delete <id>", Short: "删除 Pipeline", Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return emitCall(deps, flags, func() (app.Result, error) {
+				return service.PipelineDelete(cmd.Context(), args[0], yes, dryRun, connectionOptions(flags))
+			})
+		},
+	}
+	command.Flags().BoolVar(&yes, "yes", false, "确认删除")
+	command.Flags().BoolVar(&dryRun, "dry-run", false, "只检查目标和操作前提，不写入")
+	return command
+}
+
+func loadRequestBody(ctx context.Context, file string, apiKeyStdin bool, stdin io.Reader) (map[string]any, error) {
+	if err := requestbody.ValidateSources(file, apiKeyStdin); err != nil {
+		return nil, err
+	}
+	return requestbody.Load(ctx, file, stdin)
+}
+
+func connectionOptions(flags *globalFlags) app.CheckOptions {
+	return app.CheckOptions{
+		Context: flags.context, Endpoint: flags.endpoint, Timeout: flags.timeout,
+		ContextSet: flags.contextSet, EndpointSet: flags.endpointSet,
+		TimeoutSet: flags.timeoutSet, APIKeyStdin: flags.apiKeyStdin,
+	}
 }
 
 func newContextCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {

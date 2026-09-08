@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -22,8 +23,12 @@ import (
 const (
 	infoPath          = "/api/v1/system/info"
 	contextPath       = "/api/v1/system/context"
+	capabilitiesPath  = "/api/v1/system/capabilities"
+	botsPath          = "/api/v1/platform/bots"
+	pipelinesPath     = "/api/v1/pipelines"
 	defaultTimeout    = 30 * time.Second
 	maxResponseBytes  = 1 << 20
+	maxRequestBytes   = 1 << 20
 	maxServerCodeSize = 128
 	maxRequestIDSize  = 128
 )
@@ -52,6 +57,41 @@ type Context struct {
 	WorkspaceUUID string   `json:"workspace_uuid" yaml:"workspace_uuid"`
 	APIKeyID      string   `json:"api_key_id" yaml:"api_key_id"`
 	Permissions   []string `json:"permissions" yaml:"permissions"`
+}
+
+// Capabilities 是服务端声明的 HTTP 操作能力。Operations 只包含响应中已知的操作。
+type Capabilities struct {
+	SchemaVersion int
+	Operations    map[string]bool
+}
+
+// WriteResult 只保留写操作完成后可安全用于回读的资源 ID。
+type WriteResult struct {
+	UUID string
+}
+
+var capabilityOperationIDs = []string{
+	"bot.list",
+	"bot.get",
+	"bot.create",
+	"bot.update",
+	"bot.delete",
+	"pipeline.list",
+	"pipeline.get",
+	"pipeline.create",
+	"pipeline.update",
+	"pipeline.delete",
+	"pipeline.copy",
+}
+
+// CapabilityOperationIDs 返回 CLI 支持展示的稳定操作顺序。
+func CapabilityOperationIDs() []string {
+	return append([]string(nil), capabilityOperationIDs...)
+}
+
+func ValidateResourceID(identifier string) error {
+	_, err := resourcePath("", identifier)
+	return err
 }
 
 type envelope struct {
@@ -98,6 +138,180 @@ func (c Client) Context(ctx context.Context, target Target) (Context, error) {
 	return identity, nil
 }
 
+// Capabilities 请求服务端声明的 HTTP 操作能力。
+func (c Client) Capabilities(ctx context.Context, target Target) (Capabilities, error) {
+	resp, err := c.fetch(ctx, target, http.MethodGet, capabilitiesPath)
+	if err != nil {
+		return Capabilities{}, err
+	}
+	schemaVersion, ok := capabilitySchemaVersion(resp.Data["schema_version"])
+	if !ok || schemaVersion != 1 {
+		return Capabilities{}, protocolError("服务返回的能力协议版本不受支持", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.APIKey))
+	}
+	operations, ok := resp.Data["operations"].(map[string]any)
+	if !ok {
+		return Capabilities{}, protocolError("服务返回的能力数据格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.APIKey))
+	}
+	known := make(map[string]struct{}, len(capabilityOperationIDs))
+	for _, operationID := range capabilityOperationIDs {
+		known[operationID] = struct{}{}
+	}
+	parsed := make(map[string]bool, len(operations))
+	for operationID, value := range operations {
+		if _, isKnown := known[operationID]; !isKnown {
+			continue
+		}
+		entry, ok := value.(map[string]any)
+		if !ok {
+			return Capabilities{}, protocolError("服务返回的能力项格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.APIKey))
+		}
+		supported, ok := entry["supported"].(bool)
+		if !ok {
+			return Capabilities{}, protocolError("服务返回的能力项缺少有效 supported 字段", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.APIKey))
+		}
+		parsed[operationID] = supported
+	}
+	return Capabilities{SchemaVersion: schemaVersion, Operations: parsed}, nil
+}
+
+// Bots 返回 Bot 的安全字段投影，不输出 adapter_config 等配置内容。
+func (c Client) Bots(ctx context.Context, target Target) ([]map[string]any, error) {
+	resp, err := c.fetch(ctx, target, http.MethodGet, botsPath)
+	if err != nil {
+		return nil, err
+	}
+	return parseResourceList(resp, "bots", projectBot, target.APIKey)
+}
+
+// Bot 返回指定 Bot 的安全字段投影。
+func (c Client) Bot(ctx context.Context, target Target, uuid string) (map[string]any, error) {
+	path, err := resourcePath(botsPath, uuid)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.fetch(ctx, target, http.MethodGet, path)
+	if err != nil {
+		return nil, err
+	}
+	bot, err := parseResourceObject(resp, "bot", projectBot, target.APIKey)
+	if err != nil {
+		return nil, err
+	}
+	if bot["uuid"] != uuid {
+		return nil, protocolError("服务返回的 Bot UUID 与请求不一致", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.APIKey))
+	}
+	return bot, nil
+}
+
+// Pipelines 返回 Pipeline 的安全字段投影，不输出 config 等配置内容。
+func (c Client) Pipelines(ctx context.Context, target Target) ([]map[string]any, error) {
+	resp, err := c.fetch(ctx, target, http.MethodGet, pipelinesPath)
+	if err != nil {
+		return nil, err
+	}
+	return parseResourceList(resp, "pipelines", projectPipeline, target.APIKey)
+}
+
+// Pipeline 返回指定 Pipeline 的安全字段投影。
+func (c Client) Pipeline(ctx context.Context, target Target, uuid string) (map[string]any, error) {
+	path, err := resourcePath(pipelinesPath, uuid)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.fetch(ctx, target, http.MethodGet, path)
+	if err != nil {
+		return nil, err
+	}
+	pipeline, err := parseResourceObject(resp, "pipeline", projectPipeline, target.APIKey)
+	if err != nil {
+		return nil, err
+	}
+	if pipeline["uuid"] != uuid {
+		return nil, protocolError("服务返回的 Pipeline UUID 与请求不一致", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.APIKey))
+	}
+	return pipeline, nil
+}
+
+// BotCreate 创建 Bot，并返回服务端分配的 UUID。
+func (c Client) BotCreate(ctx context.Context, target Target, body map[string]any) (WriteResult, error) {
+	return c.createResource(ctx, target, http.MethodPost, botsPath, body)
+}
+
+// BotUpdate 更新 Bot。调用者可用 uuid 回读确认最终状态。
+func (c Client) BotUpdate(ctx context.Context, target Target, uuid string, body map[string]any) (WriteResult, error) {
+	return c.updateResource(ctx, target, http.MethodPut, botsPath, uuid, body)
+}
+
+// BotDelete 删除 Bot。调用者可用 uuid 回读确认最终状态。
+func (c Client) BotDelete(ctx context.Context, target Target, uuid string) (WriteResult, error) {
+	return c.updateResource(ctx, target, http.MethodDelete, botsPath, uuid, nil)
+}
+
+// PipelineCreate 创建 Pipeline，并返回服务端分配的 UUID。
+func (c Client) PipelineCreate(ctx context.Context, target Target, body map[string]any) (WriteResult, error) {
+	return c.createResource(ctx, target, http.MethodPost, pipelinesPath, body)
+}
+
+// PipelineUpdate 更新 Pipeline。调用者可用 uuid 回读确认最终状态。
+func (c Client) PipelineUpdate(ctx context.Context, target Target, uuid string, body map[string]any) (WriteResult, error) {
+	return c.updateResource(ctx, target, http.MethodPut, pipelinesPath, uuid, body)
+}
+
+// PipelineDelete 删除 Pipeline。调用者可用 uuid 回读确认最终状态。
+func (c Client) PipelineDelete(ctx context.Context, target Target, uuid string) (WriteResult, error) {
+	return c.updateResource(ctx, target, http.MethodDelete, pipelinesPath, uuid, nil)
+}
+
+// PipelineCopy 复制 Pipeline，并返回新资源 UUID。
+func (c Client) PipelineCopy(ctx context.Context, target Target, uuid string) (WriteResult, error) {
+	path, err := resourcePath(pipelinesPath, uuid)
+	if err != nil {
+		return WriteResult{}, err
+	}
+	return c.writeUUID(ctx, target, http.MethodPost, path+"/copy", nil)
+}
+
+func (c Client) createResource(ctx context.Context, target Target, method, base string, body map[string]any) (WriteResult, error) {
+	if body == nil {
+		return WriteResult{}, result.New("input", "请求体必须是 JSON object")
+	}
+	return c.writeUUID(ctx, target, method, base, body)
+}
+
+func (c Client) updateResource(ctx context.Context, target Target, method, base, uuid string, body map[string]any) (WriteResult, error) {
+	if method == http.MethodPut && body == nil {
+		return WriteResult{}, result.New("input", "请求体必须是 JSON object")
+	}
+	path, err := resourcePath(base, uuid)
+	if err != nil {
+		return WriteResult{}, err
+	}
+	_, err = c.write(ctx, target, method, path, body)
+	if err != nil {
+		return WriteResult{}, err
+	}
+	return WriteResult{UUID: uuid}, nil
+}
+
+func (c Client) writeUUID(ctx context.Context, target Target, method, path string, body map[string]any) (WriteResult, error) {
+	resp, err := c.write(ctx, target, method, path, body)
+	if err != nil {
+		return WriteResult{}, err
+	}
+	var uuid string
+	var ok bool
+	if resp.Data != nil {
+		uuid, ok = resp.Data["uuid"].(string)
+	}
+	if !ok || strings.TrimSpace(uuid) == "" || containsSecret(uuid, target.APIKey) || ValidateResourceID(uuid) != nil {
+		return WriteResult{}, writeUnknown(&result.Error{
+			HTTPStatus: resp.StatusCode,
+			RequestID:  responseRequestID(resp.Header, resp.Body, target.APIKey),
+		})
+	}
+	return WriteResult{UUID: uuid}, nil
+}
+
 // Raw 返回 /system/info 的安全投影。接口有意不接受任意路径，避免把 Raw 变成
 // 绕过操作定义的通用 HTTP 入口。
 func (c Client) Raw(ctx context.Context, target Target, method, path string) (any, error) {
@@ -120,21 +334,53 @@ func (c Client) fetch(ctx context.Context, target Target, method, path string) (
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if method != http.MethodGet || (path != infoPath && path != contextPath) {
-		return response{}, result.New("incompatible", "只允许读取已确认的 system 接口")
+	if method != http.MethodGet || !knownGetPath(path) {
+		return response{}, result.New("incompatible", "只允许读取已确认的 system 或资源接口")
 	}
+	return c.do(ctx, target, method, path, nil, false)
+}
+
+func (c Client) write(ctx context.Context, target Target, method, path string, body map[string]any) (response, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if !knownWritePath(method, path) {
+		return response{}, result.New("incompatible", "只允许执行已确认的资源写操作")
+	}
+	var payload io.Reader
+	if body != nil {
+		encoded, err := json.Marshal(body)
+		if err != nil {
+			return response{}, result.New("input", "请求体格式无法编码")
+		}
+		if len(encoded) > maxRequestBytes {
+			return response{}, result.New("input", "请求体过大")
+		}
+		payload = bytes.NewReader(encoded)
+	}
+	response, err := c.do(ctx, target, method, path, payload, true)
+	if err != nil {
+		return response, classifyWriteError(err)
+	}
+	return response, nil
+}
+
+func (c Client) do(ctx context.Context, target Target, method, path string, requestBody io.Reader, allowNilData bool) (response, error) {
 	base, err := endpoint.Normalize(target.Endpoint)
 	if err != nil {
 		return response{}, result.New("input", "服务地址无效")
 	}
 	requestURL := strings.TrimRight(base, "/") + path
 
-	request, err := http.NewRequestWithContext(ctx, method, requestURL, nil)
+	request, err := http.NewRequestWithContext(ctx, method, requestURL, requestBody)
 	if err != nil {
 		return response{}, result.New("input", "无法构造 HTTP 请求")
 	}
 	if target.APIKey != "" {
 		request.Header.Set("X-API-Key", target.APIKey)
+	}
+	if requestBody != nil {
+		request.Header.Set("Content-Type", "application/json")
 	}
 
 	transport := c.Transport
@@ -161,7 +407,7 @@ func (c Client) fetch(ctx context.Context, target Target, method, path string) (
 	}
 	defer resp.Body.Close()
 
-	body, tooLarge, readErr := readLimited(resp.Body)
+	responseBody, tooLarge, readErr := readLimited(resp.Body)
 	if readErr != nil {
 		err := transportError(callCtx, readErr)
 		err.HTTPStatus = resp.StatusCode
@@ -172,7 +418,7 @@ func (c Client) fetch(ctx context.Context, target Target, method, path string) (
 		err := protocolError("服务响应过大", resp.StatusCode, responseRequestID(resp.Header, envelope{}, target.APIKey))
 		return response{}, err
 	}
-	parsed, parseErr := parseEnvelope(body)
+	parsed, parseErr := parseEnvelope(responseBody)
 	requestID := responseRequestID(resp.Header, parsed, target.APIKey)
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		return response{}, httpError(resp.StatusCode, parsed.Code, requestID, target.APIKey)
@@ -184,6 +430,10 @@ func (c Client) fetch(ctx context.Context, target Target, method, path string) (
 		return response{}, businessError(parsed.Code, requestID, resp.StatusCode, target.APIKey)
 	}
 	data, ok := parseDataObject(parsed.Data)
+	if !ok && allowNilData && string(parsed.Data) == "null" {
+		data = nil
+		ok = true
+	}
 	if !ok {
 		return response{}, protocolError("服务返回的诊断数据格式无效", resp.StatusCode, requestID)
 	}
@@ -196,6 +446,147 @@ func (c Client) fetch(ctx context.Context, target Target, method, path string) (
 		Body:       parsed,
 		Data:       data,
 	}, nil
+}
+
+func knownWritePath(method, path string) bool {
+	if method == http.MethodPost && (path == botsPath || path == pipelinesPath) {
+		return true
+	}
+	if method == http.MethodPut || method == http.MethodDelete {
+		for _, base := range []string{botsPath, pipelinesPath} {
+			if strings.HasPrefix(path, base+"/") && !strings.Contains(strings.TrimPrefix(path, base+"/"), "/") {
+				return true
+			}
+		}
+	}
+	if method == http.MethodPost && strings.HasPrefix(path, pipelinesPath+"/") && strings.HasSuffix(path, "/copy") {
+		identifier := strings.TrimSuffix(strings.TrimPrefix(path, pipelinesPath+"/"), "/copy")
+		return identifier != "" && !strings.Contains(identifier, "/")
+	}
+	return false
+}
+
+func classifyWriteError(err error) error {
+	failure := result.AsError(err)
+	if failure.Kind == "network" || failure.Kind == "incompatible" ||
+		(failure.Kind == "server" && failure.HTTPStatus >= http.StatusInternalServerError) {
+		return writeUnknown(failure)
+	}
+	return err
+}
+
+func writeUnknown(cause ...*result.Error) *result.Error {
+	err := result.New("network", "写操作结果未知，请检查服务端状态")
+	err.Type = "result_unknown"
+	if len(cause) != 0 && cause[0] != nil {
+		err.HTTPStatus = cause[0].HTTPStatus
+		err.ServerCode = cause[0].ServerCode
+		err.RequestID = cause[0].RequestID
+	}
+	return err
+}
+
+func knownGetPath(path string) bool {
+	if path == infoPath || path == contextPath || path == capabilitiesPath || path == botsPath || path == pipelinesPath {
+		return true
+	}
+	for _, base := range []string{botsPath, pipelinesPath} {
+		if strings.HasPrefix(path, base+"/") && !strings.Contains(strings.TrimPrefix(path, base+"/"), "/") {
+			return true
+		}
+	}
+	return false
+}
+
+func capabilitySchemaVersion(value any) (int, bool) {
+	number, ok := value.(json.Number)
+	if !ok {
+		return 0, false
+	}
+	version, err := strconv.Atoi(string(number))
+	return version, err == nil
+}
+
+func resourcePath(base, identifier string) (string, error) {
+	if strings.TrimSpace(identifier) == "" || identifier == "." || identifier == ".." ||
+		strings.ContainsAny(identifier, "/\\?#") || strings.IndexFunc(identifier, func(r rune) bool { return r < 0x20 || r == 0x7f }) >= 0 {
+		return "", result.New("input", "资源 ID 必须是单个安全的路径段")
+	}
+	escaped := url.PathEscape(identifier)
+	if escaped == "." || escaped == ".." || strings.Contains(escaped, "/") {
+		return "", result.New("input", "资源 ID 必须是单个安全的路径段")
+	}
+	return base + "/" + escaped, nil
+}
+
+func parseResourceList(resp response, key string, project func(map[string]any, string) map[string]any, secret string) ([]map[string]any, error) {
+	raw, ok := resp.Data[key].([]any)
+	if !ok {
+		return nil, protocolError("服务返回的资源列表格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, secret))
+	}
+	items := make([]map[string]any, 0, len(raw))
+	for _, value := range raw {
+		item, ok := value.(map[string]any)
+		if !ok {
+			return nil, protocolError("服务返回的资源格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, secret))
+		}
+		if !validResourceUUID(item, secret) {
+			return nil, protocolError("服务返回的资源缺少有效 UUID", resp.StatusCode, responseRequestID(resp.Header, resp.Body, secret))
+		}
+		items = append(items, project(item, secret))
+	}
+	return items, nil
+}
+
+func parseResourceObject(resp response, key string, project func(map[string]any, string) map[string]any, secret string) (map[string]any, error) {
+	item, ok := resp.Data[key].(map[string]any)
+	if !ok {
+		return nil, protocolError("服务返回的资源格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, secret))
+	}
+	if !validResourceUUID(item, secret) {
+		return nil, protocolError("服务返回的资源缺少有效 UUID", resp.StatusCode, responseRequestID(resp.Header, resp.Body, secret))
+	}
+	return project(item, secret), nil
+}
+
+func validResourceUUID(value map[string]any, secret string) bool {
+	uuid, ok := value["uuid"].(string)
+	return ok && strings.TrimSpace(uuid) != "" && !containsSecret(uuid, secret)
+}
+
+func projectBot(value map[string]any, secret string) map[string]any {
+	return projectScalarFields(value, []string{
+		"uuid", "name", "description", "adapter", "enable", "use_pipeline_name", "use_pipeline_uuid", "created_at", "updated_at",
+	}, secret)
+}
+
+func projectPipeline(value map[string]any, secret string) map[string]any {
+	return projectScalarFields(value, []string{
+		"uuid", "name", "description", "emoji", "for_version", "is_default", "created_at", "updated_at",
+	}, secret)
+}
+
+func projectScalarFields(value map[string]any, fields []string, secret string) map[string]any {
+	projected := make(map[string]any, len(fields))
+	for _, field := range fields {
+		item, ok := value[field]
+		if !ok || !safeResourceValue(item, secret) {
+			continue
+		}
+		projected[field] = item
+	}
+	return projected
+}
+
+func safeResourceValue(value any, secret string) bool {
+	switch value.(type) {
+	case bool, nil:
+		return true
+	case string:
+		return !containsSecret(value.(string), secret)
+	default:
+		return false
+	}
 }
 
 func parseContextData(data map[string]any) (Context, bool) {

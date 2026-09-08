@@ -64,6 +64,56 @@ func TestRenderTableKeepsOverallErrorSeparateFromRows(t *testing.T) {
 	}
 }
 
+func TestRenderTableSupportsResourceLists(t *testing.T) {
+	var out bytes.Buffer
+	value := map[string]any{
+		"ok": true,
+		"data": map[string]any{
+			"bots": []any{
+				map[string]any{
+					"uuid":           "bot-a",
+					"name":           "Bot A",
+					"adapter_config": map[string]any{"token": "bot-secret"},
+				},
+			},
+		},
+	}
+	if err := Render(&out, value, FormatTable); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "bots") || !strings.Contains(out.String(), "bot-a") {
+		t.Fatalf("resource table omitted list rows: %s", out.String())
+	}
+	if strings.Contains(out.String(), "bot-secret") {
+		t.Fatalf("resource table exposed sensitive configuration: %s", out.String())
+	}
+}
+
+func TestRenderPipelineListYAML(t *testing.T) {
+	var out bytes.Buffer
+	value := map[string]any{
+		"ok": true,
+		"data": map[string]any{
+			"pipelines": []any{
+				map[string]any{
+					"uuid":   "pipeline-a",
+					"name":   "Pipeline A",
+					"config": map[string]any{"provider": map[string]any{"api_key": "pipeline-secret"}},
+				},
+			},
+		},
+	}
+	if err := Render(&out, value, FormatYAML); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "pipeline-a") || !strings.Contains(out.String(), "Pipeline A") {
+		t.Fatalf("resource YAML omitted list rows: %s", out.String())
+	}
+	if strings.Contains(out.String(), "pipeline-secret") {
+		t.Fatalf("resource YAML exposed sensitive configuration: %s", out.String())
+	}
+}
+
 func TestRenderReturnsEncodingAndWriterErrors(t *testing.T) {
 	var out bytes.Buffer
 	if err := Render(&out, map[string]any{"bad": make(chan int)}, FormatJSON); err == nil {

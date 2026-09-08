@@ -157,7 +157,7 @@ func renderEnvelopeTable(w io.Writer, envelope map[string]any, data any) error {
 	}
 	itemKey := ""
 	var items []any
-	for _, key := range []string{"contexts", "checks"} {
+	for _, key := range []string{"contexts", "checks", "bots", "pipelines"} {
 		if candidate, ok := dataMap[key].([]any); ok {
 			itemKey, items = key, candidate
 			break

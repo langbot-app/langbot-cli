@@ -32,6 +32,17 @@ type Result struct {
 	Meta map[string]any
 }
 
+// WritePreflight 是经过身份、绑定、权限和能力确认后的写连接快照。
+type WritePreflight struct {
+	Connection   config.Connection
+	Identity     api.Context
+	Capabilities api.Capabilities
+}
+
+func (p WritePreflight) Meta() map[string]any {
+	return resourceMeta(p.Connection, p.Identity)
+}
+
 type Service struct {
 	deps Dependencies
 	ctx  context.Context
@@ -401,13 +412,6 @@ func (s *Service) RawInfo(ctx context.Context, options CheckOptions, methodAndPa
 }
 
 func (s *Service) Identity(ctx context.Context, kind string, options CheckOptions) (Result, error) {
-	if kind == "capabilities" {
-		data := map[string]any{
-			"capabilities": "unknown",
-			"reason":       "服务端尚未提供能力契约",
-		}
-		return Result{Data: data}, result.New("precondition", "服务端尚未提供能力契约")
-	}
 	file, err := s.load()
 	if err != nil {
 		return Result{}, err
@@ -418,17 +422,518 @@ func (s *Service) Identity(ctx context.Context, kind string, options CheckOption
 		TimeoutSet: options.TimeoutSet, APIKeyStdin: options.APIKeyStdin,
 	})
 	if err != nil {
+		if kind == "capabilities" {
+			return Result{Data: unknownCapabilities(), Meta: connectionMeta(conn)}, err
+		}
 		return Result{Meta: connectionMeta(conn)}, err
 	}
 	identity, err := s.identity(ctx, conn)
 	if err != nil {
+		if kind == "capabilities" {
+			return Result{Data: unknownCapabilities(), Meta: connectionMeta(conn)}, err
+		}
 		return Result{Meta: connectionMeta(conn)}, err
 	}
 	data := identityView(identity)
 	if err := workspaceBindingError(conn, identity); err != nil {
+		if kind == "capabilities" {
+			data["capabilities"] = "unknown"
+		}
 		return Result{Data: data, Meta: connectionMeta(conn)}, err
 	}
+	if kind == "capabilities" {
+		capabilities, err := s.capabilities(ctx, conn)
+		if err != nil {
+			data["capabilities"] = "unknown"
+			return Result{Data: data, Meta: connectionMeta(conn)}, err
+		}
+		data["schema_version"] = capabilities.SchemaVersion
+		data["operations"] = capabilityStatuses(capabilities)
+	}
 	return Result{Data: data, Meta: connectionMeta(conn)}, nil
+}
+
+func (s *Service) BotList(ctx context.Context, options CheckOptions) (Result, error) {
+	conn, identity, err := s.resourceConnection(ctx, options)
+	if err != nil {
+		return Result{Meta: resourceMeta(conn, identity)}, err
+	}
+	bots, err := (api.Client{Transport: s.deps.Transport}).Bots(ctx, api.Target{
+		Endpoint: conn.Endpoint, APIKey: conn.APIKey, Timeout: conn.Timeout,
+	})
+	if err != nil {
+		return Result{Meta: resourceMeta(conn, identity)}, err
+	}
+	return Result{Data: map[string]any{"bots": bots}, Meta: resourceMeta(conn, identity)}, nil
+}
+
+func (s *Service) BotGet(ctx context.Context, identifier string, options CheckOptions) (Result, error) {
+	conn, identity, err := s.resourceConnection(ctx, options)
+	if err != nil {
+		return Result{Meta: resourceMeta(conn, identity)}, err
+	}
+	bot, err := (api.Client{Transport: s.deps.Transport}).Bot(ctx, api.Target{
+		Endpoint: conn.Endpoint, APIKey: conn.APIKey, Timeout: conn.Timeout,
+	}, identifier)
+	if err != nil {
+		return Result{Meta: resourceMeta(conn, identity)}, err
+	}
+	return Result{Data: map[string]any{"bot": bot}, Meta: resourceMeta(conn, identity)}, nil
+}
+
+func (s *Service) PipelineList(ctx context.Context, options CheckOptions) (Result, error) {
+	conn, identity, err := s.resourceConnection(ctx, options)
+	if err != nil {
+		return Result{Meta: resourceMeta(conn, identity)}, err
+	}
+	pipelines, err := (api.Client{Transport: s.deps.Transport}).Pipelines(ctx, api.Target{
+		Endpoint: conn.Endpoint, APIKey: conn.APIKey, Timeout: conn.Timeout,
+	})
+	if err != nil {
+		return Result{Meta: resourceMeta(conn, identity)}, err
+	}
+	return Result{Data: map[string]any{"pipelines": pipelines}, Meta: resourceMeta(conn, identity)}, nil
+}
+
+func (s *Service) PipelineGet(ctx context.Context, identifier string, options CheckOptions) (Result, error) {
+	conn, identity, err := s.resourceConnection(ctx, options)
+	if err != nil {
+		return Result{Meta: resourceMeta(conn, identity)}, err
+	}
+	pipeline, err := (api.Client{Transport: s.deps.Transport}).Pipeline(ctx, api.Target{
+		Endpoint: conn.Endpoint, APIKey: conn.APIKey, Timeout: conn.Timeout,
+	}, identifier)
+	if err != nil {
+		return Result{Meta: resourceMeta(conn, identity)}, err
+	}
+	return Result{Data: map[string]any{"pipeline": pipeline}, Meta: resourceMeta(conn, identity)}, nil
+}
+
+func (s *Service) BotCreate(ctx context.Context, body map[string]any, dryRun bool, options CheckOptions) (Result, error) {
+	if _, exists := body["uuid"]; exists {
+		return Result{}, result.New("input", "创建 Bot 时不能指定 uuid")
+	}
+	preflight, err := s.WritePreflight(ctx, "bot.create", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	if dryRun {
+		return writePlan(preflight, "bot.create", ""), nil
+	}
+	client, target := s.writeClient(preflight)
+	written, err := client.BotCreate(ctx, target, body)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	bot, err := client.Bot(ctx, target, written.UUID)
+	data := writeResultData("bot.create", written.UUID)
+	if err != nil {
+		return Result{Data: data, Meta: preflight.Meta()}, readbackError(err)
+	}
+	data["verified"] = true
+	data["bot"] = bot
+	return Result{Data: data, Meta: preflight.Meta()}, nil
+}
+
+func (s *Service) BotUpdate(ctx context.Context, uuid string, body map[string]any, dryRun bool, options CheckOptions) (Result, error) {
+	if err := api.ValidateResourceID(uuid); err != nil {
+		return Result{}, err
+	}
+	if err := validateBodyUUID(body, uuid); err != nil {
+		return Result{}, err
+	}
+	preflight, err := s.WritePreflight(ctx, "bot.update", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	if dryRun {
+		return writePlan(preflight, "bot.update", uuid), nil
+	}
+	client, target := s.writeClient(preflight)
+	if _, err := client.BotUpdate(ctx, target, uuid, withoutUUID(body)); err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	bot, err := client.Bot(ctx, target, uuid)
+	data := writeResultData("bot.update", uuid)
+	if err != nil {
+		return Result{Data: data, Meta: preflight.Meta()}, readbackError(err)
+	}
+	data["verified"] = true
+	data["bot"] = bot
+	return Result{Data: data, Meta: preflight.Meta()}, nil
+}
+
+func (s *Service) BotDelete(ctx context.Context, uuid string, confirmed, dryRun bool, options CheckOptions) (Result, error) {
+	if err := api.ValidateResourceID(uuid); err != nil {
+		return Result{}, err
+	}
+	if !dryRun && !confirmed {
+		return Result{}, result.New("input", "删除 Bot 需要 --yes")
+	}
+	preflight, err := s.WritePreflight(ctx, "bot.delete", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	if dryRun {
+		return writePlan(preflight, "bot.delete", uuid), nil
+	}
+	client, target := s.writeClient(preflight)
+	if _, err := client.BotDelete(ctx, target, uuid); err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	data := writeResultData("bot.delete", uuid)
+	_, err = client.Bot(ctx, target, uuid)
+	if err != nil && result.AsError(err).Kind == "not_found" {
+		data["verified"] = true
+		return Result{Data: data, Meta: preflight.Meta()}, nil
+	} else if err != nil {
+		return Result{Data: data, Meta: preflight.Meta()}, readbackError(err)
+	}
+	return Result{Data: data, Meta: preflight.Meta()}, verificationError("删除后资源仍可读取")
+}
+
+func (s *Service) PipelineApply(ctx context.Context, body map[string]any, dryRun bool, options CheckOptions) (Result, error) {
+	if body == nil {
+		return Result{}, result.New("input", "请求体必须是 JSON object")
+	}
+	uuid, updating, err := optionalBodyUUID(body)
+	if err != nil {
+		return Result{}, err
+	}
+	operation := "pipeline.create"
+	if updating {
+		if err := api.ValidateResourceID(uuid); err != nil {
+			return Result{}, err
+		}
+		operation = "pipeline.update"
+	}
+	preflight, err := s.WritePreflight(ctx, operation, options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	if !updating {
+		if err := requireCapability(preflight, "pipeline.update"); err != nil {
+			return Result{Meta: preflight.Meta()}, err
+		}
+	}
+	if dryRun {
+		return writePlan(preflight, "pipeline.apply", uuid), nil
+	}
+	client, target := s.writeClient(preflight)
+	payload := withoutUUID(body)
+	if !updating {
+		created, createErr := client.PipelineCreate(ctx, target, payload)
+		if createErr != nil {
+			return Result{Meta: preflight.Meta()}, createErr
+		}
+		uuid = created.UUID
+		if _, updateErr := client.PipelineUpdate(ctx, target, uuid, payload); updateErr != nil {
+			data := writeResultData("pipeline.apply", uuid)
+			data["phase"] = "created"
+			return Result{Data: data, Meta: preflight.Meta()}, partialWriteError(updateErr)
+		}
+	} else if _, err := client.PipelineUpdate(ctx, target, uuid, payload); err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	pipeline, err := client.Pipeline(ctx, target, uuid)
+	data := writeResultData("pipeline.apply", uuid)
+	if err != nil {
+		return Result{Data: data, Meta: preflight.Meta()}, readbackError(err)
+	}
+	data["verified"] = true
+	data["pipeline"] = pipeline
+	return Result{Data: data, Meta: preflight.Meta()}, nil
+}
+
+func (s *Service) PipelineCopy(ctx context.Context, uuid string, dryRun bool, options CheckOptions) (Result, error) {
+	if err := api.ValidateResourceID(uuid); err != nil {
+		return Result{}, err
+	}
+	preflight, err := s.WritePreflight(ctx, "pipeline.copy", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	if dryRun {
+		return writePlan(preflight, "pipeline.copy", uuid), nil
+	}
+	client, target := s.writeClient(preflight)
+	written, err := client.PipelineCopy(ctx, target, uuid)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	pipeline, err := client.Pipeline(ctx, target, written.UUID)
+	data := writeResultData("pipeline.copy", written.UUID)
+	if err != nil {
+		return Result{Data: data, Meta: preflight.Meta()}, readbackError(err)
+	}
+	data["verified"] = true
+	data["pipeline"] = pipeline
+	return Result{Data: data, Meta: preflight.Meta()}, nil
+}
+
+func (s *Service) PipelineDelete(ctx context.Context, uuid string, confirmed, dryRun bool, options CheckOptions) (Result, error) {
+	if err := api.ValidateResourceID(uuid); err != nil {
+		return Result{}, err
+	}
+	if !dryRun && !confirmed {
+		return Result{}, result.New("input", "删除 Pipeline 需要 --yes")
+	}
+	preflight, err := s.WritePreflight(ctx, "pipeline.delete", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	if dryRun {
+		return writePlan(preflight, "pipeline.delete", uuid), nil
+	}
+	client, target := s.writeClient(preflight)
+	if _, err := client.PipelineDelete(ctx, target, uuid); err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	data := writeResultData("pipeline.delete", uuid)
+	_, err = client.Pipeline(ctx, target, uuid)
+	if err != nil && result.AsError(err).Kind == "not_found" {
+		data["verified"] = true
+		return Result{Data: data, Meta: preflight.Meta()}, nil
+	} else if err != nil {
+		return Result{Data: data, Meta: preflight.Meta()}, readbackError(err)
+	}
+	return Result{Data: data, Meta: preflight.Meta()}, verificationError("删除后资源仍可读取")
+}
+
+func (s *Service) writeClient(preflight WritePreflight) (api.Client, api.Target) {
+	return api.Client{Transport: s.deps.Transport}, api.Target{
+		Endpoint: preflight.Connection.Endpoint,
+		APIKey:   preflight.Connection.APIKey,
+		Timeout:  preflight.Connection.Timeout,
+	}
+}
+
+func writePlan(preflight WritePreflight, operation, uuid string) Result {
+	data := map[string]any{
+		"operation":               operation,
+		"dry_run":                 true,
+		"server_write":            false,
+		"preconditions_confirmed": true,
+	}
+	if uuid != "" {
+		data["uuid"] = uuid
+	}
+	return Result{Data: data, Meta: preflight.Meta()}
+}
+
+func writeResultData(operation, uuid string) map[string]any {
+	return map[string]any{"operation": operation, "uuid": uuid, "verified": false}
+}
+
+func requireCapability(preflight WritePreflight, operation string) error {
+	supported, known := preflight.Capabilities.Operations[operation]
+	if !known {
+		return result.New("precondition", "服务端未明确支持该写操作")
+	}
+	if !supported {
+		return result.New("precondition", "服务端明确不支持该写操作")
+	}
+	return nil
+}
+
+func optionalBodyUUID(body map[string]any) (string, bool, error) {
+	value, exists := body["uuid"]
+	if !exists {
+		return "", false, nil
+	}
+	uuid, ok := value.(string)
+	if !ok || strings.TrimSpace(uuid) == "" {
+		return "", false, result.New("input", "uuid 必须是非空字符串")
+	}
+	return uuid, true, nil
+}
+
+func validateBodyUUID(body map[string]any, expected string) error {
+	uuid, exists, err := optionalBodyUUID(body)
+	if err != nil {
+		return err
+	}
+	if exists && uuid != expected {
+		return result.New("input", "请求体 uuid 与命令参数不一致")
+	}
+	return nil
+}
+
+func withoutUUID(body map[string]any) map[string]any {
+	copy := make(map[string]any, len(body))
+	for key, value := range body {
+		if key != "uuid" {
+			copy[key] = value
+		}
+	}
+	return copy
+}
+
+func readbackError(cause error) *result.Error {
+	failure := result.AsError(cause)
+	err := result.New(failure.Kind, "写操作已返回成功，但回读验证失败")
+	err.Type = "verification_failed"
+	err.HTTPStatus = failure.HTTPStatus
+	err.ServerCode = failure.ServerCode
+	err.RequestID = failure.RequestID
+	return err
+}
+
+func verificationError(message string) *result.Error {
+	err := result.New("server", message)
+	err.Type = "verification_failed"
+	return err
+}
+
+func partialWriteError(cause error) *result.Error {
+	failure := result.AsError(cause)
+	err := result.New(failure.Kind, "Pipeline 已创建，但完整配置未应用")
+	err.Type = "partial_write"
+	err.HTTPStatus = failure.HTTPStatus
+	err.ServerCode = failure.ServerCode
+	err.RequestID = failure.RequestID
+	return err
+}
+
+func (s *Service) resourceConnection(ctx context.Context, options CheckOptions) (config.Connection, api.Context, error) {
+	file, err := s.load()
+	if err != nil {
+		return config.Connection{}, api.Context{}, err
+	}
+	conn, err := s.resolve(ctx, file, config.Options{
+		Context: options.Context, Endpoint: options.Endpoint, Timeout: options.Timeout,
+		ContextSet: options.ContextSet, EndpointSet: options.EndpointSet,
+		TimeoutSet: options.TimeoutSet, APIKeyStdin: options.APIKeyStdin,
+	})
+	if err != nil {
+		return conn, api.Context{}, err
+	}
+	identity, err := s.identity(ctx, conn)
+	if err != nil {
+		return conn, api.Context{}, err
+	}
+	if err := workspaceBindingError(conn, identity); err != nil {
+		return conn, identity, err
+	}
+	if !hasPermission(identity, "resource.view") {
+		return conn, identity, result.New("permission", "当前 API Key 缺少 resource.view 权限")
+	}
+	return conn, identity, nil
+}
+
+// WritePreflight 只允许已保存且绑定 Workspace 的命名 context 执行写操作。
+func (s *Service) WritePreflight(ctx context.Context, operation string, options CheckOptions) (WritePreflight, error) {
+	if options.EndpointSet {
+		return WritePreflight{}, result.New("precondition", "写操作不允许使用临时 endpoint")
+	}
+	file, err := s.load()
+	if err != nil {
+		return WritePreflight{}, err
+	}
+	configOptions := config.Options{
+		Context: options.Context, Endpoint: options.Endpoint, Timeout: options.Timeout,
+		ContextSet: options.ContextSet, EndpointSet: options.EndpointSet, TimeoutSet: options.TimeoutSet,
+		APIKeyStdin: options.APIKeyStdin,
+	}
+	contextName, err := writeContextName(file, options, s.deps.LookupEnv)
+	if err != nil {
+		return WritePreflight{}, err
+	}
+	saved, ok := file.Contexts[contextName]
+	if !ok {
+		return WritePreflight{}, result.New("precondition", "写操作要求使用已保存的 context")
+	}
+	if strings.TrimSpace(saved.ExpectedWorkspaceUUID) == "" {
+		return WritePreflight{}, result.New("precondition", "写操作要求 context 已绑定 Workspace")
+	}
+	conn, err := config.Resolve(file, configOptions, s.deps.LookupEnv)
+	if err != nil {
+		return WritePreflight{Connection: conn}, err
+	}
+	if conn.Temporary {
+		return WritePreflight{Connection: conn}, result.New("precondition", "写操作不允许使用临时连接")
+	}
+	conn, err = s.withCredential(ctx, conn, configOptions)
+	if err != nil {
+		return WritePreflight{Connection: conn}, err
+	}
+	identity, err := s.identity(ctx, conn)
+	if err != nil {
+		return WritePreflight{Connection: conn}, err
+	}
+	if err := workspaceBindingError(conn, identity); err != nil {
+		return WritePreflight{Connection: conn, Identity: identity}, err
+	}
+	if !hasPermission(identity, "resource.manage") {
+		return WritePreflight{Connection: conn, Identity: identity}, result.New("permission", "当前 API Key 缺少 resource.manage 权限")
+	}
+	if !hasPermission(identity, "resource.view") {
+		return WritePreflight{Connection: conn, Identity: identity}, result.New("permission", "当前 API Key 缺少写后回读所需的 resource.view 权限")
+	}
+	capabilities, err := s.capabilities(ctx, conn)
+	if err != nil {
+		return WritePreflight{Connection: conn, Identity: identity}, err
+	}
+	preflight := WritePreflight{Connection: conn, Identity: identity, Capabilities: capabilities}
+	if err := requireCapability(preflight, operation); err != nil {
+		return preflight, err
+	}
+	if readback := readbackCapability(operation); readback != "" {
+		if err := requireCapability(preflight, readback); err != nil {
+			return preflight, result.New("precondition", "服务端未明确支持写后回读")
+		}
+	}
+	return preflight, nil
+}
+
+func readbackCapability(operation string) string {
+	switch {
+	case strings.HasPrefix(operation, "bot."):
+		return "bot.get"
+	case strings.HasPrefix(operation, "pipeline."):
+		return "pipeline.get"
+	default:
+		return ""
+	}
+}
+
+func writeContextName(file config.File, options CheckOptions, lookup func(string) (string, bool)) (string, error) {
+	if options.ContextSet {
+		if strings.TrimSpace(options.Context) == "" {
+			return "", result.New("input", "context 不能为空")
+		}
+		return options.Context, nil
+	}
+	if lookup != nil {
+		if value, present := lookup("LANGBOT_CONTEXT"); present {
+			if strings.TrimSpace(value) == "" {
+				return "", result.New("input", "LANGBOT_CONTEXT 为空")
+			}
+			return value, nil
+		}
+	}
+	if strings.TrimSpace(file.CurrentContext) == "" {
+		return "", result.New("precondition", "写操作要求使用已保存的 context")
+	}
+	return file.CurrentContext, nil
+}
+
+func hasPermission(identity api.Context, required string) bool {
+	for _, permission := range identity.Permissions {
+		if permission == required {
+			return true
+		}
+	}
+	return false
+}
+
+func resourceMeta(conn config.Connection, identity api.Context) map[string]any {
+	meta := connectionMeta(conn)
+	if identity.InstanceUUID != "" && identity.WorkspaceUUID != "" {
+		meta["instance_uuid"] = identity.InstanceUUID
+		meta["workspace_uuid"] = identity.WorkspaceUUID
+	}
+	return meta
 }
 
 func localContextResult(name string, saved config.Context, current string) Result {
@@ -448,6 +953,10 @@ func (s *Service) resolve(ctx context.Context, file config.File, options config.
 	if err != nil {
 		return conn, err
 	}
+	return s.withCredential(ctx, conn, options)
+}
+
+func (s *Service) withCredential(ctx context.Context, conn config.Connection, options config.Options) (config.Connection, error) {
 	credentialInput := s.deps.In
 	if options.APIKeyStdin {
 		value, readErr := readCredential(ctx, credentialInput)
@@ -456,7 +965,7 @@ func (s *Service) resolve(ctx context.Context, file config.File, options config.
 		}
 		credentialInput = strings.NewReader(value)
 	}
-	conn, err = conn.WithCredential(options, s.deps.LookupEnv, credentialInput)
+	conn, err := conn.WithCredential(options, s.deps.LookupEnv, credentialInput)
 	if err != nil {
 		return conn, err
 	}
@@ -495,6 +1004,33 @@ func (s *Service) info(ctx context.Context, conn config.Connection) (api.Info, e
 func (s *Service) identity(ctx context.Context, conn config.Connection) (api.Context, error) {
 	client := api.Client{Transport: s.deps.Transport}
 	return client.Context(ctx, api.Target{Endpoint: conn.Endpoint, APIKey: conn.APIKey, Timeout: conn.Timeout})
+}
+
+func (s *Service) capabilities(ctx context.Context, conn config.Connection) (api.Capabilities, error) {
+	client := api.Client{Transport: s.deps.Transport}
+	return client.Capabilities(ctx, api.Target{Endpoint: conn.Endpoint, APIKey: conn.APIKey, Timeout: conn.Timeout})
+}
+
+func unknownCapabilities() map[string]any {
+	return map[string]any{
+		"capabilities": "unknown",
+	}
+}
+
+func capabilityStatuses(capabilities api.Capabilities) map[string]string {
+	statuses := make(map[string]string, len(api.CapabilityOperationIDs()))
+	for _, operationID := range api.CapabilityOperationIDs() {
+		supported, ok := capabilities.Operations[operationID]
+		status := "unknown"
+		if ok {
+			status = "unsupported"
+			if supported {
+				status = "supported"
+			}
+		}
+		statuses[operationID] = status
+	}
+	return statuses
 }
 
 func validateBatchTimeout(options CheckOptions, lookup func(string) (string, bool)) error {
