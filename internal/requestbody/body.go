@@ -28,6 +28,15 @@ func ValidateSources(name string, apiKeyStdin bool) error {
 
 // Load 从文件或 stdin 读取并解析一个 JSON/YAML object 请求体。
 func Load(ctx context.Context, name string, stdin io.Reader) (map[string]any, error) {
+	data, err := LoadText(ctx, name, stdin)
+	if err != nil {
+		return nil, err
+	}
+	return Parse(name, []byte(data))
+}
+
+// LoadText 从文件或 stdin 读取受大小限制的文本。
+func LoadText(ctx context.Context, name string, stdin io.Reader) (string, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -38,20 +47,20 @@ func Load(ctx context.Context, name string, stdin io.Reader) (map[string]any, er
 	} else {
 		opened, err := os.Open(name)
 		if err != nil {
-			return nil, result.New("input", "无法读取请求体文件")
+			return "", result.New("input", "无法读取请求体文件")
 		}
 		file = opened
 		defer file.Close()
 		reader = file
 	}
 	if reader == nil {
-		return nil, result.New("input", "无法读取请求体")
+		return "", result.New("input", "无法读取请求体")
 	}
 	data, err := read(ctx, reader)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
-	return Parse(name, data)
+	return string(data), nil
 }
 
 // Parse 解析 JSON 或 YAML。扩展名未知时根据首个非空字节选择格式。

@@ -133,11 +133,17 @@ var capabilityOperationIDs = []string{
 	"plugin.get",
 	"plugin.list",
 	"plugin.config.get",
+	"plugin.config.update",
 	"plugin.logs",
+	"plugin.delete",
 	"skill.list",
 	"skill.get",
+	"skill.create",
+	"skill.update",
+	"skill.delete",
 	"skill.files.list",
 	"skill.files.read",
+	"skill.files.write",
 	"skill.preview",
 	"skill.install.github",
 	"skill.install.upload",
@@ -167,6 +173,18 @@ func ValidateResourceID(identifier string) error {
 func ValidateMCPServerName(name string) error {
 	_, err := mcpServerPath(name)
 	return err
+}
+
+// ValidateSkillFilePath 校验 Skill 包内的相对路径。
+func ValidateSkillFilePath(path string, allowRoot bool) error {
+	parts, err := safeFilePath(path)
+	if err != nil {
+		return err
+	}
+	if !allowRoot && len(parts) == 1 && parts[0] == "." {
+		return result.New("input", "文件路径不是安全的相对路径")
+	}
+	return nil
 }
 
 type envelope struct {
@@ -498,10 +516,274 @@ func (c Client) PluginGet(ctx context.Context, target Target, author, name strin
 	if err != nil {
 		return nil, err
 	}
-	if _, ok := resp.Data["plugin"].(map[string]any); !ok {
+	plugin, ok := resp.Data["plugin"].(map[string]any)
+	if !ok {
 		return nil, protocolError("服务返回的资源格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.APIKey))
 	}
-	return map[string]any{"author": author, "name": name}, nil
+	projected := projectPlugin(plugin, author, name, target.APIKey)
+	if projected["author"] != author || projected["name"] != name {
+		return nil, protocolError("服务返回的 Plugin 身份与请求不一致", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.APIKey))
+	}
+	return projected, nil
+}
+
+func (c Client) Plugins(ctx context.Context, target Target) ([]map[string]any, error) {
+	resp, err := c.fetch(ctx, target, http.MethodGet, pluginsPath)
+	if err != nil {
+		return nil, err
+	}
+	raw, ok := resp.Data["plugins"].([]any)
+	if !ok {
+		return nil, protocolError("服务返回的插件列表格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.APIKey))
+	}
+	items := make([]map[string]any, 0, len(raw))
+	for _, value := range raw {
+		plugin, ok := value.(map[string]any)
+		if !ok {
+			return nil, protocolError("服务返回的插件格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.APIKey))
+		}
+		projected := projectPlugin(plugin, "", "", target.APIKey)
+		author, authorOK := projected["author"].(string)
+		name, nameOK := projected["name"].(string)
+		if !authorOK || strings.TrimSpace(author) == "" || !nameOK || strings.TrimSpace(name) == "" {
+			return nil, protocolError("服务返回的 Plugin 缺少有效身份", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.APIKey))
+		}
+		items = append(items, projected)
+	}
+	return items, nil
+}
+
+func (c Client) PluginConfig(ctx context.Context, target Target, author, name string) (any, error) {
+	path, err := pluginResourcePath(author, name, "/config")
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.fetch(ctx, target, http.MethodGet, path)
+	if err != nil {
+		return nil, err
+	}
+	return redactConnectionSecret(resp.Data, target.APIKey), nil
+}
+
+func (c Client) PluginConfigUpdate(ctx context.Context, target Target, author, name string, body map[string]any) error {
+	if body == nil {
+		return result.New("input", "Plugin 配置必须是 JSON object")
+	}
+	path, err := pluginResourcePath(author, name, "/config")
+	if err != nil {
+		return err
+	}
+	_, err = c.write(ctx, target, http.MethodPut, path, body)
+	return err
+}
+
+func (c Client) PluginDelete(ctx context.Context, target Target, author, name string, deleteData bool) (string, error) {
+	path, err := pluginResourcePath(author, name, "")
+	if err != nil {
+		return "", err
+	}
+	if deleteData {
+		path += "?delete_data=true"
+	}
+	return c.taskWrite(ctx, target, http.MethodDelete, path, nil)
+}
+
+func (c Client) PluginLogs(ctx context.Context, target Target, author, name, level string, limit int) (any, error) {
+	path, err := pluginResourcePath(author, name, "/logs")
+	if err != nil {
+		return nil, err
+	}
+	query := url.Values{}
+	if limit > 0 {
+		query.Set("limit", strconv.Itoa(limit))
+	}
+	if strings.TrimSpace(level) != "" {
+		query.Set("level", level)
+	}
+	if encoded := query.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	resp, err := c.fetch(ctx, target, http.MethodGet, path)
+	if err != nil {
+		return nil, err
+	}
+	return redactConnectionSecret(resp.Data, target.APIKey), nil
+}
+
+func (c Client) Skills(ctx context.Context, target Target) ([]map[string]any, error) {
+	resp, err := c.fetch(ctx, target, http.MethodGet, skillsPath)
+	if err != nil {
+		return nil, err
+	}
+	raw, ok := resp.Data["skills"].([]any)
+	if !ok {
+		return nil, protocolError("服务返回的 Skill 列表格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.APIKey))
+	}
+	items := make([]map[string]any, 0, len(raw))
+	for _, value := range raw {
+		item, ok := value.(map[string]any)
+		if !ok {
+			return nil, protocolError("服务返回的 Skill 格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.APIKey))
+		}
+		projected := projectSkillSummary(item, target.APIKey)
+		name, ok := projected["name"].(string)
+		if !ok || strings.TrimSpace(name) == "" {
+			return nil, protocolError("服务返回的 Skill 缺少有效名称", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.APIKey))
+		}
+		items = append(items, projected)
+	}
+	return items, nil
+}
+
+func (c Client) SkillGet(ctx context.Context, target Target, name string) (map[string]any, error) {
+	path, err := skillResourcePath(name, "")
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.fetch(ctx, target, http.MethodGet, path)
+	if err != nil {
+		return nil, err
+	}
+	item, ok := resp.Data["skill"].(map[string]any)
+	if !ok {
+		return nil, protocolError("服务返回的 Skill 格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.APIKey))
+	}
+	projected := projectSkillSummary(item, target.APIKey)
+	if skillName, ok := projected["name"].(string); !ok || skillName != name {
+		return nil, protocolError("服务返回的 Skill 身份与请求不一致", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.APIKey))
+	}
+	if instructions, exists := item["instructions"]; exists {
+		projected["instructions"] = redactConnectionSecret(instructions, target.APIKey)
+	}
+	return projected, nil
+}
+
+func (c Client) SkillFiles(ctx context.Context, target Target, name, pathValue string, includeHidden bool) (any, error) {
+	path, err := skillResourcePath(name, "/files")
+	if err != nil {
+		return nil, err
+	}
+	if err := ValidateSkillFilePath(pathValue, true); err != nil {
+		return nil, err
+	}
+	query := url.Values{}
+	if strings.TrimSpace(pathValue) != "" {
+		query.Set("path", pathValue)
+	}
+	if includeHidden {
+		query.Set("include_hidden", "true")
+	}
+	if encoded := query.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	resp, err := c.fetch(ctx, target, http.MethodGet, path)
+	if err != nil {
+		return nil, err
+	}
+	return redactConnectionSecret(resp.Data, target.APIKey), nil
+}
+
+func (c Client) SkillFileRead(ctx context.Context, target Target, name, filePath string) (any, error) {
+	if err := ValidateSkillFilePath(filePath, false); err != nil {
+		return nil, err
+	}
+	data, _, err := c.skillFileRead(ctx, target, name, filePath, "")
+	return data, err
+}
+
+// SkillFileMatches 在不暴露原始内容的前提下校验写后文件内容。
+func (c Client) SkillFileMatches(ctx context.Context, target Target, name, filePath, expected string) (any, bool, error) {
+	if err := ValidateSkillFilePath(filePath, false); err != nil {
+		return nil, false, err
+	}
+	return c.skillFileRead(ctx, target, name, filePath, expected)
+}
+
+func (c Client) skillFileRead(ctx context.Context, target Target, name, filePath, expected string) (any, bool, error) {
+	path, err := skillFileResourcePath(name, filePath)
+	if err != nil {
+		return nil, false, err
+	}
+	resp, err := c.fetch(ctx, target, http.MethodGet, path)
+	if err != nil {
+		return nil, false, err
+	}
+	content, ok := resp.Data["content"].(string)
+	if !ok {
+		return nil, false, protocolError("服务返回的 Skill 文件格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.APIKey))
+	}
+	return redactConnectionSecret(resp.Data, target.APIKey), content == expected, nil
+}
+
+func (c Client) SkillPreview(ctx context.Context, target Target, name string) (any, error) {
+	path, err := skillResourcePath(name, "/preview")
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.fetch(ctx, target, http.MethodGet, path)
+	if err != nil {
+		return nil, err
+	}
+	return redactConnectionSecret(resp.Data, target.APIKey), nil
+}
+
+func (c Client) SkillCreate(ctx context.Context, target Target, body map[string]any) (map[string]any, error) {
+	if body == nil {
+		return nil, result.New("input", "Skill 请求体必须是 JSON object")
+	}
+	resp, err := c.write(ctx, target, http.MethodPost, skillsPath, body)
+	if err != nil {
+		return nil, err
+	}
+	expectedName, _ := body["name"].(string)
+	skill, err := parseSkillResponse(resp, expectedName, target.APIKey)
+	if err != nil {
+		return nil, writeUnknown(result.AsError(err))
+	}
+	return skill, nil
+}
+
+func (c Client) SkillUpdate(ctx context.Context, target Target, name string, body map[string]any) (map[string]any, error) {
+	if body == nil {
+		return nil, result.New("input", "Skill 请求体必须是 JSON object")
+	}
+	path, err := skillResourcePath(name, "")
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.write(ctx, target, http.MethodPut, path, body)
+	if err != nil {
+		return nil, err
+	}
+	skill, err := parseSkillResponse(resp, name, target.APIKey)
+	if err != nil {
+		return nil, writeUnknown(result.AsError(err))
+	}
+	return skill, nil
+}
+
+func (c Client) SkillDelete(ctx context.Context, target Target, name string) error {
+	path, err := skillResourcePath(name, "")
+	if err != nil {
+		return err
+	}
+	_, err = c.write(ctx, target, http.MethodDelete, path, nil)
+	return err
+}
+
+func (c Client) SkillFileWrite(ctx context.Context, target Target, name, filePath, content string) (any, error) {
+	if err := ValidateSkillFilePath(filePath, false); err != nil {
+		return nil, err
+	}
+	path, err := skillFileResourcePath(name, filePath)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.write(ctx, target, http.MethodPut, path, map[string]any{"content": content})
+	if err != nil {
+		return nil, err
+	}
+	return redactConnectionSecret(resp.Data, target.APIKey), nil
 }
 
 // SkillInstallGitHub 安装 GitHub Skill，服务端同步返回安装结果。
@@ -1083,6 +1365,16 @@ func (c Client) doWithContentType(ctx context.Context, target Target, method, pa
 }
 
 func knownWritePath(method, path string) bool {
+	basePath, query, ok := splitWritePath(path)
+	if !ok {
+		return false
+	}
+	path = basePath
+	if len(query) != 0 {
+		if method != http.MethodDelete || !safeNestedPath(path, pluginsPath, "", 2) || len(query) != 1 || len(query["delete_data"]) != 1 || query.Get("delete_data") != "true" {
+			return false
+		}
+	}
 	if method == http.MethodPost && path == documentUploadPath {
 		return true
 	}
@@ -1106,6 +1398,25 @@ func knownWritePath(method, path string) bool {
 	}
 	if method == http.MethodPost && path == mcpServersPath {
 		return true
+	}
+	if method == http.MethodPost && path == skillsPath {
+		return true
+	}
+	if method == http.MethodPut && strings.HasPrefix(path, skillsPath+"/") && strings.Contains(path, "/files/") {
+		value := strings.TrimPrefix(path, skillsPath+"/")
+		parts := strings.SplitN(value, "/files/", 2)
+		_, err := safeFilePath(parts[1])
+		return parts[0] != "" && !strings.Contains(parts[0], "/") && err == nil
+	}
+	if (method == http.MethodPut || method == http.MethodDelete) && strings.HasPrefix(path, skillsPath+"/") {
+		value := strings.TrimPrefix(path, skillsPath+"/")
+		return value != "" && !strings.Contains(value, "/")
+	}
+	if method == http.MethodPut && strings.HasPrefix(path, pluginsPath+"/") && strings.HasSuffix(path, "/config") {
+		return safeNestedPath(path, pluginsPath, "/config", 2)
+	}
+	if method == http.MethodDelete && strings.HasPrefix(path, pluginsPath+"/") {
+		return safeNestedPath(path, pluginsPath, "", 2)
 	}
 	if method == http.MethodPut || method == http.MethodDelete {
 		if strings.HasPrefix(path, mcpServersPath+"/") {
@@ -1146,6 +1457,21 @@ func knownWritePath(method, path string) bool {
 	return false
 }
 
+func splitWritePath(path string) (string, url.Values, bool) {
+	if !strings.HasPrefix(path, "/") || strings.Contains(path, "#") {
+		return "", nil, false
+	}
+	base, rawQuery, hasQuery := strings.Cut(path, "?")
+	if strings.Contains(base, "?") || (hasQuery && strings.Contains(rawQuery, "?")) {
+		return "", nil, false
+	}
+	query, err := url.ParseQuery(rawQuery)
+	if err != nil {
+		return "", nil, false
+	}
+	return base, query, true
+}
+
 func knownPreviewPath(path string) bool {
 	return path == skillsPath+"/install/github/preview" || path == skillsPath+"/install/upload/preview"
 }
@@ -1153,7 +1479,15 @@ func knownPreviewPath(path string) bool {
 func safeNestedPath(path, base, suffix string, segments int) bool {
 	value := strings.TrimSuffix(strings.TrimPrefix(path, base+"/"), suffix)
 	parts := strings.Split(value, "/")
-	return len(parts) == segments && strings.TrimSpace(value) != ""
+	if len(parts) != segments || strings.TrimSpace(value) == "" {
+		return false
+	}
+	for _, part := range parts {
+		if _, err := resourcePath("", part); err != nil {
+			return false
+		}
+	}
+	return true
 }
 
 func classifyWriteError(err error) error {
@@ -1184,12 +1518,15 @@ func knownGetPath(path string) bool {
 	queryIndex := strings.IndexByte(path, '?')
 	if queryIndex >= 0 {
 		base := path[:queryIndex]
-		if base != tasksPath && !(strings.HasPrefix(base, mcpServersPath+"/") && strings.HasSuffix(base, "/logs")) {
+		if base != tasksPath &&
+			!(strings.HasPrefix(base, mcpServersPath+"/") && strings.HasSuffix(base, "/logs")) &&
+			!(strings.HasPrefix(base, pluginsPath+"/") && strings.HasSuffix(base, "/logs")) &&
+			!(strings.HasPrefix(base, skillsPath+"/") && strings.HasSuffix(base, "/files")) {
 			return false
 		}
 		path = base
 	}
-	if path == infoPath || path == contextPath || path == capabilitiesPath || path == botsPath || path == pipelinesPath || path == tasksPath || path == knowledgeBasesPath || path == mcpServersPath {
+	if path == infoPath || path == contextPath || path == capabilitiesPath || path == botsPath || path == pipelinesPath || path == tasksPath || path == knowledgeBasesPath || path == pluginsPath || path == skillsPath || path == mcpServersPath {
 		return true
 	}
 	for _, base := range []string{botsPath, pipelinesPath, tasksPath, knowledgeBasesPath, pluginsPath, mcpServersPath} {
@@ -1215,8 +1552,30 @@ func knownGetPath(path string) bool {
 		}
 		return strings.HasSuffix(value, "/logs") && !strings.Contains(strings.TrimSuffix(value, "/logs"), "/")
 	}
+	if strings.HasPrefix(path, skillsPath+"/") {
+		value := strings.TrimPrefix(path, skillsPath+"/")
+		if !strings.Contains(value, "/") {
+			return true
+		}
+		if strings.HasSuffix(value, "/files") || strings.HasSuffix(value, "/preview") {
+			return strings.Count(value, "/") == 1
+		}
+		if strings.Contains(value, "/files/") {
+			parts := strings.SplitN(value, "/files/", 2)
+			_, err := safeFilePath(parts[1])
+			return parts[0] != "" && err == nil
+		}
+	}
 	if strings.HasPrefix(path, pluginsPath+"/") && strings.Count(strings.TrimPrefix(path, pluginsPath+"/"), "/") == 1 {
 		return true
+	}
+	if strings.HasPrefix(path, pluginsPath+"/") {
+		value := strings.TrimPrefix(path, pluginsPath+"/")
+		for _, suffix := range []string{"/config", "/logs"} {
+			if strings.HasSuffix(value, suffix) {
+				return strings.Count(strings.TrimSuffix(value, suffix), "/") == 1
+			}
+		}
 	}
 	return false
 }
@@ -1253,6 +1612,62 @@ func mcpServerPath(name string) (string, error) {
 		}
 	}
 	return mcpServersPath + "/" + url.PathEscape(name), nil
+}
+
+func pluginResourcePath(author, name, suffix string) (string, error) {
+	authorPath, err := resourcePath(pluginsPath, author)
+	if err != nil {
+		return "", err
+	}
+	namePath, err := resourcePath(authorPath, name)
+	if err != nil {
+		return "", err
+	}
+	return namePath + suffix, nil
+}
+
+func skillResourcePath(name, suffix string) (string, error) {
+	path, err := resourcePath(skillsPath, name)
+	if err != nil {
+		return "", err
+	}
+	return path + suffix, nil
+}
+
+func skillFileResourcePath(name, filePath string) (string, error) {
+	base, err := skillResourcePath(name, "/files")
+	if err != nil {
+		return "", err
+	}
+	parts, err := safeFilePath(filePath)
+	if err != nil {
+		return "", err
+	}
+	escaped := make([]string, 0, len(parts))
+	for _, part := range parts {
+		escaped = append(escaped, url.PathEscape(part))
+	}
+	return base + "/" + strings.Join(escaped, "/"), nil
+}
+
+func safeFilePath(value string) ([]string, error) {
+	value = strings.TrimSpace(value)
+	if value == "." {
+		return []string{"."}, nil
+	}
+	if value == "" || strings.HasPrefix(value, "/") || strings.Contains(value, "\\") || strings.ContainsAny(value, "?#") ||
+		strings.IndexFunc(value, func(r rune) bool { return r < 0x20 || r == 0x7f }) >= 0 {
+		return nil, result.New("input", "文件路径不是安全的相对路径")
+	}
+	parts := strings.Split(value, "/")
+	for _, part := range parts {
+		decoded, err := url.PathUnescape(part)
+		if err != nil || part == "" || part == "." || part == ".." || decoded == "." || decoded == ".." ||
+			strings.ContainsAny(decoded, "/\\") {
+			return nil, result.New("input", "文件路径不是安全的相对路径")
+		}
+	}
+	return parts, nil
 }
 
 func taskPath(identifier string) (string, error) {
@@ -1383,6 +1798,61 @@ func projectKnowledgeBase(value map[string]any, secret string) map[string]any {
 	return projectScalarFields(value, []string{
 		"uuid", "name", "description", "knowledge_engine_plugin_id", "created_at", "updated_at",
 	}, secret)
+}
+
+func projectPlugin(value map[string]any, author, name, secret string) map[string]any {
+	projected := projectScalarFields(value, []string{"author", "name", "version", "description", "debug", "enabled", "status", "created_at", "updated_at"}, secret)
+	metadata := value
+	if manifest, ok := value["manifest"].(map[string]any); ok {
+		if nested, ok := manifest["manifest"].(map[string]any); ok {
+			if nestedMetadata, ok := nested["metadata"].(map[string]any); ok {
+				metadata = nestedMetadata
+			}
+		}
+	}
+	if _, ok := projected["author"]; !ok && author != "" {
+		projected["author"] = author
+	} else if _, ok := projected["author"]; !ok {
+		if candidate, ok := metadata["author"].(string); ok && !containsSecret(candidate, secret) {
+			projected["author"] = candidate
+		}
+	}
+	if _, ok := projected["name"]; !ok && name != "" {
+		projected["name"] = name
+	} else if _, ok := projected["name"]; !ok {
+		if candidate, ok := metadata["name"].(string); ok && !containsSecret(candidate, secret) {
+			projected["name"] = candidate
+		}
+	}
+	for _, key := range []string{"version", "description"} {
+		if _, exists := projected[key]; exists {
+			continue
+		}
+		if candidate, ok := metadata[key].(string); ok && !containsSecret(candidate, secret) {
+			projected[key] = candidate
+		}
+	}
+	return projected
+}
+
+func projectSkillSummary(value map[string]any, secret string) map[string]any {
+	return projectScalarFields(value, []string{"name", "display_name", "description", "package_root", "created_at", "updated_at"}, secret)
+}
+
+func parseSkillResponse(resp response, expectedName, secret string) (map[string]any, error) {
+	item, ok := resp.Data["skill"].(map[string]any)
+	if !ok {
+		return nil, protocolError("服务返回的 Skill 格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, secret))
+	}
+	projected := projectSkillSummary(item, secret)
+	name, ok := projected["name"].(string)
+	if !ok || strings.TrimSpace(name) == "" || (expectedName != "" && name != expectedName) {
+		return nil, protocolError("服务返回的 Skill 身份与请求不一致", resp.StatusCode, responseRequestID(resp.Header, resp.Body, secret))
+	}
+	if instructions, exists := item["instructions"]; exists {
+		projected["instructions"] = redactConnectionSecret(instructions, secret)
+	}
+	return projected, nil
 }
 
 func projectScalarFields(value map[string]any, fields []string, secret string) map[string]any {

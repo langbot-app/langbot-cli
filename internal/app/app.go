@@ -1,12 +1,15 @@
 package app
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -1172,7 +1175,491 @@ func fileIdentifier(value any) string {
 	return ""
 }
 
-// PluginInstallGitHub 安装 GitHub 插件。
+func pluginConfigValue(value any) (map[string]any, bool) {
+	data, ok := value.(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	config, ok := data["config"].(map[string]any)
+	return config, ok
+}
+
+func observableConfigEqual(expected, actual any) bool {
+	if value, ok := actual.(string); ok && value == "***" {
+		return true
+	}
+	switch expectedValue := expected.(type) {
+	case map[string]any:
+		actualValue, ok := actual.(map[string]any)
+		if !ok || len(expectedValue) != len(actualValue) {
+			return false
+		}
+		for key, value := range expectedValue {
+			actualItem, exists := actualValue[key]
+			if !exists || !observableConfigEqual(value, actualItem) {
+				return false
+			}
+		}
+		return true
+	case []any:
+		actualValue, ok := actual.([]any)
+		if !ok || len(expectedValue) != len(actualValue) {
+			return false
+		}
+		for index, value := range expectedValue {
+			if !observableConfigEqual(value, actualValue[index]) {
+				return false
+			}
+		}
+		return true
+	default:
+		if reflect.DeepEqual(expected, actual) {
+			return true
+		}
+		expectedJSON, expectedErr := json.Marshal(expected)
+		actualJSON, actualErr := json.Marshal(actual)
+		return expectedErr == nil && actualErr == nil && bytes.Equal(expectedJSON, actualJSON)
+	}
+}
+
+func observableFieldsEqual(expected, actual map[string]any, fields ...string) bool {
+	for _, field := range fields {
+		value, exists := expected[field]
+		if !exists {
+			continue
+		}
+		actualValue, exists := actual[field]
+		if !exists || !observableConfigEqual(value, actualValue) {
+			return false
+		}
+	}
+	return true
+}
+
+func (s *Service) PluginList(ctx context.Context, options CheckOptions) (Result, error) {
+	preflight, err := s.readPreflight(ctx, "plugin.list", "resource.view", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	plugins, err := (api.Client{Transport: s.deps.Transport}).Plugins(ctx, readTarget(preflight))
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	return Result{Data: map[string]any{"plugins": plugins}, Meta: preflight.Meta()}, nil
+}
+
+func (s *Service) PluginGet(ctx context.Context, author, name string, options CheckOptions) (Result, error) {
+	if err := api.ValidateResourceID(author); err != nil {
+		return Result{}, err
+	}
+	if err := api.ValidateResourceID(name); err != nil {
+		return Result{}, err
+	}
+	preflight, err := s.readPreflight(ctx, "plugin.get", "resource.view", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	plugin, err := (api.Client{Transport: s.deps.Transport}).PluginGet(ctx, readTarget(preflight), author, name)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	return Result{Data: map[string]any{"plugin": plugin}, Meta: preflight.Meta()}, nil
+}
+
+func (s *Service) PluginConfigGet(ctx context.Context, author, name string, options CheckOptions) (Result, error) {
+	if err := api.ValidateResourceID(author); err != nil {
+		return Result{}, err
+	}
+	if err := api.ValidateResourceID(name); err != nil {
+		return Result{}, err
+	}
+	preflight, err := s.readPreflight(ctx, "plugin.config.get", "resource.view", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	config, err := (api.Client{Transport: s.deps.Transport}).PluginConfig(ctx, readTarget(preflight), author, name)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	return Result{Data: config, Meta: preflight.Meta()}, nil
+}
+
+func (s *Service) PluginLogs(ctx context.Context, author, name, level string, limit int, options CheckOptions) (Result, error) {
+	if err := api.ValidateResourceID(author); err != nil {
+		return Result{}, err
+	}
+	if err := api.ValidateResourceID(name); err != nil {
+		return Result{}, err
+	}
+	if limit <= 0 || limit > 500 {
+		return Result{}, result.New("input", "limit 必须在 1 到 500 之间")
+	}
+	preflight, err := s.readPreflight(ctx, "plugin.logs", "audit.view", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	logs, err := (api.Client{Transport: s.deps.Transport}).PluginLogs(ctx, readTarget(preflight), author, name, level, limit)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	return Result{Data: logs, Meta: preflight.Meta()}, nil
+}
+
+func (s *Service) PluginConfigUpdate(ctx context.Context, author, name string, body map[string]any, dryRun bool, options CheckOptions) (Result, error) {
+	if err := api.ValidateResourceID(author); err != nil {
+		return Result{}, err
+	}
+	if err := api.ValidateResourceID(name); err != nil {
+		return Result{}, err
+	}
+	if body == nil {
+		return Result{}, result.New("input", "Plugin 配置必须是 JSON object")
+	}
+	preflight, err := s.WritePreflight(ctx, "plugin.config.update", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	client, target := s.writeClient(preflight)
+	if _, err := client.PluginGet(ctx, target, author, name); err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	if dryRun {
+		plan := writePlan(preflight, "plugin.config.update", "")
+		data := plan.Data.(map[string]any)
+		data["author"] = author
+		data["plugin_name"] = name
+		return plan, nil
+	}
+	if err := client.PluginConfigUpdate(ctx, target, author, name, body); err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	config, err := client.PluginConfig(ctx, target, author, name)
+	data := writeResultData("plugin.config.update", "")
+	delete(data, "uuid")
+	data["author"] = author
+	data["plugin_name"] = name
+	if err != nil {
+		return Result{Data: data, Meta: preflight.Meta()}, readbackError(err)
+	}
+	actual, ok := pluginConfigValue(config)
+	if !ok || !observableConfigEqual(body, actual) {
+		return Result{Data: data, Meta: preflight.Meta()}, verificationError("更新后回读到的 Plugin 配置不一致")
+	}
+	data["verified"] = true
+	data["config"] = actual
+	return Result{Data: data, Meta: preflight.Meta()}, nil
+}
+
+func (s *Service) PluginDelete(ctx context.Context, author, name string, deleteData, confirmed, dryRun, wait bool, waitOptions WaitOptions, options CheckOptions) (Result, error) {
+	if err := api.ValidateResourceID(author); err != nil {
+		return Result{}, err
+	}
+	if err := api.ValidateResourceID(name); err != nil {
+		return Result{}, err
+	}
+	if dryRun && wait {
+		return Result{}, result.New("input", "dry-run 不能等待异步任务")
+	}
+	if !dryRun && !confirmed {
+		return Result{}, result.New("input", "删除 Plugin 需要 --yes")
+	}
+	preflight, err := s.WritePreflight(ctx, "plugin.delete", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	if wait {
+		if err := requireCapability(preflight, "task.get"); err != nil {
+			return Result{Meta: preflight.Meta()}, err
+		}
+	}
+	client, target := s.writeClient(preflight)
+	if _, err := client.PluginGet(ctx, target, author, name); err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	data := map[string]any{
+		"operation": "plugin.delete", "author": author, "plugin_name": name,
+		"delete_data": deleteData, "dry_run": dryRun, "server_write": false,
+		"preconditions_confirmed": true, "verified": false,
+	}
+	if dryRun {
+		return Result{Data: data, Meta: preflight.Meta()}, nil
+	}
+	taskID, err := client.PluginDelete(ctx, target, author, name, deleteData)
+	if err != nil {
+		markAsyncSubmissionFailure(data, err)
+		return Result{Data: data, Meta: preflight.Meta()}, err
+	}
+	finished, err := s.finishTask(ctx, client, target, taskID, wait, waitOptions, data, preflight.Meta())
+	if err != nil || !wait {
+		return finished, err
+	}
+	_, err = client.PluginGet(ctx, target, author, name)
+	if err != nil && result.AsError(err).Kind == "not_found" {
+		data["verified"] = true
+		return finished, nil
+	}
+	if err != nil {
+		return finished, readbackError(err)
+	}
+	return finished, verificationError("删除任务完成后 Plugin 仍可读取")
+}
+
+func (s *Service) SkillList(ctx context.Context, options CheckOptions) (Result, error) {
+	preflight, err := s.readPreflight(ctx, "skill.list", "resource.view", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	skills, err := (api.Client{Transport: s.deps.Transport}).Skills(ctx, readTarget(preflight))
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	return Result{Data: map[string]any{"skills": skills}, Meta: preflight.Meta()}, nil
+}
+
+func (s *Service) SkillGet(ctx context.Context, name string, options CheckOptions) (Result, error) {
+	if err := api.ValidateResourceID(name); err != nil {
+		return Result{}, err
+	}
+	preflight, err := s.readPreflight(ctx, "skill.get", "resource.view", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	skill, err := (api.Client{Transport: s.deps.Transport}).SkillGet(ctx, readTarget(preflight), name)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	return Result{Data: map[string]any{"skill": skill}, Meta: preflight.Meta()}, nil
+}
+
+func (s *Service) SkillFiles(ctx context.Context, name, path string, includeHidden bool, options CheckOptions) (Result, error) {
+	if err := api.ValidateResourceID(name); err != nil {
+		return Result{}, err
+	}
+	if err := api.ValidateSkillFilePath(path, true); err != nil {
+		return Result{}, err
+	}
+	preflight, err := s.readPreflight(ctx, "skill.files.list", "resource.view", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	files, err := (api.Client{Transport: s.deps.Transport}).SkillFiles(ctx, readTarget(preflight), name, path, includeHidden)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	return Result{Data: files, Meta: preflight.Meta()}, nil
+}
+
+func (s *Service) SkillFileRead(ctx context.Context, name, path string, options CheckOptions) (Result, error) {
+	if err := api.ValidateResourceID(name); err != nil {
+		return Result{}, err
+	}
+	if err := api.ValidateSkillFilePath(path, false); err != nil {
+		return Result{}, err
+	}
+	preflight, err := s.readPreflight(ctx, "skill.files.read", "resource.view", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	data, err := (api.Client{Transport: s.deps.Transport}).SkillFileRead(ctx, readTarget(preflight), name, path)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	return Result{Data: data, Meta: preflight.Meta()}, nil
+}
+
+func (s *Service) SkillPreview(ctx context.Context, name string, options CheckOptions) (Result, error) {
+	if err := api.ValidateResourceID(name); err != nil {
+		return Result{}, err
+	}
+	preflight, err := s.readPreflight(ctx, "skill.preview", "resource.view", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	data, err := (api.Client{Transport: s.deps.Transport}).SkillPreview(ctx, readTarget(preflight), name)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	return Result{Data: data, Meta: preflight.Meta()}, nil
+}
+
+func (s *Service) SkillCreate(ctx context.Context, body map[string]any, dryRun bool, options CheckOptions) (Result, error) {
+	if body == nil {
+		return Result{}, result.New("input", "Skill 请求体必须是 JSON object")
+	}
+	if err := validateBodyFields(body, "name", "display_name", "description", "instructions"); err != nil {
+		return Result{}, err
+	}
+	rawName, ok := body["name"].(string)
+	name := strings.TrimSpace(rawName)
+	if !ok || name == "" {
+		return Result{}, result.New("input", "Skill 创建请求必须包含 name")
+	}
+	if rawName != name {
+		return Result{}, result.New("input", "Skill name 不能包含首尾空白")
+	}
+	if err := api.ValidateResourceID(name); err != nil {
+		return Result{}, err
+	}
+	preflight, err := s.WritePreflight(ctx, "skill.create", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	if dryRun {
+		plan := writePlan(preflight, "skill.create", "")
+		plan.Data.(map[string]any)["skill_name"] = name
+		return plan, nil
+	}
+	client, target := s.writeClient(preflight)
+	written, err := client.SkillCreate(ctx, target, body)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	if written["name"] != name {
+		return Result{Meta: preflight.Meta()}, verificationError("创建响应中的 Skill 名称不一致")
+	}
+	skill, err := client.SkillGet(ctx, target, name)
+	data := writeResultData("skill.create", "")
+	delete(data, "uuid")
+	data["skill_name"] = name
+	if err != nil {
+		return Result{Data: data, Meta: preflight.Meta()}, readbackError(err)
+	}
+	if !observableFieldsEqual(body, skill, "name", "display_name", "description", "instructions") {
+		return Result{Data: data, Meta: preflight.Meta()}, verificationError("创建后回读到的 Skill 内容不一致")
+	}
+	data["verified"] = true
+	data["skill"] = skill
+	return Result{Data: data, Meta: preflight.Meta()}, nil
+}
+
+func (s *Service) SkillUpdate(ctx context.Context, name string, body map[string]any, dryRun bool, options CheckOptions) (Result, error) {
+	if err := api.ValidateResourceID(name); err != nil {
+		return Result{}, err
+	}
+	if body == nil {
+		return Result{}, result.New("input", "Skill 请求体必须是 JSON object")
+	}
+	if err := validateBodyFields(body, "name", "display_name", "description", "instructions"); err != nil {
+		return Result{}, err
+	}
+	if len(body) == 0 {
+		return Result{}, result.New("input", "Skill 更新请求没有可修改字段")
+	}
+	if value, exists := body["name"]; exists {
+		bodyName, ok := value.(string)
+		if !ok || bodyName != name {
+			return Result{}, result.New("input", "Skill 更新不支持改名，name 必须与命令参数一致")
+		}
+	}
+	preflight, err := s.WritePreflight(ctx, "skill.update", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	client, target := s.writeClient(preflight)
+	if _, err := client.SkillGet(ctx, target, name); err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	if dryRun {
+		plan := writePlan(preflight, "skill.update", "")
+		plan.Data.(map[string]any)["skill_name"] = name
+		return plan, nil
+	}
+	if _, err := client.SkillUpdate(ctx, target, name, body); err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	skill, err := client.SkillGet(ctx, target, name)
+	data := writeResultData("skill.update", "")
+	delete(data, "uuid")
+	data["skill_name"] = name
+	if err != nil {
+		return Result{Data: data, Meta: preflight.Meta()}, readbackError(err)
+	}
+	if !observableFieldsEqual(body, skill, "name", "display_name", "description", "instructions") {
+		return Result{Data: data, Meta: preflight.Meta()}, verificationError("更新后回读到的 Skill 内容不一致")
+	}
+	data["verified"] = true
+	data["skill"] = skill
+	return Result{Data: data, Meta: preflight.Meta()}, nil
+}
+
+func (s *Service) SkillDelete(ctx context.Context, name string, confirmed, dryRun bool, options CheckOptions) (Result, error) {
+	if err := api.ValidateResourceID(name); err != nil {
+		return Result{}, err
+	}
+	if !dryRun && !confirmed {
+		return Result{}, result.New("input", "删除 Skill 需要 --yes")
+	}
+	preflight, err := s.WritePreflight(ctx, "skill.delete", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	client, target := s.writeClient(preflight)
+	if _, err := client.SkillGet(ctx, target, name); err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	if dryRun {
+		plan := writePlan(preflight, "skill.delete", "")
+		plan.Data.(map[string]any)["skill_name"] = name
+		return plan, nil
+	}
+	if err := client.SkillDelete(ctx, target, name); err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	data := writeResultData("skill.delete", "")
+	delete(data, "uuid")
+	data["skill_name"] = name
+	_, err = client.SkillGet(ctx, target, name)
+	if err != nil && result.AsError(err).Kind == "not_found" {
+		data["verified"] = true
+		return Result{Data: data, Meta: preflight.Meta()}, nil
+	}
+	if err != nil {
+		return Result{Data: data, Meta: preflight.Meta()}, readbackError(err)
+	}
+	return Result{Data: data, Meta: preflight.Meta()}, verificationError("删除后 Skill 仍可读取")
+}
+
+func (s *Service) SkillFileWrite(ctx context.Context, name, path, content string, dryRun bool, options CheckOptions) (Result, error) {
+	if err := api.ValidateResourceID(name); err != nil {
+		return Result{}, err
+	}
+	if err := api.ValidateSkillFilePath(path, false); err != nil {
+		return Result{}, err
+	}
+	preflight, err := s.WritePreflight(ctx, "skill.files.write", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	client, target := s.writeClient(preflight)
+	if _, err := client.SkillGet(ctx, target, name); err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	if dryRun {
+		plan := writePlan(preflight, "skill.files.write", "")
+		data := plan.Data.(map[string]any)
+		data["skill_name"] = name
+		data["path"] = path
+		return plan, nil
+	}
+	if _, err := client.SkillFileWrite(ctx, target, name, path, content); err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	file, matches, err := client.SkillFileMatches(ctx, target, name, path, content)
+	data := writeResultData("skill.files.write", "")
+	delete(data, "uuid")
+	data["skill_name"] = name
+	data["path"] = path
+	if err != nil {
+		return Result{Data: data, Meta: preflight.Meta()}, readbackError(err)
+	}
+	if !matches {
+		return Result{Data: data, Meta: preflight.Meta()}, verificationError("写入后回读到的 Skill 文件内容不一致")
+	}
+	data["verified"] = true
+	data["file"] = file
+	return Result{Data: data, Meta: preflight.Meta()}, nil
+}
+
 func (s *Service) PluginInstallGitHub(ctx context.Context, body map[string]any, dryRun, wait bool, waitOptions WaitOptions, options CheckOptions) (Result, error) {
 	return s.pluginInstall(ctx, "plugin.install.github", body, "", dryRun, wait, waitOptions, options)
 }
@@ -1964,6 +2451,14 @@ func readbackCapability(operation string) string {
 		return "knowledge_base.get"
 	case strings.HasPrefix(operation, "mcp_server.") && operation != "mcp_server.test":
 		return "mcp_server.get"
+	case operation == "plugin.config.update":
+		return "plugin.config.get"
+	case operation == "plugin.delete":
+		return "plugin.get"
+	case operation == "skill.files.write":
+		return "skill.files.read"
+	case operation == "skill.create" || operation == "skill.update" || operation == "skill.delete":
+		return "skill.get"
 	default:
 		return ""
 	}

@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 )
 
@@ -29,21 +30,55 @@ func ResolveOperation(method, requestPath string) (Operation, bool) {
 		return Operation{}, false
 	}
 	method = strings.ToUpper(strings.TrimSpace(method))
+	var operation Operation
+	var ok bool
 	if method == http.MethodGet {
-		operation, ok := resolveGetOperation(path)
-		if ok {
-			operation.Path = requestPath
-		}
-		return operation, ok
+		operation, ok = resolveGetOperation(path)
+	} else if method == http.MethodPost {
+		operation, ok = resolvePostOperation(path)
+	} else {
+		return Operation{}, false
 	}
-	if method == http.MethodPost {
-		operation, ok := resolvePostOperation(path)
-		if ok {
-			operation.Path = requestPath
-		}
-		return operation, ok
+	query, queryErr := url.ParseQuery(parsed.RawQuery)
+	if !ok || queryErr != nil || !validOperationQuery(operation.ID, query) {
+		return Operation{}, false
 	}
-	return Operation{}, false
+	operation.Path = requestPath
+	return operation, true
+}
+
+func validOperationQuery(operation string, query url.Values) bool {
+	allowed := map[string]bool{}
+	switch operation {
+	case "task.list":
+		allowed = map[string]bool{"type": true, "kind": true}
+	case "plugin.logs", "mcp_server.logs":
+		allowed = map[string]bool{"level": true, "limit": true}
+	case "skill.files.list":
+		allowed = map[string]bool{"path": true, "include_hidden": true}
+	default:
+		return len(query) == 0
+	}
+	for key, values := range query {
+		if !allowed[key] || len(values) != 1 {
+			return false
+		}
+	}
+	if values, ok := query["limit"]; ok {
+		limit, err := strconv.Atoi(values[0])
+		if err != nil || limit < 1 || limit > 500 {
+			return false
+		}
+	}
+	if values, ok := query["include_hidden"]; ok && values[0] != "true" && values[0] != "false" {
+		return false
+	}
+	if values, ok := query["path"]; ok {
+		if _, err := safeFilePath(values[0]); err != nil {
+			return false
+		}
+	}
+	return true
 }
 
 func resolveGetOperation(path string) (Operation, bool) {
@@ -87,7 +122,7 @@ func resolveGetOperation(path string) (Operation, bool) {
 		return Operation{ID: "skill.files.read", Method: http.MethodGet, Path: path, ReadOnly: true, Permission: "resource.view"}, true
 	}
 	if nestedPath(path, skillsPath, 1, "preview") {
-		return Operation{ID: "skill.preview", Method: http.MethodGet, Path: path, ReadOnly: true, Permission: "resource.manage"}, true
+		return Operation{ID: "skill.preview", Method: http.MethodGet, Path: path, ReadOnly: true, Permission: "resource.view"}, true
 	}
 	if nestedPath(path, mcpServersPath, 1, "resources") {
 		return Operation{ID: "mcp_server.resources", Method: http.MethodGet, Path: path, ReadOnly: true, Permission: "resource.view"}, true

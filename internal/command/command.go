@@ -451,6 +451,62 @@ func newKnowledgeBaseCommand(service *app.Service, deps Dependencies, flags *glo
 
 func newPluginCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
 	command := &cobra.Command{Use: "plugin", Short: "管理 Plugin", Args: cobra.NoArgs}
+	command.AddCommand(&cobra.Command{Use: "list", Short: "列出 Plugin", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+		return emitCall(deps, flags, func() (app.Result, error) { return service.PluginList(cmd.Context(), connectionOptions(flags)) })
+	}})
+	command.AddCommand(&cobra.Command{Use: "get <author> <name>", Short: "读取 Plugin", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
+		return emitCall(deps, flags, func() (app.Result, error) {
+			return service.PluginGet(cmd.Context(), args[0], args[1], connectionOptions(flags))
+		})
+	}})
+	configCommand := &cobra.Command{Use: "config", Short: "管理 Plugin 配置", Args: cobra.NoArgs}
+	configCommand.AddCommand(&cobra.Command{Use: "get <author> <name>", Short: "读取 Plugin 配置", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
+		return emitCall(deps, flags, func() (app.Result, error) {
+			return service.PluginConfigGet(cmd.Context(), args[0], args[1], connectionOptions(flags))
+		})
+	}})
+	var configFile string
+	var configDryRun bool
+	configUpdate := &cobra.Command{Use: "update <author> <name>", Short: "更新 Plugin 配置", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
+		body, err := loadRequestBody(cmd.Context(), configFile, flags.apiKeyStdin, deps.In)
+		if err != nil {
+			return emitCommand(deps, flags, app.Result{}, err)
+		}
+		return emitCall(deps, flags, func() (app.Result, error) {
+			return service.PluginConfigUpdate(cmd.Context(), args[0], args[1], body, configDryRun, connectionOptions(flags))
+		})
+	}}
+	configUpdate.Flags().StringVar(&configFile, "file", "", "JSON/YAML 配置文件，使用 - 从 stdin 读取")
+	configUpdate.Flags().BoolVar(&configDryRun, "dry-run", false, "只检查前置条件，不写入")
+	configCommand.AddCommand(configUpdate)
+	command.AddCommand(configCommand)
+	var logLevel string
+	var logLimit int
+	logs := &cobra.Command{Use: "logs <author> <name>", Short: "读取 Plugin 日志", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
+		return emitCall(deps, flags, func() (app.Result, error) {
+			return service.PluginLogs(cmd.Context(), args[0], args[1], logLevel, logLimit, connectionOptions(flags))
+		})
+	}}
+	logs.Flags().StringVar(&logLevel, "level", "", "按日志级别筛选")
+	logs.Flags().IntVar(&logLimit, "limit", 200, "返回日志条数，上限 500")
+	command.AddCommand(logs)
+	var deleteData, deleteConfirmed, deleteDryRun, deleteWait bool
+	var deletePollInterval, deleteWaitTimeout time.Duration
+	deleteCommand := &cobra.Command{Use: "delete <author> <name>", Short: "删除 Plugin", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
+		if err := validateWaitFlags(deleteDryRun, deleteWait, deletePollInterval, deleteWaitTimeout); err != nil {
+			return emitCommand(deps, flags, app.Result{}, err)
+		}
+		return emitCall(deps, flags, func() (app.Result, error) {
+			return service.PluginDelete(cmd.Context(), args[0], args[1], deleteData, deleteConfirmed, deleteDryRun, deleteWait, app.WaitOptions{Wait: deleteWait, PollInterval: deletePollInterval, WaitTimeout: deleteWaitTimeout}, connectionOptions(flags))
+		})
+	}}
+	deleteCommand.Flags().BoolVar(&deleteData, "delete-data", false, "同时删除 Plugin 数据")
+	deleteCommand.Flags().BoolVar(&deleteConfirmed, "yes", false, "确认删除")
+	deleteCommand.Flags().BoolVar(&deleteDryRun, "dry-run", false, "只检查前置条件，不删除")
+	deleteCommand.Flags().BoolVar(&deleteWait, "wait", false, "等待删除任务进入终态并回读验证")
+	deleteCommand.Flags().DurationVar(&deletePollInterval, "poll-interval", time.Second, "任务轮询间隔")
+	deleteCommand.Flags().DurationVar(&deleteWaitTimeout, "wait-timeout", 5*time.Minute, "本地等待超时")
+	command.AddCommand(deleteCommand)
 	install := &cobra.Command{Use: "install", Short: "安装 Plugin", Args: cobra.NoArgs}
 	newTaskFlags := func(cmd *cobra.Command, dryRun, wait *bool, pollInterval, waitTimeout *time.Duration) {
 		cmd.Flags().BoolVar(dryRun, "dry-run", false, "只检查前置条件，不安装或升级")
@@ -537,6 +593,88 @@ func newPluginCommand(service *app.Service, deps Dependencies, flags *globalFlag
 
 func newSkillCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
 	command := &cobra.Command{Use: "skill", Short: "管理 Skill", Args: cobra.NoArgs}
+	command.AddCommand(&cobra.Command{Use: "list", Short: "列出 Skill", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+		return emitCall(deps, flags, func() (app.Result, error) { return service.SkillList(cmd.Context(), connectionOptions(flags)) })
+	}})
+	command.AddCommand(&cobra.Command{Use: "get <name>", Short: "读取 Skill", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		return emitCall(deps, flags, func() (app.Result, error) { return service.SkillGet(cmd.Context(), args[0], connectionOptions(flags)) })
+	}})
+	var createFile string
+	var createDryRun bool
+	create := &cobra.Command{Use: "create", Short: "创建 Skill", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+		body, err := loadRequestBody(cmd.Context(), createFile, flags.apiKeyStdin, deps.In)
+		if err != nil {
+			return emitCommand(deps, flags, app.Result{}, err)
+		}
+		return emitCall(deps, flags, func() (app.Result, error) {
+			return service.SkillCreate(cmd.Context(), body, createDryRun, connectionOptions(flags))
+		})
+	}}
+	create.Flags().StringVar(&createFile, "file", "", "JSON/YAML 请求体文件，使用 - 从 stdin 读取")
+	create.Flags().BoolVar(&createDryRun, "dry-run", false, "只检查前置条件，不写入")
+	command.AddCommand(create)
+	var updateFile string
+	var updateDryRun bool
+	update := &cobra.Command{Use: "update <name>", Short: "更新 Skill", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		body, err := loadRequestBody(cmd.Context(), updateFile, flags.apiKeyStdin, deps.In)
+		if err != nil {
+			return emitCommand(deps, flags, app.Result{}, err)
+		}
+		return emitCall(deps, flags, func() (app.Result, error) {
+			return service.SkillUpdate(cmd.Context(), args[0], body, updateDryRun, connectionOptions(flags))
+		})
+	}}
+	update.Flags().StringVar(&updateFile, "file", "", "JSON/YAML 请求体文件，使用 - 从 stdin 读取")
+	update.Flags().BoolVar(&updateDryRun, "dry-run", false, "只检查前置条件，不写入")
+	command.AddCommand(update)
+	var deleteConfirmed, deleteDryRun bool
+	deleteCommand := &cobra.Command{Use: "delete <name>", Short: "删除 Skill", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		return emitCall(deps, flags, func() (app.Result, error) {
+			return service.SkillDelete(cmd.Context(), args[0], deleteConfirmed, deleteDryRun, connectionOptions(flags))
+		})
+	}}
+	deleteCommand.Flags().BoolVar(&deleteConfirmed, "yes", false, "确认删除")
+	deleteCommand.Flags().BoolVar(&deleteDryRun, "dry-run", false, "只检查前置条件，不删除")
+	command.AddCommand(deleteCommand)
+	var filesPath string
+	var includeHidden bool
+	fileCommand := &cobra.Command{Use: "file", Short: "管理 Skill 文件", Args: cobra.NoArgs}
+	files := &cobra.Command{Use: "list <name>", Short: "列出 Skill 文件", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		return emitCall(deps, flags, func() (app.Result, error) {
+			return service.SkillFiles(cmd.Context(), args[0], filesPath, includeHidden, connectionOptions(flags))
+		})
+	}}
+	files.Flags().StringVar(&filesPath, "path", ".", "Skill 包内的相对目录")
+	files.Flags().BoolVar(&includeHidden, "include-hidden", false, "包含隐藏文件")
+	fileCommand.AddCommand(files)
+	fileCommand.AddCommand(&cobra.Command{Use: "read <name> <path>", Short: "读取 Skill 文件", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
+		return emitCall(deps, flags, func() (app.Result, error) {
+			return service.SkillFileRead(cmd.Context(), args[0], args[1], connectionOptions(flags))
+		})
+	}})
+	var contentFile string
+	var fileDryRun bool
+	fileWrite := &cobra.Command{Use: "write <name> <path>", Short: "写入 Skill 文件", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
+		if err := requestbody.ValidateSources(contentFile, flags.apiKeyStdin); err != nil {
+			return emitCommand(deps, flags, app.Result{}, err)
+		}
+		content, err := requestbody.LoadText(cmd.Context(), contentFile, deps.In)
+		if err != nil {
+			return emitCommand(deps, flags, app.Result{}, err)
+		}
+		return emitCall(deps, flags, func() (app.Result, error) {
+			return service.SkillFileWrite(cmd.Context(), args[0], args[1], content, fileDryRun, connectionOptions(flags))
+		})
+	}}
+	fileWrite.Flags().StringVar(&contentFile, "file", "", "写入内容文件，使用 - 从 stdin 读取")
+	fileWrite.Flags().BoolVar(&fileDryRun, "dry-run", false, "只检查前置条件，不写入")
+	fileCommand.AddCommand(fileWrite)
+	command.AddCommand(fileCommand)
+	command.AddCommand(&cobra.Command{Use: "preview <name>", Short: "预览 Skill", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		return emitCall(deps, flags, func() (app.Result, error) {
+			return service.SkillPreview(cmd.Context(), args[0], connectionOptions(flags))
+		})
+	}})
 	install := &cobra.Command{Use: "install", Short: "安装 Skill", Args: cobra.NoArgs}
 	var githubFile string
 	var githubDryRun bool

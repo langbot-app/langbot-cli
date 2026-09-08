@@ -28,7 +28,8 @@ func TestResolveOperationRestrictsPathsAndPreservesOperationSemantics(t *testing
 		{name: "knowledge retrieve", method: http.MethodPost, path: "/api/v1/knowledge/bases/kb-a/retrieve", id: "knowledge_base.retrieve", permission: "resource.view", allowed: true},
 		{name: "mcp resource read", method: http.MethodPost, path: "/api/v1/mcp/servers/server-a/resources/read", id: "mcp_server.resource_read", permission: "resource.view", allowed: true},
 		{name: "plugin logs", method: http.MethodGet, path: "/api/v1/plugins/author/plugin/logs?limit=20", id: "plugin.logs", permission: "audit.view", allowed: true},
-		{name: "skill preview", method: http.MethodGet, path: "/api/v1/skills/demo/preview", id: "skill.preview", permission: "resource.manage", allowed: true},
+		{name: "skill files query", method: http.MethodGet, path: "/api/v1/skills/demo/files?path=docs&include_hidden=false", id: "skill.files.list", permission: "resource.view", allowed: true},
+		{name: "skill preview", method: http.MethodGet, path: "/api/v1/skills/demo/preview", id: "skill.preview", permission: "resource.view", allowed: true},
 		{name: "resource create", method: http.MethodPost, path: "/api/v1/knowledge/bases", allowed: false},
 		{name: "provider scan", method: http.MethodGet, path: "/api/v1/provider/providers/provider-a/scan-models", allowed: false},
 		{name: "model test", method: http.MethodPost, path: "/api/v1/provider/models/llm/model-a/test", allowed: false},
@@ -39,6 +40,13 @@ func TestResolveOperationRestrictsPathsAndPreservesOperationSemantics(t *testing
 		{name: "encoded slash", method: http.MethodGet, path: "/api/v1/mcp/servers/server%2Fa", allowed: false},
 		{name: "encoded backslash", method: http.MethodGet, path: "/api/v1/mcp/servers/server%5Ca", allowed: false},
 		{name: "extra segment", method: http.MethodGet, path: "/api/v1/plugins/author/plugin/logs/extra", allowed: false},
+		{name: "unknown query", method: http.MethodGet, path: "/api/v1/plugins/author/plugin/logs?follow=true", allowed: false},
+		{name: "duplicate query", method: http.MethodGet, path: "/api/v1/plugins/author/plugin/logs?limit=10&limit=20", allowed: false},
+		{name: "zero log limit", method: http.MethodGet, path: "/api/v1/plugins/author/plugin/logs?limit=0", allowed: false},
+		{name: "large log limit", method: http.MethodGet, path: "/api/v1/plugins/author/plugin/logs?limit=501", allowed: false},
+		{name: "invalid hidden flag", method: http.MethodGet, path: "/api/v1/skills/demo/files?include_hidden=yes", allowed: false},
+		{name: "query traversal", method: http.MethodGet, path: "/api/v1/skills/demo/files?path=../private", allowed: false},
+		{name: "query on detail", method: http.MethodGet, path: "/api/v1/skills/demo?verbose=true", allowed: false},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
