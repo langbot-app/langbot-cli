@@ -36,6 +36,25 @@ func TestRenderPreservesNumbersAndRedactsSecrets(t *testing.T) {
 	}
 }
 
+func TestRenderPreservesOnlyConfirmedSecretPlaceholders(t *testing.T) {
+	var out bytes.Buffer
+	value := map[string]any{
+		"authorization": "***",
+		"api_key":       map[string]any{"primary": "***", "fallback": ""},
+		"password":      "real-secret",
+	}
+	if err := Render(&out, value, FormatJSON); err != nil {
+		t.Fatal(err)
+	}
+	result := out.String()
+	if !strings.Contains(result, `"authorization": "***"`) || !strings.Contains(result, `"primary": "***"`) {
+		t.Fatalf("masked placeholders were not preserved: %s", result)
+	}
+	if strings.Contains(result, "real-secret") || !strings.Contains(result, `"password": "[REDACTED]"`) {
+		t.Fatalf("real secret was not redacted: %s", result)
+	}
+}
+
 func TestRenderTableKeepsOverallErrorSeparateFromRows(t *testing.T) {
 	var out bytes.Buffer
 	value := map[string]any{
@@ -87,6 +106,24 @@ func TestRenderTableSupportsResourceLists(t *testing.T) {
 	}
 	if strings.Contains(out.String(), "bot-secret") {
 		t.Fatalf("resource table exposed sensitive configuration: %s", out.String())
+	}
+}
+
+func TestRenderTableSupportsManagedResourceLists(t *testing.T) {
+	for _, key := range []string{"tasks", "bases", "files", "servers", "plugins", "skills"} {
+		t.Run(key, func(t *testing.T) {
+			var out bytes.Buffer
+			value := map[string]any{
+				"ok":   true,
+				"data": map[string]any{key: []any{map[string]any{"uuid": "resource-a", "name": "Resource A"}}},
+			}
+			if err := Render(&out, value, FormatTable); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(out.String(), key) || !strings.Contains(out.String(), "resource-a") {
+				t.Fatalf("table output omitted %s rows: %s", key, out.String())
+			}
+		})
 	}
 }
 

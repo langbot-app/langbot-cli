@@ -341,6 +341,79 @@ func newTaskCommand(service *app.Service, deps Dependencies, flags *globalFlags)
 
 func newKnowledgeBaseCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
 	command := &cobra.Command{Use: "knowledge-base", Aliases: []string{"kb"}, Short: "管理知识库", Args: cobra.NoArgs}
+	command.AddCommand(&cobra.Command{Use: "list", Short: "列出知识库", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+		return emitCall(deps, flags, func() (app.Result, error) { return service.KnowledgeBaseList(cmd.Context(), connectionOptions(flags)) })
+	}})
+	command.AddCommand(&cobra.Command{Use: "get <id>", Short: "读取知识库", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		return emitCall(deps, flags, func() (app.Result, error) {
+			return service.KnowledgeBaseGet(cmd.Context(), args[0], connectionOptions(flags))
+		})
+	}})
+	var createFile string
+	var createDryRun bool
+	create := &cobra.Command{Use: "create", Short: "创建知识库", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+		body, err := loadRequestBody(cmd.Context(), createFile, flags.apiKeyStdin, deps.In)
+		if err != nil {
+			return emitCommand(deps, flags, app.Result{}, err)
+		}
+		return emitCall(deps, flags, func() (app.Result, error) {
+			return service.KnowledgeBaseCreate(cmd.Context(), body, createDryRun, connectionOptions(flags))
+		})
+	}}
+	create.Flags().StringVar(&createFile, "file", "", "JSON/YAML 请求体文件，使用 - 从 stdin 读取")
+	create.Flags().BoolVar(&createDryRun, "dry-run", false, "只检查前置条件，不写入")
+	command.AddCommand(create)
+	var updateFile string
+	var updateDryRun bool
+	update := &cobra.Command{Use: "update <id>", Short: "更新知识库", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		body, err := loadRequestBody(cmd.Context(), updateFile, flags.apiKeyStdin, deps.In)
+		if err != nil {
+			return emitCommand(deps, flags, app.Result{}, err)
+		}
+		return emitCall(deps, flags, func() (app.Result, error) {
+			return service.KnowledgeBaseUpdate(cmd.Context(), args[0], body, updateDryRun, connectionOptions(flags))
+		})
+	}}
+	update.Flags().StringVar(&updateFile, "file", "", "JSON/YAML 请求体文件，使用 - 从 stdin 读取")
+	update.Flags().BoolVar(&updateDryRun, "dry-run", false, "只检查前置条件，不写入")
+	command.AddCommand(update)
+	var deleteYes, deleteDryRun bool
+	deleteCommand := &cobra.Command{Use: "delete <id>", Short: "删除知识库", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		return emitCall(deps, flags, func() (app.Result, error) {
+			return service.KnowledgeBaseDelete(cmd.Context(), args[0], deleteYes, deleteDryRun, connectionOptions(flags))
+		})
+	}}
+	deleteCommand.Flags().BoolVar(&deleteYes, "yes", false, "确认删除")
+	deleteCommand.Flags().BoolVar(&deleteDryRun, "dry-run", false, "只检查前置条件，不写入")
+	command.AddCommand(deleteCommand)
+	var retrieveFile string
+	retrieve := &cobra.Command{Use: "retrieve <id>", Short: "检索知识库", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		body, err := loadRequestBody(cmd.Context(), retrieveFile, flags.apiKeyStdin, deps.In)
+		if err != nil {
+			return emitCommand(deps, flags, app.Result{}, err)
+		}
+		return emitCall(deps, flags, func() (app.Result, error) {
+			return service.KnowledgeBaseRetrieve(cmd.Context(), args[0], body, connectionOptions(flags))
+		})
+	}}
+	retrieve.Flags().StringVar(&retrieveFile, "file", "", "JSON/YAML 请求体文件，使用 - 从 stdin 读取")
+	command.AddCommand(retrieve)
+	files := &cobra.Command{Use: "file", Short: "管理知识库文件", Args: cobra.NoArgs}
+	files.AddCommand(&cobra.Command{Use: "list <id>", Short: "列出知识库文件", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		return emitCall(deps, flags, func() (app.Result, error) {
+			return service.KnowledgeBaseFileList(cmd.Context(), args[0], connectionOptions(flags))
+		})
+	}})
+	var fileYes, fileDryRun bool
+	fileDelete := &cobra.Command{Use: "delete <id> <file-id>", Short: "删除知识库文件", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
+		return emitCall(deps, flags, func() (app.Result, error) {
+			return service.KnowledgeBaseFileDelete(cmd.Context(), args[0], args[1], fileYes, fileDryRun, connectionOptions(flags))
+		})
+	}}
+	fileDelete.Flags().BoolVar(&fileYes, "yes", false, "确认删除")
+	fileDelete.Flags().BoolVar(&fileDryRun, "dry-run", false, "只检查前置条件，不写入")
+	files.AddCommand(fileDelete)
+	command.AddCommand(files)
 	var filename string
 	var parserPluginID string
 	var dryRun bool
@@ -501,7 +574,84 @@ func newSkillCommand(service *app.Service, deps Dependencies, flags *globalFlags
 }
 
 func newMCPServerCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
-	command := &cobra.Command{Use: "mcp-server", Short: "测试 MCP Server", Args: cobra.NoArgs}
+	command := &cobra.Command{Use: "mcp-server", Short: "管理 MCP Server", Args: cobra.NoArgs}
+	command.AddCommand(&cobra.Command{Use: "list", Short: "列出 MCP Server", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+		return emitCall(deps, flags, func() (app.Result, error) { return service.MCPServerList(cmd.Context(), connectionOptions(flags)) })
+	}})
+	command.AddCommand(&cobra.Command{Use: "get <server-name>", Short: "读取 MCP Server", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		return emitCall(deps, flags, func() (app.Result, error) {
+			return service.MCPServerGet(cmd.Context(), args[0], connectionOptions(flags))
+		})
+	}})
+	var createFile string
+	var createDryRun bool
+	create := &cobra.Command{Use: "create", Short: "创建 MCP Server", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+		body, err := loadRequestBody(cmd.Context(), createFile, flags.apiKeyStdin, deps.In)
+		if err != nil {
+			return emitCommand(deps, flags, app.Result{}, err)
+		}
+		return emitCall(deps, flags, func() (app.Result, error) {
+			return service.MCPServerCreate(cmd.Context(), body, createDryRun, connectionOptions(flags))
+		})
+	}}
+	create.Flags().StringVar(&createFile, "file", "", "JSON/YAML 请求体文件，使用 - 从 stdin 读取")
+	create.Flags().BoolVar(&createDryRun, "dry-run", false, "只检查前置条件，不写入")
+	command.AddCommand(create)
+	var updateFile string
+	var updateDryRun bool
+	update := &cobra.Command{Use: "update <server-name>", Short: "更新 MCP Server", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		body, err := loadRequestBody(cmd.Context(), updateFile, flags.apiKeyStdin, deps.In)
+		if err != nil {
+			return emitCommand(deps, flags, app.Result{}, err)
+		}
+		return emitCall(deps, flags, func() (app.Result, error) {
+			return service.MCPServerUpdate(cmd.Context(), args[0], body, updateDryRun, connectionOptions(flags))
+		})
+	}}
+	update.Flags().StringVar(&updateFile, "file", "", "JSON/YAML 请求体文件，使用 - 从 stdin 读取")
+	update.Flags().BoolVar(&updateDryRun, "dry-run", false, "只检查前置条件，不写入")
+	command.AddCommand(update)
+	var deleteYes, deleteDryRun bool
+	deleteCommand := &cobra.Command{Use: "delete <server-name>", Short: "删除 MCP Server", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		return emitCall(deps, flags, func() (app.Result, error) {
+			return service.MCPServerDelete(cmd.Context(), args[0], deleteYes, deleteDryRun, connectionOptions(flags))
+		})
+	}}
+	deleteCommand.Flags().BoolVar(&deleteYes, "yes", false, "确认删除")
+	deleteCommand.Flags().BoolVar(&deleteDryRun, "dry-run", false, "只检查前置条件，不写入")
+	command.AddCommand(deleteCommand)
+	command.AddCommand(&cobra.Command{Use: "resources <server-name>", Short: "列出 MCP 资源", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		return emitCall(deps, flags, func() (app.Result, error) {
+			return service.MCPServerResources(cmd.Context(), args[0], connectionOptions(flags))
+		})
+	}})
+	command.AddCommand(&cobra.Command{Use: "resource-templates <server-name>", Short: "列出 MCP 资源模板", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		return emitCall(deps, flags, func() (app.Result, error) {
+			return service.MCPServerResourceTemplates(cmd.Context(), args[0], connectionOptions(flags))
+		})
+	}})
+	var readFile string
+	read := &cobra.Command{Use: "resource-read <server-name>", Short: "读取 MCP 资源", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		body, err := loadRequestBody(cmd.Context(), readFile, flags.apiKeyStdin, deps.In)
+		if err != nil {
+			return emitCommand(deps, flags, app.Result{}, err)
+		}
+		return emitCall(deps, flags, func() (app.Result, error) {
+			return service.MCPServerResourceRead(cmd.Context(), args[0], body, connectionOptions(flags))
+		})
+	}}
+	read.Flags().StringVar(&readFile, "file", "", "JSON/YAML 请求体文件，使用 - 从 stdin 读取")
+	command.AddCommand(read)
+	var level string
+	var limit int
+	logs := &cobra.Command{Use: "logs <server-name>", Short: "读取 MCP 日志", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		return emitCall(deps, flags, func() (app.Result, error) {
+			return service.MCPServerLogs(cmd.Context(), args[0], level, limit, connectionOptions(flags))
+		})
+	}}
+	logs.Flags().StringVar(&level, "level", "", "按日志级别筛选")
+	logs.Flags().IntVar(&limit, "limit", 200, "返回日志条数，上限 500")
+	command.AddCommand(logs)
 	var file string
 	var dryRun, wait bool
 	var pollInterval, waitTimeout time.Duration

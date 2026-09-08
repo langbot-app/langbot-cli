@@ -23,6 +23,8 @@ func TestResolveOperationRestrictsPathsAndPreservesOperationSemantics(t *testing
 		allowed    bool
 	}{
 		{name: "task list query", method: http.MethodGet, path: "/api/v1/system/tasks?kind=extension-operation", id: "task.list", permission: "resource.view", allowed: true},
+		{name: "knowledge base list", method: http.MethodGet, path: "/api/v1/knowledge/bases", id: "knowledge_base.list", permission: "resource.view", allowed: true},
+		{name: "knowledge base files", method: http.MethodGet, path: "/api/v1/knowledge/bases/kb-a/files", id: "knowledge_base.file.list", permission: "resource.view", allowed: true},
 		{name: "knowledge retrieve", method: http.MethodPost, path: "/api/v1/knowledge/bases/kb-a/retrieve", id: "knowledge_base.retrieve", permission: "resource.view", allowed: true},
 		{name: "mcp resource read", method: http.MethodPost, path: "/api/v1/mcp/servers/server-a/resources/read", id: "mcp_server.resource_read", permission: "resource.view", allowed: true},
 		{name: "plugin logs", method: http.MethodGet, path: "/api/v1/plugins/author/plugin/logs?limit=20", id: "plugin.logs", permission: "audit.view", allowed: true},

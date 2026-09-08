@@ -737,6 +737,441 @@ func (s *Service) KnowledgeBaseIngest(
 	return Result{Data: data, Meta: preflight.Meta()}, nil
 }
 
+func (s *Service) KnowledgeBaseList(ctx context.Context, options CheckOptions) (Result, error) {
+	preflight, err := s.readPreflight(ctx, "knowledge_base.list", "resource.view", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	bases, err := (api.Client{Transport: s.deps.Transport}).KnowledgeBases(ctx, readTarget(preflight))
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	return Result{Data: map[string]any{"bases": bases}, Meta: preflight.Meta()}, nil
+}
+
+func (s *Service) KnowledgeBaseGet(ctx context.Context, identifier string, options CheckOptions) (Result, error) {
+	if err := api.ValidateResourceID(identifier); err != nil {
+		return Result{}, err
+	}
+	preflight, err := s.readPreflight(ctx, "knowledge_base.get", "resource.view", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	base, err := (api.Client{Transport: s.deps.Transport}).KnowledgeBase(ctx, readTarget(preflight), identifier)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	return Result{Data: map[string]any{"base": base}, Meta: preflight.Meta()}, nil
+}
+
+func (s *Service) KnowledgeBaseCreate(ctx context.Context, body map[string]any, dryRun bool, options CheckOptions) (Result, error) {
+	if body == nil {
+		return Result{}, result.New("input", "请求体必须是 JSON object")
+	}
+	if err := validateBodyFields(body, "name", "description", "knowledge_engine_plugin_id", "creation_settings", "retrieval_settings"); err != nil {
+		return Result{}, err
+	}
+	engineID, ok := body["knowledge_engine_plugin_id"].(string)
+	if !ok || strings.TrimSpace(engineID) == "" {
+		return Result{}, result.New("input", "知识库创建请求必须包含 knowledge_engine_plugin_id")
+	}
+	preflight, err := s.WritePreflight(ctx, "knowledge_base.create", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	if dryRun {
+		return writePlan(preflight, "knowledge_base.create", ""), nil
+	}
+	client, target := s.writeClient(preflight)
+	written, err := client.KnowledgeBaseCreate(ctx, target, body)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	base, err := client.KnowledgeBase(ctx, target, written.UUID)
+	data := writeResultData("knowledge_base.create", written.UUID)
+	if err != nil {
+		return Result{Data: data, Meta: preflight.Meta()}, readbackError(err)
+	}
+	data["verified"] = true
+	data["base"] = base
+	return Result{Data: data, Meta: preflight.Meta()}, nil
+}
+
+func (s *Service) KnowledgeBaseUpdate(ctx context.Context, identifier string, body map[string]any, dryRun bool, options CheckOptions) (Result, error) {
+	if err := api.ValidateResourceID(identifier); err != nil {
+		return Result{}, err
+	}
+	if body == nil {
+		return Result{}, result.New("input", "请求体必须是 JSON object")
+	}
+	if err := validateBodyFields(body, "uuid", "name", "description", "retrieval_settings"); err != nil {
+		return Result{}, err
+	}
+	if err := validateBodyUUID(body, identifier); err != nil {
+		return Result{}, err
+	}
+	if len(withoutUUID(body)) == 0 {
+		return Result{}, result.New("input", "知识库更新请求没有可修改字段")
+	}
+	preflight, err := s.WritePreflight(ctx, "knowledge_base.update", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	if dryRun {
+		return writePlan(preflight, "knowledge_base.update", identifier), nil
+	}
+	client, target := s.writeClient(preflight)
+	if _, err := client.KnowledgeBaseUpdate(ctx, target, identifier, withoutUUID(body)); err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	base, err := client.KnowledgeBase(ctx, target, identifier)
+	data := writeResultData("knowledge_base.update", identifier)
+	if err != nil {
+		return Result{Data: data, Meta: preflight.Meta()}, readbackError(err)
+	}
+	data["verified"] = true
+	data["base"] = base
+	return Result{Data: data, Meta: preflight.Meta()}, nil
+}
+
+func (s *Service) KnowledgeBaseDelete(ctx context.Context, identifier string, confirmed, dryRun bool, options CheckOptions) (Result, error) {
+	if err := api.ValidateResourceID(identifier); err != nil {
+		return Result{}, err
+	}
+	if !dryRun && !confirmed {
+		return Result{}, result.New("input", "删除知识库需要 --yes")
+	}
+	preflight, err := s.WritePreflight(ctx, "knowledge_base.delete", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	if dryRun {
+		return writePlan(preflight, "knowledge_base.delete", identifier), nil
+	}
+	client, target := s.writeClient(preflight)
+	if _, err := client.KnowledgeBaseDelete(ctx, target, identifier); err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	data := writeResultData("knowledge_base.delete", identifier)
+	_, err = client.KnowledgeBase(ctx, target, identifier)
+	if err != nil && result.AsError(err).Kind == "not_found" {
+		data["verified"] = true
+		return Result{Data: data, Meta: preflight.Meta()}, nil
+	}
+	if err != nil {
+		return Result{Data: data, Meta: preflight.Meta()}, readbackError(err)
+	}
+	return Result{Data: data, Meta: preflight.Meta()}, verificationError("删除后知识库仍可读取")
+}
+
+func (s *Service) KnowledgeBaseFileList(ctx context.Context, identifier string, options CheckOptions) (Result, error) {
+	if err := api.ValidateResourceID(identifier); err != nil {
+		return Result{}, err
+	}
+	preflight, err := s.readPreflight(ctx, "knowledge_base.file.list", "resource.view", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	files, err := (api.Client{Transport: s.deps.Transport}).KnowledgeBaseFiles(ctx, readTarget(preflight), identifier)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	return Result{Data: map[string]any{"files": files}, Meta: preflight.Meta()}, nil
+}
+
+func (s *Service) KnowledgeBaseFileDelete(ctx context.Context, identifier, fileID string, confirmed, dryRun bool, options CheckOptions) (Result, error) {
+	if err := api.ValidateResourceID(identifier); err != nil {
+		return Result{}, err
+	}
+	if err := api.ValidateResourceID(fileID); err != nil {
+		return Result{}, err
+	}
+	if !dryRun && !confirmed {
+		return Result{}, result.New("input", "删除知识库文件需要 --yes")
+	}
+	preflight, err := s.WritePreflight(ctx, "knowledge_base.file.delete", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	if dryRun {
+		return writePlan(preflight, "knowledge_base.file.delete", fileID), nil
+	}
+	client, target := s.writeClient(preflight)
+	if err := client.KnowledgeBaseFileDelete(ctx, target, identifier, fileID); err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	files, err := client.KnowledgeBaseFiles(ctx, target, identifier)
+	data := writeResultData("knowledge_base.file.delete", fileID)
+	if err != nil {
+		return Result{Data: data, Meta: preflight.Meta()}, readbackError(err)
+	}
+	for _, file := range files {
+		if fileID == fileIdentifier(file) {
+			return Result{Data: data, Meta: preflight.Meta()}, verificationError("删除后知识库文件仍可读取")
+		}
+	}
+	data["verified"] = true
+	return Result{Data: data, Meta: preflight.Meta()}, nil
+}
+
+func (s *Service) KnowledgeBaseRetrieve(ctx context.Context, identifier string, body map[string]any, options CheckOptions) (Result, error) {
+	if err := api.ValidateResourceID(identifier); err != nil {
+		return Result{}, err
+	}
+	if body == nil {
+		return Result{}, result.New("input", "请求体必须是 JSON object")
+	}
+	query, ok := body["query"].(string)
+	if !ok || strings.TrimSpace(query) == "" {
+		return Result{}, result.New("input", "知识库检索请求必须包含非空 query")
+	}
+	preflight, err := s.readPreflight(ctx, "knowledge_base.retrieve", "resource.view", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	data, err := (api.Client{Transport: s.deps.Transport}).KnowledgeBaseRetrieve(ctx, readTarget(preflight), identifier, body)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	return Result{Data: data, Meta: preflight.Meta()}, nil
+}
+
+func (s *Service) MCPServerList(ctx context.Context, options CheckOptions) (Result, error) {
+	preflight, err := s.readPreflight(ctx, "mcp_server.list", "resource.view", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	servers, err := (api.Client{Transport: s.deps.Transport}).MCPServers(ctx, readTarget(preflight))
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	return Result{Data: map[string]any{"servers": servers}, Meta: preflight.Meta()}, nil
+}
+
+func (s *Service) MCPServerGet(ctx context.Context, name string, options CheckOptions) (Result, error) {
+	if err := api.ValidateMCPServerName(name); err != nil {
+		return Result{}, err
+	}
+	preflight, err := s.readPreflight(ctx, "mcp_server.get", "resource.view", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	server, err := (api.Client{Transport: s.deps.Transport}).MCPServerGet(ctx, readTarget(preflight), name)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	return Result{Data: map[string]any{"server": server}, Meta: preflight.Meta()}, nil
+}
+
+func (s *Service) MCPServerCreate(ctx context.Context, body map[string]any, dryRun bool, options CheckOptions) (Result, error) {
+	if body == nil {
+		return Result{}, result.New("input", "请求体必须是 JSON object")
+	}
+	if err := validateBodyFields(body, "name", "enable", "mode", "extra_args", "readme"); err != nil {
+		return Result{}, err
+	}
+	name, ok := body["name"].(string)
+	name = strings.TrimSpace(name)
+	if !ok || name == "" {
+		return Result{}, result.New("input", "MCP Server 请求体必须包含 name")
+	}
+	if err := api.ValidateMCPServerName(name); err != nil {
+		return Result{}, err
+	}
+	mode, ok := body["mode"].(string)
+	if !ok || strings.TrimSpace(mode) == "" {
+		return Result{}, result.New("input", "MCP Server 创建请求必须包含 mode")
+	}
+	preflight, err := s.WritePreflight(ctx, "mcp_server.create", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	if dryRun {
+		plan := writePlan(preflight, "mcp_server.create", "")
+		plan.Data.(map[string]any)["server_name"] = name
+		return plan, nil
+	}
+	client, target := s.writeClient(preflight)
+	written, err := client.MCPServerCreate(ctx, target, body)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	server, err := client.MCPServerGet(ctx, target, name)
+	data := writeResultData("mcp_server.create", written.UUID)
+	if err != nil {
+		return Result{Data: data, Meta: preflight.Meta()}, readbackError(err)
+	}
+	if server["uuid"] != written.UUID {
+		return Result{Data: data, Meta: preflight.Meta()}, verificationError("创建后回读到的 MCP Server UUID 不一致")
+	}
+	data["server_name"] = name
+	data["verified"] = true
+	data["server"] = server
+	return Result{Data: data, Meta: preflight.Meta()}, nil
+}
+
+func (s *Service) MCPServerUpdate(ctx context.Context, name string, body map[string]any, dryRun bool, options CheckOptions) (Result, error) {
+	if err := api.ValidateMCPServerName(name); err != nil {
+		return Result{}, err
+	}
+	if body == nil {
+		return Result{}, result.New("input", "请求体必须是 JSON object")
+	}
+	if err := validateBodyFields(body, "name", "enable", "mode", "extra_args", "readme"); err != nil {
+		return Result{}, err
+	}
+	if len(body) == 0 {
+		return Result{}, result.New("input", "MCP Server 更新请求没有可修改字段")
+	}
+	newName := name
+	if value, exists := body["name"]; exists {
+		value, ok := value.(string)
+		if !ok || strings.TrimSpace(value) == "" {
+			return Result{}, result.New("input", "MCP Server name 必须是非空字符串")
+		}
+		newName = strings.TrimSpace(value)
+		if err := api.ValidateMCPServerName(newName); err != nil {
+			return Result{}, err
+		}
+	}
+	preflight, err := s.WritePreflight(ctx, "mcp_server.update", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	if dryRun {
+		plan := writePlan(preflight, "mcp_server.update", "")
+		plan.Data.(map[string]any)["server_name"] = name
+		if newName != name {
+			plan.Data.(map[string]any)["new_server_name"] = newName
+		}
+		return plan, nil
+	}
+	client, target := s.writeClient(preflight)
+	current, err := client.MCPServerGet(ctx, target, name)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	if err := client.MCPServerUpdate(ctx, target, name, withoutUUID(body)); err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	server, err := client.MCPServerGet(ctx, target, newName)
+	uuid, _ := current["uuid"].(string)
+	data := writeResultData("mcp_server.update", uuid)
+	data["server_name"] = newName
+	if err != nil {
+		return Result{Data: data, Meta: preflight.Meta()}, readbackError(err)
+	}
+	if server["uuid"] != uuid {
+		return Result{Data: data, Meta: preflight.Meta()}, verificationError("更新后回读到的 MCP Server UUID 不一致")
+	}
+	data["verified"] = true
+	data["server"] = server
+	return Result{Data: data, Meta: preflight.Meta()}, nil
+}
+
+func (s *Service) MCPServerDelete(ctx context.Context, name string, confirmed, dryRun bool, options CheckOptions) (Result, error) {
+	if err := api.ValidateMCPServerName(name); err != nil {
+		return Result{}, err
+	}
+	if !dryRun && !confirmed {
+		return Result{}, result.New("input", "删除 MCP Server 需要 --yes")
+	}
+	preflight, err := s.WritePreflight(ctx, "mcp_server.delete", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	if dryRun {
+		plan := writePlan(preflight, "mcp_server.delete", "")
+		plan.Data.(map[string]any)["server_name"] = name
+		return plan, nil
+	}
+	client, target := s.writeClient(preflight)
+	current, err := client.MCPServerGet(ctx, target, name)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	if err := client.MCPServerDelete(ctx, target, name); err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	uuid, _ := current["uuid"].(string)
+	data := writeResultData("mcp_server.delete", uuid)
+	data["server_name"] = name
+	_, err = client.MCPServerGet(ctx, target, name)
+	if err != nil && result.AsError(err).Kind == "not_found" {
+		data["verified"] = true
+		return Result{Data: data, Meta: preflight.Meta()}, nil
+	}
+	if err != nil {
+		return Result{Data: data, Meta: preflight.Meta()}, readbackError(err)
+	}
+	return Result{Data: data, Meta: preflight.Meta()}, verificationError("删除后 MCP Server 仍可读取")
+}
+
+func (s *Service) MCPServerResources(ctx context.Context, name string, options CheckOptions) (Result, error) {
+	if err := api.ValidateMCPServerName(name); err != nil {
+		return Result{}, err
+	}
+	return s.mcpRead(ctx, name, "mcp_server.resources", "resource.view", func(c api.Client, t api.Target) (any, error) { return c.MCPServerResources(ctx, t, name) }, options)
+}
+
+func (s *Service) MCPServerResourceTemplates(ctx context.Context, name string, options CheckOptions) (Result, error) {
+	if err := api.ValidateMCPServerName(name); err != nil {
+		return Result{}, err
+	}
+	return s.mcpRead(ctx, name, "mcp_server.resource_templates", "resource.view", func(c api.Client, t api.Target) (any, error) { return c.MCPServerResourceTemplates(ctx, t, name) }, options)
+}
+
+func (s *Service) MCPServerResourceRead(ctx context.Context, name string, body map[string]any, options CheckOptions) (Result, error) {
+	if err := api.ValidateMCPServerName(name); err != nil {
+		return Result{}, err
+	}
+	if body == nil {
+		return Result{}, result.New("input", "请求体必须是 JSON object")
+	}
+	uri, ok := body["uri"].(string)
+	if !ok || strings.TrimSpace(uri) == "" {
+		return Result{}, result.New("input", "MCP 资源读取请求必须包含非空 uri")
+	}
+	return s.mcpRead(ctx, name, "mcp_server.resource_read", "resource.view", func(c api.Client, t api.Target) (any, error) { return c.MCPServerResourceRead(ctx, t, name, body) }, options)
+}
+
+func (s *Service) MCPServerLogs(ctx context.Context, name, level string, limit int, options CheckOptions) (Result, error) {
+	if err := api.ValidateMCPServerName(name); err != nil {
+		return Result{}, err
+	}
+	if limit < 1 || limit > 500 {
+		return Result{}, result.New("input", "MCP 日志条数必须在 1 到 500 之间")
+	}
+	return s.mcpRead(ctx, name, "mcp_server.logs", "audit.view", func(c api.Client, t api.Target) (any, error) { return c.MCPServerLogs(ctx, t, name, level, limit) }, options)
+}
+
+func (s *Service) mcpRead(ctx context.Context, name, operation, permission string, read func(api.Client, api.Target) (any, error), options CheckOptions) (Result, error) {
+	preflight, err := s.readPreflight(ctx, operation, permission, options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	data, err := read(api.Client{Transport: s.deps.Transport}, readTarget(preflight))
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	return Result{Data: data, Meta: preflight.Meta()}, nil
+}
+
+func readTarget(preflight WritePreflight) api.Target {
+	return api.Target{Endpoint: preflight.Connection.Endpoint, APIKey: preflight.Connection.APIKey, Timeout: preflight.Connection.Timeout}
+}
+
+func fileIdentifier(value any) string {
+	if item, ok := value.(map[string]any); ok {
+		for _, key := range []string{"id", "file_id", "uuid"} {
+			if id, ok := item[key].(string); ok {
+				return id
+			}
+		}
+	}
+	return ""
+}
+
 // PluginInstallGitHub 安装 GitHub 插件。
 func (s *Service) PluginInstallGitHub(ctx context.Context, body map[string]any, dryRun, wait bool, waitOptions WaitOptions, options CheckOptions) (Result, error) {
 	return s.pluginInstall(ctx, "plugin.install.github", body, "", dryRun, wait, waitOptions, options)
@@ -1312,10 +1747,10 @@ func writeResultData(operation, uuid string) map[string]any {
 func requireCapability(preflight WritePreflight, operation string) error {
 	supported, known := preflight.Capabilities.Operations[operation]
 	if !known {
-		return result.New("precondition", "服务端未明确支持该写操作")
+		return result.New("precondition", "服务端未明确支持该操作")
 	}
 	if !supported {
-		return result.New("precondition", "服务端明确不支持该写操作")
+		return result.New("precondition", "服务端明确不支持该操作")
 	}
 	return nil
 }
@@ -1353,6 +1788,24 @@ func withoutUUID(body map[string]any) map[string]any {
 	return copy
 }
 
+func validateBodyFields(body map[string]any, allowed ...string) error {
+	allowedSet := make(map[string]struct{}, len(allowed))
+	for _, field := range allowed {
+		allowedSet[field] = struct{}{}
+	}
+	unknown := make([]string, 0)
+	for field := range body {
+		if _, ok := allowedSet[field]; !ok {
+			unknown = append(unknown, field)
+		}
+	}
+	if len(unknown) == 0 {
+		return nil
+	}
+	sort.Strings(unknown)
+	return result.New("input", "请求体包含不支持的字段: "+strings.Join(unknown, ", "))
+}
+
 func readbackError(cause error) *result.Error {
 	failure := result.AsError(cause)
 	err := result.New(failure.Kind, "写操作已返回成功，但回读验证失败")
@@ -1388,6 +1841,27 @@ func (s *Service) resourceConnection(ctx context.Context, options CheckOptions) 
 		return conn, identity, result.New("permission", "当前 API Key 缺少 resource.view 权限")
 	}
 	return conn, identity, nil
+}
+
+// readPreflight 校验读取操作声明的权限和服务端能力，并保留解析后的连接快照。
+func (s *Service) readPreflight(ctx context.Context, operation, permission string, options CheckOptions) (WritePreflight, error) {
+	conn, identity, err := s.connectionWithIdentity(ctx, options)
+	preflight := WritePreflight{Connection: conn, Identity: identity}
+	if err != nil {
+		return preflight, err
+	}
+	if permission != "" && !hasPermission(identity, permission) {
+		return preflight, result.New("permission", "当前 API Key 缺少 "+permission+" 权限")
+	}
+	capabilities, err := s.capabilities(ctx, conn)
+	if err != nil {
+		return preflight, err
+	}
+	preflight.Capabilities = capabilities
+	if err := requireCapability(preflight, operation); err != nil {
+		return preflight, err
+	}
+	return preflight, nil
 }
 
 func (s *Service) connectionWithIdentity(ctx context.Context, options CheckOptions) (config.Connection, api.Context, error) {
@@ -1484,6 +1958,12 @@ func readbackCapability(operation string) string {
 		return "bot.get"
 	case strings.HasPrefix(operation, "pipeline."):
 		return "pipeline.get"
+	case operation == "knowledge_base.file.delete":
+		return "knowledge_base.file.list"
+	case strings.HasPrefix(operation, "knowledge_base."):
+		return "knowledge_base.get"
+	case strings.HasPrefix(operation, "mcp_server.") && operation != "mcp_server.test":
+		return "mcp_server.get"
 	default:
 		return ""
 	}

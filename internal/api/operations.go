@@ -56,9 +56,17 @@ func resolveGetOperation(path string) (Operation, bool) {
 		return Operation{ID: "skill.list", Method: http.MethodGet, Path: path, ReadOnly: true, Permission: "resource.view"}, true
 	case mcpServersPath:
 		return Operation{ID: "mcp_server.list", Method: http.MethodGet, Path: path, ReadOnly: true, Permission: "resource.view"}, true
+	case knowledgeBasesPath:
+		return Operation{ID: "knowledge_base.list", Method: http.MethodGet, Path: path, ReadOnly: true, Permission: "resource.view"}, true
 	}
 	if identifierPath(path, tasksPath) {
 		return Operation{ID: "task.get", Method: http.MethodGet, Path: path, ReadOnly: true, Permission: "resource.view"}, true
+	}
+	if identifierPath(path, knowledgeBasesPath) {
+		return Operation{ID: "knowledge_base.get", Method: http.MethodGet, Path: path, ReadOnly: true, Permission: "resource.view"}, true
+	}
+	if nestedPath(path, knowledgeBasesPath, 1, "files") {
+		return Operation{ID: "knowledge_base.file.list", Method: http.MethodGet, Path: path, ReadOnly: true, Permission: "resource.view"}, true
 	}
 	if multiSegmentPath(path, pluginsPath, 2) {
 		return Operation{ID: "plugin.get", Method: http.MethodGet, Path: path, ReadOnly: true, Permission: "resource.view"}, true

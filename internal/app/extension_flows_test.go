@@ -38,7 +38,7 @@ func TestPluginSkillAndMCPFlowsRespectDryRunAndWait(t *testing.T) {
 			skillWrites.Add(1)
 			fmt.Fprint(w, `{"code":0,"data":{"skills":[{"name":"demo"}]}}`)
 		case "/api/v1/mcp/servers/server-a":
-			fmt.Fprint(w, `{"code":0,"data":{"server":{"name":"server-a","type":"stdio","config":{"token":"secret"}}}}`)
+			fmt.Fprint(w, `{"code":0,"data":{"server":{"uuid":"server-id","name":"server-a","type":"stdio","config":{"token":"secret"}}}}`)
 		case "/api/v1/mcp/servers/server-a/test":
 			mcpWrites.Add(1)
 			fmt.Fprint(w, `{"code":0,"data":{"task_id":43}}`)

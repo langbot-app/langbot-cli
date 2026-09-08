@@ -116,8 +116,14 @@ var capabilityOperationIDs = []string{
 	"pipeline.copy",
 	"task.list",
 	"task.get",
+	"knowledge_base.list",
 	"knowledge_base.get",
+	"knowledge_base.create",
+	"knowledge_base.update",
+	"knowledge_base.delete",
+	"knowledge_base.file.list",
 	"knowledge_base.file.store",
+	"knowledge_base.file.delete",
 	"knowledge_base.retrieve",
 	"file.document.upload",
 	"plugin.install.github",
@@ -137,6 +143,9 @@ var capabilityOperationIDs = []string{
 	"skill.install.upload",
 	"mcp_server.list",
 	"mcp_server.get",
+	"mcp_server.create",
+	"mcp_server.update",
+	"mcp_server.delete",
 	"mcp_server.resources",
 	"mcp_server.resource_templates",
 	"mcp_server.resource_read",
@@ -151,6 +160,12 @@ func CapabilityOperationIDs() []string {
 
 func ValidateResourceID(identifier string) error {
 	_, err := resourcePath("", identifier)
+	return err
+}
+
+// ValidateMCPServerName 校验 MCP Server 名称能否安全放入服务端路径参数。
+func ValidateMCPServerName(name string) error {
+	_, err := mcpServerPath(name)
 	return err
 }
 
@@ -311,6 +326,69 @@ func (c Client) KnowledgeBase(ctx context.Context, target Target, identifier str
 	return base, nil
 }
 
+// KnowledgeBases 返回知识库的安全字段投影。
+func (c Client) KnowledgeBases(ctx context.Context, target Target) ([]map[string]any, error) {
+	resp, err := c.fetch(ctx, target, http.MethodGet, knowledgeBasesPath)
+	if err != nil {
+		return nil, err
+	}
+	return parseResourceList(resp, "bases", projectKnowledgeBase, target.APIKey)
+}
+
+func (c Client) KnowledgeBaseCreate(ctx context.Context, target Target, body map[string]any) (WriteResult, error) {
+	return c.createResource(ctx, target, http.MethodPost, knowledgeBasesPath, body)
+}
+
+func (c Client) KnowledgeBaseUpdate(ctx context.Context, target Target, identifier string, body map[string]any) (WriteResult, error) {
+	return c.updateResource(ctx, target, http.MethodPut, knowledgeBasesPath, identifier, body)
+}
+
+func (c Client) KnowledgeBaseDelete(ctx context.Context, target Target, identifier string) (WriteResult, error) {
+	return c.updateResource(ctx, target, http.MethodDelete, knowledgeBasesPath, identifier, nil)
+}
+
+// KnowledgeBaseFiles 返回知识库文件列表。文件字段由服务端定义，连接凭据只做值替换。
+func (c Client) KnowledgeBaseFiles(ctx context.Context, target Target, identifier string) ([]any, error) {
+	path, err := resourcePath(knowledgeBasesPath, identifier)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.fetch(ctx, target, http.MethodGet, path+"/files")
+	if err != nil {
+		return nil, err
+	}
+	files, ok := resp.Data["files"].([]any)
+	if !ok {
+		return nil, protocolError("服务返回的知识库文件列表格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.APIKey))
+	}
+	return redactConnectionSecret(files, target.APIKey).([]any), nil
+}
+
+func (c Client) KnowledgeBaseFileDelete(ctx context.Context, target Target, identifier, fileID string) error {
+	base, err := resourcePath(knowledgeBasesPath, identifier)
+	if err != nil {
+		return err
+	}
+	path, err := resourcePath(base+"/files", fileID)
+	if err != nil {
+		return err
+	}
+	_, err = c.write(ctx, target, http.MethodDelete, path, nil)
+	return err
+}
+
+func (c Client) KnowledgeBaseRetrieve(ctx context.Context, target Target, identifier string, body map[string]any) (any, error) {
+	path, err := resourcePath(knowledgeBasesPath, identifier)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.readPost(ctx, target, path+"/retrieve", body)
+	if err != nil {
+		return nil, err
+	}
+	return redactConnectionSecret(resp.Data, target.APIKey), nil
+}
+
 // UploadDocument 上传文件并返回服务端文件 ID。
 func (c Client) UploadDocument(ctx context.Context, target Target, filename string, file io.Reader) (string, error) {
 	if strings.TrimSpace(filename) == "" || file == nil {
@@ -468,11 +546,109 @@ func (c Client) MCPServerGet(ctx context.Context, target Target, name string) (m
 	if err != nil {
 		return nil, err
 	}
-	server, err := parseProjectedObject(resp, "server", projectMCPServer, target.APIKey)
+	item, ok := resp.Data["server"].(map[string]any)
+	if !ok {
+		return nil, protocolError("服务返回的 MCP Server 格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.APIKey))
+	}
+	server := projectMCPServer(item, target.APIKey)
+	for _, field := range []string{"extra_args", "readme", "runtime_info"} {
+		if value, exists := item[field]; exists {
+			server[field] = redactConnectionSecret(value, target.APIKey)
+		}
+	}
+	uuid, uuidOK := server["uuid"].(string)
+	serverName, nameOK := server["name"].(string)
+	if !uuidOK || strings.TrimSpace(uuid) == "" || containsSecret(uuid, target.APIKey) ||
+		!nameOK || serverName != strings.TrimSpace(name) {
+		return nil, protocolError("服务返回的 MCP Server 身份与请求不一致", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.APIKey))
+	}
+	return server, nil
+}
+
+// MCPServers 返回 MCP Server 的安全字段投影。
+func (c Client) MCPServers(ctx context.Context, target Target) ([]map[string]any, error) {
+	resp, err := c.fetch(ctx, target, http.MethodGet, mcpServersPath)
 	if err != nil {
 		return nil, err
 	}
-	return server, nil
+	return parseResourceList(resp, "servers", projectMCPServer, target.APIKey)
+}
+
+func (c Client) MCPServerCreate(ctx context.Context, target Target, body map[string]any) (WriteResult, error) {
+	return c.createResource(ctx, target, http.MethodPost, mcpServersPath, body)
+}
+
+func (c Client) MCPServerUpdate(ctx context.Context, target Target, name string, body map[string]any) error {
+	path, err := mcpServerPath(name)
+	if err != nil {
+		return err
+	}
+	_, err = c.write(ctx, target, http.MethodPut, path, body)
+	return err
+}
+
+func (c Client) MCPServerDelete(ctx context.Context, target Target, name string) error {
+	path, err := mcpServerPath(name)
+	if err != nil {
+		return err
+	}
+	_, err = c.write(ctx, target, http.MethodDelete, path, nil)
+	return err
+}
+
+func (c Client) MCPServerResources(ctx context.Context, target Target, name string) (any, error) {
+	return c.mcpServerRead(ctx, target, name, "/resources")
+}
+
+func (c Client) MCPServerResourceTemplates(ctx context.Context, target Target, name string) (any, error) {
+	return c.mcpServerRead(ctx, target, name, "/resource-templates")
+}
+
+func (c Client) MCPServerLogs(ctx context.Context, target Target, name, level string, limit int) (any, error) {
+	path, err := mcpServerPath(name)
+	if err != nil {
+		return nil, err
+	}
+	path += "/logs"
+	query := url.Values{}
+	if limit > 0 {
+		query.Set("limit", strconv.Itoa(limit))
+	}
+	if strings.TrimSpace(level) != "" {
+		query.Set("level", level)
+	}
+	if encoded := query.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	resp, err := c.fetch(ctx, target, http.MethodGet, path)
+	if err != nil {
+		return nil, err
+	}
+	return redactConnectionSecret(resp.Data, target.APIKey), nil
+}
+
+func (c Client) MCPServerResourceRead(ctx context.Context, target Target, name string, body map[string]any) (any, error) {
+	path, err := mcpServerPath(name)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.readPost(ctx, target, path+"/resources/read", body)
+	if err != nil {
+		return nil, err
+	}
+	return redactConnectionSecret(resp.Data, target.APIKey), nil
+}
+
+func (c Client) mcpServerRead(ctx context.Context, target Target, name, suffix string) (any, error) {
+	path, err := mcpServerPath(name)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.fetch(ctx, target, http.MethodGet, path+suffix)
+	if err != nil {
+		return nil, err
+	}
+	return redactConnectionSecret(resp.Data, target.APIKey), nil
 }
 
 // MCPServerTest 提交 MCP Server 测试任务。
@@ -914,6 +1090,29 @@ func knownWritePath(method, path string) bool {
 		identifier := strings.TrimSuffix(strings.TrimPrefix(path, knowledgeBasesPath+"/"), "/files")
 		return identifier != "" && !strings.Contains(identifier, "/")
 	}
+	if method == http.MethodPost && path == knowledgeBasesPath {
+		return true
+	}
+	if method == http.MethodDelete && strings.HasPrefix(path, knowledgeBasesPath+"/") {
+		value := strings.TrimPrefix(path, knowledgeBasesPath+"/")
+		parts := strings.Split(value, "/")
+		if len(parts) == 3 && parts[1] == "files" && parts[0] != "" && parts[2] != "" {
+			return true
+		}
+	}
+	if (method == http.MethodPut || method == http.MethodDelete) && strings.HasPrefix(path, knowledgeBasesPath+"/") {
+		value := strings.TrimPrefix(path, knowledgeBasesPath+"/")
+		return value != "" && !strings.Contains(value, "/")
+	}
+	if method == http.MethodPost && path == mcpServersPath {
+		return true
+	}
+	if method == http.MethodPut || method == http.MethodDelete {
+		if strings.HasPrefix(path, mcpServersPath+"/") {
+			value := strings.TrimPrefix(path, mcpServersPath+"/")
+			return value != "" && !strings.Contains(value, "/")
+		}
+	}
 	if method == http.MethodPost && (path == botsPath || path == pipelinesPath) {
 		return true
 	}
@@ -984,18 +1183,37 @@ func writeUnknown(cause ...*result.Error) *result.Error {
 func knownGetPath(path string) bool {
 	queryIndex := strings.IndexByte(path, '?')
 	if queryIndex >= 0 {
-		if path[:queryIndex] != tasksPath {
+		base := path[:queryIndex]
+		if base != tasksPath && !(strings.HasPrefix(base, mcpServersPath+"/") && strings.HasSuffix(base, "/logs")) {
 			return false
 		}
-		path = path[:queryIndex]
+		path = base
 	}
-	if path == infoPath || path == contextPath || path == capabilitiesPath || path == botsPath || path == pipelinesPath || path == tasksPath {
+	if path == infoPath || path == contextPath || path == capabilitiesPath || path == botsPath || path == pipelinesPath || path == tasksPath || path == knowledgeBasesPath || path == mcpServersPath {
 		return true
 	}
 	for _, base := range []string{botsPath, pipelinesPath, tasksPath, knowledgeBasesPath, pluginsPath, mcpServersPath} {
 		if strings.HasPrefix(path, base+"/") && !strings.Contains(strings.TrimPrefix(path, base+"/"), "/") {
 			return true
 		}
+	}
+	if strings.HasPrefix(path, knowledgeBasesPath+"/") && strings.HasSuffix(path, "/files") {
+		value := strings.TrimSuffix(strings.TrimPrefix(path, knowledgeBasesPath+"/"), "/files")
+		return value != "" && !strings.Contains(value, "/")
+	}
+	for _, suffix := range []string{"/resources", "/resource-templates"} {
+		if strings.HasPrefix(path, mcpServersPath+"/") && strings.HasSuffix(path, suffix) {
+			value := strings.TrimSuffix(strings.TrimPrefix(path, mcpServersPath+"/"), suffix)
+			return value != "" && !strings.Contains(value, "/")
+		}
+	}
+	if strings.HasPrefix(path, mcpServersPath+"/") && strings.Contains(path, "/logs") {
+		value := strings.TrimPrefix(path, mcpServersPath+"/")
+		query := strings.IndexByte(value, '?')
+		if query >= 0 {
+			value = value[:query]
+		}
+		return strings.HasSuffix(value, "/logs") && !strings.Contains(strings.TrimSuffix(value, "/logs"), "/")
 	}
 	if strings.HasPrefix(path, pluginsPath+"/") && strings.Count(strings.TrimPrefix(path, pluginsPath+"/"), "/") == 1 {
 		return true
@@ -1025,7 +1243,7 @@ func resourcePath(base, identifier string) (string, error) {
 }
 
 func mcpServerPath(name string) (string, error) {
-	if strings.TrimSpace(name) == "" || strings.ContainsAny(name, "\\?#") ||
+	if strings.TrimSpace(name) == "" || strings.TrimSpace(name) != name || strings.ContainsAny(name, "\\?#") ||
 		strings.IndexFunc(name, func(r rune) bool { return r < 0x20 || r == 0x7f }) >= 0 {
 		return "", result.New("input", "MCP Server 名称不是安全的路径参数")
 	}
@@ -1074,14 +1292,6 @@ func parseResourceObject(resp response, key string, project func(map[string]any,
 	}
 	if !validResourceUUID(item, secret) {
 		return nil, protocolError("服务返回的资源缺少有效 UUID", resp.StatusCode, responseRequestID(resp.Header, resp.Body, secret))
-	}
-	return project(item, secret), nil
-}
-
-func parseProjectedObject(resp response, key string, project func(map[string]any, string) map[string]any, secret string) (map[string]any, error) {
-	item, ok := resp.Data[key].(map[string]any)
-	if !ok {
-		return nil, protocolError("服务返回的资源格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, secret))
 	}
 	return project(item, secret), nil
 }
@@ -1171,7 +1381,7 @@ func projectMCPServer(value map[string]any, secret string) map[string]any {
 
 func projectKnowledgeBase(value map[string]any, secret string) map[string]any {
 	return projectScalarFields(value, []string{
-		"uuid", "name", "description", "engine_plugin_id", "created_at", "updated_at",
+		"uuid", "name", "description", "knowledge_engine_plugin_id", "created_at", "updated_at",
 	}, secret)
 }
 
