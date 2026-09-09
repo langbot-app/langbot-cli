@@ -1,11 +1,15 @@
 package app
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -16,6 +20,8 @@ import (
 	endpointutil "github.com/langbot-app/langbot-cli/internal/endpoint"
 	"github.com/langbot-app/langbot-cli/internal/result"
 )
+
+const maxExtensionUploadBytes int64 = 10 << 20
 
 type Dependencies struct {
 	In                io.Reader
@@ -30,6 +36,24 @@ type Dependencies struct {
 type Result struct {
 	Data any
 	Meta map[string]any
+}
+
+// WaitOptions 控制异步任务的本地轮询，不会向服务端发送取消请求。
+type WaitOptions struct {
+	Wait         bool
+	PollInterval time.Duration
+	WaitTimeout  time.Duration
+}
+
+// WritePreflight 是经过身份、绑定、权限和能力确认后的写连接快照。
+type WritePreflight struct {
+	Connection   config.Connection
+	Identity     api.Context
+	Capabilities api.Capabilities
+}
+
+func (p WritePreflight) Meta() map[string]any {
+	return resourceMeta(p.Connection, p.Identity)
 }
 
 type Service struct {
@@ -400,14 +424,37 @@ func (s *Service) RawInfo(ctx context.Context, options CheckOptions, methodAndPa
 	return Result{Data: data, Meta: connectionMeta(conn)}, nil
 }
 
-func (s *Service) Identity(ctx context.Context, kind string, options CheckOptions) (Result, error) {
-	if kind == "capabilities" {
-		data := map[string]any{
-			"capabilities": "unknown",
-			"reason":       "服务端尚未提供能力契约",
-		}
-		return Result{Data: data}, result.New("precondition", "服务端尚未提供能力契约")
+// APIRequest 执行受 operation registry 约束的 HTTP 请求。
+func (s *Service) APIRequest(ctx context.Context, method, path string, body map[string]any, options CheckOptions) (Result, error) {
+	operation, ok := api.ResolveOperation(method, path)
+	if !ok {
+		return Result{}, result.New("incompatible", "请求路径或方法未登记，拒绝作为通用 API 调用")
 	}
+	conn, identity, err := s.connectionWithIdentity(ctx, options)
+	meta := resourceMeta(conn, identity)
+	if err != nil {
+		return Result{Meta: meta}, err
+	}
+	if operation.Permission != "" && !hasPermission(identity, operation.Permission) {
+		return Result{Meta: meta}, result.New("permission", "当前 API Key 缺少 "+operation.Permission+" 权限")
+	}
+	capabilities, err := s.capabilities(ctx, conn)
+	if err != nil {
+		return Result{Meta: meta}, err
+	}
+	if err := requireCapability(WritePreflight{Capabilities: capabilities}, operation.ID); err != nil {
+		return Result{Meta: meta}, err
+	}
+	data, err := (api.Client{Transport: s.deps.Transport}).APIRequest(ctx, api.Target{
+		Endpoint: conn.Endpoint, APIKey: conn.APIKey, Timeout: conn.Timeout,
+	}, operation, body)
+	if err != nil {
+		return Result{Meta: meta}, err
+	}
+	return Result{Data: data, Meta: meta}, nil
+}
+
+func (s *Service) Identity(ctx context.Context, kind string, options CheckOptions) (Result, error) {
 	file, err := s.load()
 	if err != nil {
 		return Result{}, err
@@ -418,17 +465,2057 @@ func (s *Service) Identity(ctx context.Context, kind string, options CheckOption
 		TimeoutSet: options.TimeoutSet, APIKeyStdin: options.APIKeyStdin,
 	})
 	if err != nil {
+		if kind == "capabilities" {
+			return Result{Data: unknownCapabilities(), Meta: connectionMeta(conn)}, err
+		}
 		return Result{Meta: connectionMeta(conn)}, err
 	}
 	identity, err := s.identity(ctx, conn)
 	if err != nil {
+		if kind == "capabilities" {
+			return Result{Data: unknownCapabilities(), Meta: connectionMeta(conn)}, err
+		}
 		return Result{Meta: connectionMeta(conn)}, err
 	}
 	data := identityView(identity)
 	if err := workspaceBindingError(conn, identity); err != nil {
+		if kind == "capabilities" {
+			data["capabilities"] = "unknown"
+		}
 		return Result{Data: data, Meta: connectionMeta(conn)}, err
 	}
+	if kind == "capabilities" {
+		capabilities, err := s.capabilities(ctx, conn)
+		if err != nil {
+			data["capabilities"] = "unknown"
+			return Result{Data: data, Meta: connectionMeta(conn)}, err
+		}
+		data["schema_version"] = capabilities.SchemaVersion
+		data["operations"] = capabilityStatuses(capabilities)
+	}
 	return Result{Data: data, Meta: connectionMeta(conn)}, nil
+}
+
+func (s *Service) BotList(ctx context.Context, options CheckOptions) (Result, error) {
+	conn, identity, err := s.resourceConnection(ctx, options)
+	if err != nil {
+		return Result{Meta: resourceMeta(conn, identity)}, err
+	}
+	bots, err := (api.Client{Transport: s.deps.Transport}).Bots(ctx, api.Target{
+		Endpoint: conn.Endpoint, APIKey: conn.APIKey, Timeout: conn.Timeout,
+	})
+	if err != nil {
+		return Result{Meta: resourceMeta(conn, identity)}, err
+	}
+	return Result{Data: map[string]any{"bots": bots}, Meta: resourceMeta(conn, identity)}, nil
+}
+
+func (s *Service) BotGet(ctx context.Context, identifier string, options CheckOptions) (Result, error) {
+	conn, identity, err := s.resourceConnection(ctx, options)
+	if err != nil {
+		return Result{Meta: resourceMeta(conn, identity)}, err
+	}
+	bot, err := (api.Client{Transport: s.deps.Transport}).Bot(ctx, api.Target{
+		Endpoint: conn.Endpoint, APIKey: conn.APIKey, Timeout: conn.Timeout,
+	}, identifier)
+	if err != nil {
+		return Result{Meta: resourceMeta(conn, identity)}, err
+	}
+	return Result{Data: map[string]any{"bot": bot}, Meta: resourceMeta(conn, identity)}, nil
+}
+
+func (s *Service) PipelineList(ctx context.Context, options CheckOptions) (Result, error) {
+	conn, identity, err := s.resourceConnection(ctx, options)
+	if err != nil {
+		return Result{Meta: resourceMeta(conn, identity)}, err
+	}
+	pipelines, err := (api.Client{Transport: s.deps.Transport}).Pipelines(ctx, api.Target{
+		Endpoint: conn.Endpoint, APIKey: conn.APIKey, Timeout: conn.Timeout,
+	})
+	if err != nil {
+		return Result{Meta: resourceMeta(conn, identity)}, err
+	}
+	return Result{Data: map[string]any{"pipelines": pipelines}, Meta: resourceMeta(conn, identity)}, nil
+}
+
+func (s *Service) PipelineGet(ctx context.Context, identifier string, options CheckOptions) (Result, error) {
+	conn, identity, err := s.resourceConnection(ctx, options)
+	if err != nil {
+		return Result{Meta: resourceMeta(conn, identity)}, err
+	}
+	pipeline, err := (api.Client{Transport: s.deps.Transport}).Pipeline(ctx, api.Target{
+		Endpoint: conn.Endpoint, APIKey: conn.APIKey, Timeout: conn.Timeout,
+	}, identifier)
+	if err != nil {
+		return Result{Meta: resourceMeta(conn, identity)}, err
+	}
+	return Result{Data: map[string]any{"pipeline": pipeline}, Meta: resourceMeta(conn, identity)}, nil
+}
+
+// TaskGet 返回异步任务公共状态。
+func (s *Service) TaskGet(ctx context.Context, identifier string, options CheckOptions) (Result, error) {
+	conn, identity, err := s.resourceConnection(ctx, options)
+	if err != nil {
+		return Result{Meta: resourceMeta(conn, identity)}, err
+	}
+	capabilities, err := s.capabilities(ctx, conn)
+	if err != nil {
+		return Result{Meta: resourceMeta(conn, identity)}, err
+	}
+	preflight := WritePreflight{Connection: conn, Identity: identity, Capabilities: capabilities}
+	if err := requireCapability(preflight, "task.get"); err != nil {
+		return Result{Meta: resourceMeta(conn, identity)}, err
+	}
+	task, err := (api.Client{Transport: s.deps.Transport}).Task(ctx, api.Target{
+		Endpoint: conn.Endpoint, APIKey: conn.APIKey, Timeout: conn.Timeout,
+	}, identifier)
+	if err != nil {
+		return Result{Meta: resourceMeta(conn, identity)}, err
+	}
+	return Result{Data: map[string]any{"task": task}, Meta: resourceMeta(conn, identity)}, nil
+}
+
+// TaskList 返回当前 API Key 可见的任务列表。
+func (s *Service) TaskList(ctx context.Context, taskType, kind string, options CheckOptions) (Result, error) {
+	conn, identity, err := s.resourceConnection(ctx, options)
+	if err != nil {
+		return Result{Meta: resourceMeta(conn, identity)}, err
+	}
+	capabilities, err := s.capabilities(ctx, conn)
+	if err != nil {
+		return Result{Meta: resourceMeta(conn, identity)}, err
+	}
+	preflight := WritePreflight{Connection: conn, Identity: identity, Capabilities: capabilities}
+	if err := requireCapability(preflight, "task.list"); err != nil {
+		return Result{Meta: resourceMeta(conn, identity)}, err
+	}
+	tasks, err := (api.Client{Transport: s.deps.Transport}).Tasks(ctx, api.Target{
+		Endpoint: conn.Endpoint, APIKey: conn.APIKey, Timeout: conn.Timeout,
+	}, api.TaskListFilters{Type: taskType, Kind: kind})
+	if err != nil {
+		return Result{Meta: resourceMeta(conn, identity)}, err
+	}
+	return Result{Data: map[string]any{"tasks": tasks}, Meta: resourceMeta(conn, identity)}, nil
+}
+
+// TaskWait 等待异步任务进入终态，只在本地停止轮询。
+func (s *Service) TaskWait(ctx context.Context, identifier string, wait WaitOptions, options CheckOptions) (Result, error) {
+	if ctx != nil && ctx.Err() != nil {
+		return Result{Data: map[string]any{"task_id": identifier, "server_cancelled": false}}, taskStatusError("wait_cancelled", "等待已取消，服务端任务未被取消")
+	}
+	conn, identity, err := s.resourceConnection(ctx, options)
+	if err != nil {
+		return Result{Meta: resourceMeta(conn, identity)}, err
+	}
+	capabilities, err := s.capabilities(ctx, conn)
+	if err != nil {
+		return Result{Meta: resourceMeta(conn, identity)}, err
+	}
+	preflight := WritePreflight{Connection: conn, Identity: identity, Capabilities: capabilities}
+	if err := requireCapability(preflight, "task.get"); err != nil {
+		return Result{Meta: resourceMeta(conn, identity)}, err
+	}
+	task, waitErr := waitForTask(ctx, api.Client{Transport: s.deps.Transport}, api.Target{
+		Endpoint: conn.Endpoint, APIKey: conn.APIKey, Timeout: conn.Timeout,
+	}, identifier, wait)
+	data := map[string]any{"task_id": identifier, "server_cancelled": false}
+	if task != nil {
+		data["task"] = task
+	}
+	if waitErr != nil {
+		return Result{Data: data, Meta: resourceMeta(conn, identity)}, waitErr
+	}
+	return Result{Data: data, Meta: resourceMeta(conn, identity)}, nil
+}
+
+// KnowledgeBaseIngest 上传文件并提交知识库入库任务。
+func (s *Service) KnowledgeBaseIngest(
+	ctx context.Context,
+	identifier string,
+	filename string,
+	parserPluginID string,
+	dryRun bool,
+	wait WaitOptions,
+	options CheckOptions,
+) (Result, error) {
+	if strings.TrimSpace(identifier) == "" {
+		return Result{}, result.New("input", "知识库 ID 不能为空")
+	}
+	if strings.TrimSpace(filename) == "" {
+		return Result{}, result.New("input", "上传文件不能为空")
+	}
+	fileInfo, err := os.Stat(filename)
+	if err != nil {
+		return Result{}, result.New("input", "无法读取上传文件")
+	}
+	if !fileInfo.Mode().IsRegular() {
+		return Result{}, result.New("input", "上传路径必须是普通文件")
+	}
+	preflight, err := s.WritePreflight(ctx, "knowledge_base.file.store", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	if err := requireCapability(preflight, "file.document.upload"); err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	if err := requireCapability(preflight, "knowledge_base.get"); err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	if wait.Wait && !dryRun {
+		if err := requireCapability(preflight, "task.get"); err != nil {
+			return Result{Meta: preflight.Meta()}, err
+		}
+	}
+	client, target := s.writeClient(preflight)
+	base, err := client.KnowledgeBase(ctx, target, identifier)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	if dryRun {
+		return Result{Data: map[string]any{
+			"operation":               "knowledge_base.ingest",
+			"dry_run":                 true,
+			"server_write":            false,
+			"preconditions_confirmed": true,
+			"business_validation":     "not_run",
+			"knowledge_base":          base,
+			"file": map[string]any{
+				"name":       filepath.Base(filename),
+				"size_bytes": fileInfo.Size(),
+			},
+		}, Meta: preflight.Meta()}, nil
+	}
+	file, err := os.Open(filename)
+	if err != nil {
+		return Result{Data: map[string]any{"step": "validated", "knowledge_base": base}, Meta: preflight.Meta()}, result.New("input", "无法读取上传文件")
+	}
+	defer file.Close()
+	fileID, err := client.UploadDocument(ctx, target, filepath.Base(filename), file)
+	if err != nil {
+		data := map[string]any{"step": "validated", "knowledge_base": base}
+		if result.AsError(err).Type == "result_unknown" {
+			data["step"] = "upload_unknown"
+		}
+		return Result{Data: data, Meta: preflight.Meta()}, err
+	}
+	data := map[string]any{
+		"step":                "uploaded",
+		"knowledge_base":      base,
+		"file_id":             fileID,
+		"server_write":        true,
+		"submitted":           false,
+		"preflight_confirmed": true,
+	}
+	taskID, err := client.KnowledgeBaseStoreFile(ctx, target, identifier, fileID, parserPluginID)
+	if err != nil {
+		failure := result.AsError(err)
+		if failure.Type == "result_unknown" {
+			data["step"] = "store_unknown"
+			data["submitted"] = "unknown"
+			data["submission_result"] = "unknown"
+			return Result{Data: data, Meta: preflight.Meta()}, err
+		}
+		if failure.HTTPStatus >= http.StatusBadRequest && failure.HTTPStatus < http.StatusInternalServerError {
+			data["step"] = "store_failed"
+			data["submitted"] = false
+			return Result{Data: data, Meta: preflight.Meta()}, partialIngestError(err)
+		}
+		data["step"] = "store_unknown"
+		data["submitted"] = "unknown"
+		data["submission_result"] = "unknown"
+		return Result{Data: data, Meta: preflight.Meta()}, err
+	}
+	data["step"] = "submitted"
+	data["submitted"] = true
+	data["task_id"] = taskID
+	if !wait.Wait {
+		return Result{Data: data, Meta: preflight.Meta()}, nil
+	}
+	task, waitErr := waitForTask(ctx, client, target, taskID, wait)
+	data["task"] = task
+	if waitErr != nil {
+		return Result{Data: data, Meta: preflight.Meta()}, waitErr
+	}
+	data["step"] = "completed"
+	return Result{Data: data, Meta: preflight.Meta()}, nil
+}
+
+func (s *Service) KnowledgeBaseList(ctx context.Context, options CheckOptions) (Result, error) {
+	preflight, err := s.readPreflight(ctx, "knowledge_base.list", "resource.view", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	bases, err := (api.Client{Transport: s.deps.Transport}).KnowledgeBases(ctx, readTarget(preflight))
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	return Result{Data: map[string]any{"bases": bases}, Meta: preflight.Meta()}, nil
+}
+
+func (s *Service) KnowledgeBaseGet(ctx context.Context, identifier string, options CheckOptions) (Result, error) {
+	if err := api.ValidateResourceID(identifier); err != nil {
+		return Result{}, err
+	}
+	preflight, err := s.readPreflight(ctx, "knowledge_base.get", "resource.view", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	base, err := (api.Client{Transport: s.deps.Transport}).KnowledgeBase(ctx, readTarget(preflight), identifier)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	return Result{Data: map[string]any{"base": base}, Meta: preflight.Meta()}, nil
+}
+
+func (s *Service) KnowledgeBaseCreate(ctx context.Context, body map[string]any, dryRun bool, options CheckOptions) (Result, error) {
+	if body == nil {
+		return Result{}, result.New("input", "请求体必须是 JSON object")
+	}
+	if err := validateBodyFields(body, "name", "description", "knowledge_engine_plugin_id", "creation_settings", "retrieval_settings"); err != nil {
+		return Result{}, err
+	}
+	engineID, ok := body["knowledge_engine_plugin_id"].(string)
+	if !ok || strings.TrimSpace(engineID) == "" {
+		return Result{}, result.New("input", "知识库创建请求必须包含 knowledge_engine_plugin_id")
+	}
+	preflight, err := s.WritePreflight(ctx, "knowledge_base.create", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	if dryRun {
+		return writePlan(preflight, "knowledge_base.create", ""), nil
+	}
+	client, target := s.writeClient(preflight)
+	written, err := client.KnowledgeBaseCreate(ctx, target, body)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	base, err := client.KnowledgeBase(ctx, target, written.UUID)
+	data := writeResultData("knowledge_base.create", written.UUID)
+	if err != nil {
+		return Result{Data: data, Meta: preflight.Meta()}, readbackError(err)
+	}
+	data["verified"] = true
+	data["base"] = base
+	return Result{Data: data, Meta: preflight.Meta()}, nil
+}
+
+func (s *Service) KnowledgeBaseUpdate(ctx context.Context, identifier string, body map[string]any, dryRun bool, options CheckOptions) (Result, error) {
+	if err := api.ValidateResourceID(identifier); err != nil {
+		return Result{}, err
+	}
+	if body == nil {
+		return Result{}, result.New("input", "请求体必须是 JSON object")
+	}
+	if err := validateBodyFields(body, "uuid", "name", "description", "retrieval_settings"); err != nil {
+		return Result{}, err
+	}
+	if err := validateBodyUUID(body, identifier); err != nil {
+		return Result{}, err
+	}
+	if len(withoutUUID(body)) == 0 {
+		return Result{}, result.New("input", "知识库更新请求没有可修改字段")
+	}
+	preflight, err := s.WritePreflight(ctx, "knowledge_base.update", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	if dryRun {
+		return writePlan(preflight, "knowledge_base.update", identifier), nil
+	}
+	client, target := s.writeClient(preflight)
+	if _, err := client.KnowledgeBaseUpdate(ctx, target, identifier, withoutUUID(body)); err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	base, err := client.KnowledgeBase(ctx, target, identifier)
+	data := writeResultData("knowledge_base.update", identifier)
+	if err != nil {
+		return Result{Data: data, Meta: preflight.Meta()}, readbackError(err)
+	}
+	data["verified"] = true
+	data["base"] = base
+	return Result{Data: data, Meta: preflight.Meta()}, nil
+}
+
+func (s *Service) KnowledgeBaseDelete(ctx context.Context, identifier string, confirmed, dryRun bool, options CheckOptions) (Result, error) {
+	if err := api.ValidateResourceID(identifier); err != nil {
+		return Result{}, err
+	}
+	if !dryRun && !confirmed {
+		return Result{}, result.New("input", "删除知识库需要 --yes")
+	}
+	preflight, err := s.WritePreflight(ctx, "knowledge_base.delete", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	if dryRun {
+		return writePlan(preflight, "knowledge_base.delete", identifier), nil
+	}
+	client, target := s.writeClient(preflight)
+	if _, err := client.KnowledgeBaseDelete(ctx, target, identifier); err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	data := writeResultData("knowledge_base.delete", identifier)
+	_, err = client.KnowledgeBase(ctx, target, identifier)
+	if err != nil && result.AsError(err).Kind == "not_found" {
+		data["verified"] = true
+		return Result{Data: data, Meta: preflight.Meta()}, nil
+	}
+	if err != nil {
+		return Result{Data: data, Meta: preflight.Meta()}, readbackError(err)
+	}
+	return Result{Data: data, Meta: preflight.Meta()}, verificationError("删除后知识库仍可读取")
+}
+
+func (s *Service) KnowledgeBaseFileList(ctx context.Context, identifier string, options CheckOptions) (Result, error) {
+	if err := api.ValidateResourceID(identifier); err != nil {
+		return Result{}, err
+	}
+	preflight, err := s.readPreflight(ctx, "knowledge_base.file.list", "resource.view", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	files, err := (api.Client{Transport: s.deps.Transport}).KnowledgeBaseFiles(ctx, readTarget(preflight), identifier)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	return Result{Data: map[string]any{"files": files}, Meta: preflight.Meta()}, nil
+}
+
+func (s *Service) KnowledgeBaseFileDelete(ctx context.Context, identifier, fileID string, confirmed, dryRun bool, options CheckOptions) (Result, error) {
+	if err := api.ValidateResourceID(identifier); err != nil {
+		return Result{}, err
+	}
+	if err := api.ValidateResourceID(fileID); err != nil {
+		return Result{}, err
+	}
+	if !dryRun && !confirmed {
+		return Result{}, result.New("input", "删除知识库文件需要 --yes")
+	}
+	preflight, err := s.WritePreflight(ctx, "knowledge_base.file.delete", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	if dryRun {
+		return writePlan(preflight, "knowledge_base.file.delete", fileID), nil
+	}
+	client, target := s.writeClient(preflight)
+	if err := client.KnowledgeBaseFileDelete(ctx, target, identifier, fileID); err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	files, err := client.KnowledgeBaseFiles(ctx, target, identifier)
+	data := writeResultData("knowledge_base.file.delete", fileID)
+	if err != nil {
+		return Result{Data: data, Meta: preflight.Meta()}, readbackError(err)
+	}
+	for _, file := range files {
+		if fileID == fileIdentifier(file) {
+			return Result{Data: data, Meta: preflight.Meta()}, verificationError("删除后知识库文件仍可读取")
+		}
+	}
+	data["verified"] = true
+	return Result{Data: data, Meta: preflight.Meta()}, nil
+}
+
+func (s *Service) KnowledgeBaseRetrieve(ctx context.Context, identifier string, body map[string]any, options CheckOptions) (Result, error) {
+	if err := api.ValidateResourceID(identifier); err != nil {
+		return Result{}, err
+	}
+	if body == nil {
+		return Result{}, result.New("input", "请求体必须是 JSON object")
+	}
+	query, ok := body["query"].(string)
+	if !ok || strings.TrimSpace(query) == "" {
+		return Result{}, result.New("input", "知识库检索请求必须包含非空 query")
+	}
+	preflight, err := s.readPreflight(ctx, "knowledge_base.retrieve", "resource.view", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	data, err := (api.Client{Transport: s.deps.Transport}).KnowledgeBaseRetrieve(ctx, readTarget(preflight), identifier, body)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	return Result{Data: data, Meta: preflight.Meta()}, nil
+}
+
+func (s *Service) MCPServerList(ctx context.Context, options CheckOptions) (Result, error) {
+	preflight, err := s.readPreflight(ctx, "mcp_server.list", "resource.view", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	servers, err := (api.Client{Transport: s.deps.Transport}).MCPServers(ctx, readTarget(preflight))
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	return Result{Data: map[string]any{"servers": servers}, Meta: preflight.Meta()}, nil
+}
+
+func (s *Service) MCPServerGet(ctx context.Context, name string, options CheckOptions) (Result, error) {
+	if err := api.ValidateMCPServerName(name); err != nil {
+		return Result{}, err
+	}
+	preflight, err := s.readPreflight(ctx, "mcp_server.get", "resource.view", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	server, err := (api.Client{Transport: s.deps.Transport}).MCPServerGet(ctx, readTarget(preflight), name)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	return Result{Data: map[string]any{"server": server}, Meta: preflight.Meta()}, nil
+}
+
+func (s *Service) MCPServerCreate(ctx context.Context, body map[string]any, dryRun bool, options CheckOptions) (Result, error) {
+	if body == nil {
+		return Result{}, result.New("input", "请求体必须是 JSON object")
+	}
+	if err := validateBodyFields(body, "name", "enable", "mode", "extra_args", "readme"); err != nil {
+		return Result{}, err
+	}
+	name, ok := body["name"].(string)
+	name = strings.TrimSpace(name)
+	if !ok || name == "" {
+		return Result{}, result.New("input", "MCP Server 请求体必须包含 name")
+	}
+	if err := api.ValidateMCPServerName(name); err != nil {
+		return Result{}, err
+	}
+	mode, ok := body["mode"].(string)
+	if !ok || strings.TrimSpace(mode) == "" {
+		return Result{}, result.New("input", "MCP Server 创建请求必须包含 mode")
+	}
+	preflight, err := s.WritePreflight(ctx, "mcp_server.create", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	if dryRun {
+		plan := writePlan(preflight, "mcp_server.create", "")
+		plan.Data.(map[string]any)["server_name"] = name
+		return plan, nil
+	}
+	client, target := s.writeClient(preflight)
+	written, err := client.MCPServerCreate(ctx, target, body)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	server, err := client.MCPServerGet(ctx, target, name)
+	data := writeResultData("mcp_server.create", written.UUID)
+	if err != nil {
+		return Result{Data: data, Meta: preflight.Meta()}, readbackError(err)
+	}
+	if server["uuid"] != written.UUID {
+		return Result{Data: data, Meta: preflight.Meta()}, verificationError("创建后回读到的 MCP Server UUID 不一致")
+	}
+	data["server_name"] = name
+	data["verified"] = true
+	data["server"] = server
+	return Result{Data: data, Meta: preflight.Meta()}, nil
+}
+
+func (s *Service) MCPServerUpdate(ctx context.Context, name string, body map[string]any, dryRun bool, options CheckOptions) (Result, error) {
+	if err := api.ValidateMCPServerName(name); err != nil {
+		return Result{}, err
+	}
+	if body == nil {
+		return Result{}, result.New("input", "请求体必须是 JSON object")
+	}
+	if err := validateBodyFields(body, "name", "enable", "mode", "extra_args", "readme"); err != nil {
+		return Result{}, err
+	}
+	if len(body) == 0 {
+		return Result{}, result.New("input", "MCP Server 更新请求没有可修改字段")
+	}
+	newName := name
+	if value, exists := body["name"]; exists {
+		value, ok := value.(string)
+		if !ok || strings.TrimSpace(value) == "" {
+			return Result{}, result.New("input", "MCP Server name 必须是非空字符串")
+		}
+		newName = strings.TrimSpace(value)
+		if err := api.ValidateMCPServerName(newName); err != nil {
+			return Result{}, err
+		}
+	}
+	preflight, err := s.WritePreflight(ctx, "mcp_server.update", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	if dryRun {
+		plan := writePlan(preflight, "mcp_server.update", "")
+		plan.Data.(map[string]any)["server_name"] = name
+		if newName != name {
+			plan.Data.(map[string]any)["new_server_name"] = newName
+		}
+		return plan, nil
+	}
+	client, target := s.writeClient(preflight)
+	current, err := client.MCPServerGet(ctx, target, name)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	if err := client.MCPServerUpdate(ctx, target, name, withoutUUID(body)); err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	server, err := client.MCPServerGet(ctx, target, newName)
+	uuid, _ := current["uuid"].(string)
+	data := writeResultData("mcp_server.update", uuid)
+	data["server_name"] = newName
+	if err != nil {
+		return Result{Data: data, Meta: preflight.Meta()}, readbackError(err)
+	}
+	if server["uuid"] != uuid {
+		return Result{Data: data, Meta: preflight.Meta()}, verificationError("更新后回读到的 MCP Server UUID 不一致")
+	}
+	data["verified"] = true
+	data["server"] = server
+	return Result{Data: data, Meta: preflight.Meta()}, nil
+}
+
+func (s *Service) MCPServerDelete(ctx context.Context, name string, confirmed, dryRun bool, options CheckOptions) (Result, error) {
+	if err := api.ValidateMCPServerName(name); err != nil {
+		return Result{}, err
+	}
+	if !dryRun && !confirmed {
+		return Result{}, result.New("input", "删除 MCP Server 需要 --yes")
+	}
+	preflight, err := s.WritePreflight(ctx, "mcp_server.delete", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	if dryRun {
+		plan := writePlan(preflight, "mcp_server.delete", "")
+		plan.Data.(map[string]any)["server_name"] = name
+		return plan, nil
+	}
+	client, target := s.writeClient(preflight)
+	current, err := client.MCPServerGet(ctx, target, name)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	if err := client.MCPServerDelete(ctx, target, name); err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	uuid, _ := current["uuid"].(string)
+	data := writeResultData("mcp_server.delete", uuid)
+	data["server_name"] = name
+	_, err = client.MCPServerGet(ctx, target, name)
+	if err != nil && result.AsError(err).Kind == "not_found" {
+		data["verified"] = true
+		return Result{Data: data, Meta: preflight.Meta()}, nil
+	}
+	if err != nil {
+		return Result{Data: data, Meta: preflight.Meta()}, readbackError(err)
+	}
+	return Result{Data: data, Meta: preflight.Meta()}, verificationError("删除后 MCP Server 仍可读取")
+}
+
+func (s *Service) MCPServerResources(ctx context.Context, name string, options CheckOptions) (Result, error) {
+	if err := api.ValidateMCPServerName(name); err != nil {
+		return Result{}, err
+	}
+	return s.mcpRead(ctx, name, "mcp_server.resources", "resource.view", func(c api.Client, t api.Target) (any, error) { return c.MCPServerResources(ctx, t, name) }, options)
+}
+
+func (s *Service) MCPServerResourceTemplates(ctx context.Context, name string, options CheckOptions) (Result, error) {
+	if err := api.ValidateMCPServerName(name); err != nil {
+		return Result{}, err
+	}
+	return s.mcpRead(ctx, name, "mcp_server.resource_templates", "resource.view", func(c api.Client, t api.Target) (any, error) { return c.MCPServerResourceTemplates(ctx, t, name) }, options)
+}
+
+func (s *Service) MCPServerResourceRead(ctx context.Context, name string, body map[string]any, options CheckOptions) (Result, error) {
+	if err := api.ValidateMCPServerName(name); err != nil {
+		return Result{}, err
+	}
+	if body == nil {
+		return Result{}, result.New("input", "请求体必须是 JSON object")
+	}
+	uri, ok := body["uri"].(string)
+	if !ok || strings.TrimSpace(uri) == "" {
+		return Result{}, result.New("input", "MCP 资源读取请求必须包含非空 uri")
+	}
+	return s.mcpRead(ctx, name, "mcp_server.resource_read", "resource.view", func(c api.Client, t api.Target) (any, error) { return c.MCPServerResourceRead(ctx, t, name, body) }, options)
+}
+
+func (s *Service) MCPServerLogs(ctx context.Context, name, level string, limit int, options CheckOptions) (Result, error) {
+	if err := api.ValidateMCPServerName(name); err != nil {
+		return Result{}, err
+	}
+	if limit < 1 || limit > 500 {
+		return Result{}, result.New("input", "MCP 日志条数必须在 1 到 500 之间")
+	}
+	return s.mcpRead(ctx, name, "mcp_server.logs", "audit.view", func(c api.Client, t api.Target) (any, error) { return c.MCPServerLogs(ctx, t, name, level, limit) }, options)
+}
+
+func (s *Service) mcpRead(ctx context.Context, name, operation, permission string, read func(api.Client, api.Target) (any, error), options CheckOptions) (Result, error) {
+	preflight, err := s.readPreflight(ctx, operation, permission, options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	data, err := read(api.Client{Transport: s.deps.Transport}, readTarget(preflight))
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	return Result{Data: data, Meta: preflight.Meta()}, nil
+}
+
+func readTarget(preflight WritePreflight) api.Target {
+	return api.Target{Endpoint: preflight.Connection.Endpoint, APIKey: preflight.Connection.APIKey, Timeout: preflight.Connection.Timeout}
+}
+
+func fileIdentifier(value any) string {
+	if item, ok := value.(map[string]any); ok {
+		for _, key := range []string{"id", "file_id", "uuid"} {
+			if id, ok := item[key].(string); ok {
+				return id
+			}
+		}
+	}
+	return ""
+}
+
+func pluginConfigValue(value any) (map[string]any, bool) {
+	data, ok := value.(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	config, ok := data["config"].(map[string]any)
+	return config, ok
+}
+
+func observableConfigEqual(expected, actual any) bool {
+	if value, ok := actual.(string); ok && value == "***" {
+		return true
+	}
+	switch expectedValue := expected.(type) {
+	case map[string]any:
+		actualValue, ok := actual.(map[string]any)
+		if !ok || len(expectedValue) != len(actualValue) {
+			return false
+		}
+		for key, value := range expectedValue {
+			actualItem, exists := actualValue[key]
+			if !exists || !observableConfigEqual(value, actualItem) {
+				return false
+			}
+		}
+		return true
+	case []any:
+		actualValue, ok := actual.([]any)
+		if !ok || len(expectedValue) != len(actualValue) {
+			return false
+		}
+		for index, value := range expectedValue {
+			if !observableConfigEqual(value, actualValue[index]) {
+				return false
+			}
+		}
+		return true
+	default:
+		if reflect.DeepEqual(expected, actual) {
+			return true
+		}
+		expectedJSON, expectedErr := json.Marshal(expected)
+		actualJSON, actualErr := json.Marshal(actual)
+		return expectedErr == nil && actualErr == nil && bytes.Equal(expectedJSON, actualJSON)
+	}
+}
+
+func observableFieldsEqual(expected, actual map[string]any, fields ...string) bool {
+	for _, field := range fields {
+		value, exists := expected[field]
+		if !exists {
+			continue
+		}
+		actualValue, exists := actual[field]
+		if !exists || !observableConfigEqual(value, actualValue) {
+			return false
+		}
+	}
+	return true
+}
+
+func (s *Service) PluginList(ctx context.Context, options CheckOptions) (Result, error) {
+	preflight, err := s.readPreflight(ctx, "plugin.list", "resource.view", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	plugins, err := (api.Client{Transport: s.deps.Transport}).Plugins(ctx, readTarget(preflight))
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	return Result{Data: map[string]any{"plugins": plugins}, Meta: preflight.Meta()}, nil
+}
+
+func (s *Service) PluginGet(ctx context.Context, author, name string, options CheckOptions) (Result, error) {
+	if err := api.ValidateResourceID(author); err != nil {
+		return Result{}, err
+	}
+	if err := api.ValidateResourceID(name); err != nil {
+		return Result{}, err
+	}
+	preflight, err := s.readPreflight(ctx, "plugin.get", "resource.view", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	plugin, err := (api.Client{Transport: s.deps.Transport}).PluginGet(ctx, readTarget(preflight), author, name)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	return Result{Data: map[string]any{"plugin": plugin}, Meta: preflight.Meta()}, nil
+}
+
+func (s *Service) PluginConfigGet(ctx context.Context, author, name string, options CheckOptions) (Result, error) {
+	if err := api.ValidateResourceID(author); err != nil {
+		return Result{}, err
+	}
+	if err := api.ValidateResourceID(name); err != nil {
+		return Result{}, err
+	}
+	preflight, err := s.readPreflight(ctx, "plugin.config.get", "resource.view", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	config, err := (api.Client{Transport: s.deps.Transport}).PluginConfig(ctx, readTarget(preflight), author, name)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	return Result{Data: config, Meta: preflight.Meta()}, nil
+}
+
+func (s *Service) PluginLogs(ctx context.Context, author, name, level string, limit int, options CheckOptions) (Result, error) {
+	if err := api.ValidateResourceID(author); err != nil {
+		return Result{}, err
+	}
+	if err := api.ValidateResourceID(name); err != nil {
+		return Result{}, err
+	}
+	if limit <= 0 || limit > 500 {
+		return Result{}, result.New("input", "limit 必须在 1 到 500 之间")
+	}
+	preflight, err := s.readPreflight(ctx, "plugin.logs", "audit.view", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	logs, err := (api.Client{Transport: s.deps.Transport}).PluginLogs(ctx, readTarget(preflight), author, name, level, limit)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	return Result{Data: logs, Meta: preflight.Meta()}, nil
+}
+
+func (s *Service) PluginConfigUpdate(ctx context.Context, author, name string, body map[string]any, dryRun bool, options CheckOptions) (Result, error) {
+	if err := api.ValidateResourceID(author); err != nil {
+		return Result{}, err
+	}
+	if err := api.ValidateResourceID(name); err != nil {
+		return Result{}, err
+	}
+	if body == nil {
+		return Result{}, result.New("input", "Plugin 配置必须是 JSON object")
+	}
+	preflight, err := s.WritePreflight(ctx, "plugin.config.update", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	client, target := s.writeClient(preflight)
+	if _, err := client.PluginGet(ctx, target, author, name); err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	if dryRun {
+		plan := writePlan(preflight, "plugin.config.update", "")
+		data := plan.Data.(map[string]any)
+		data["author"] = author
+		data["plugin_name"] = name
+		return plan, nil
+	}
+	if err := client.PluginConfigUpdate(ctx, target, author, name, body); err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	config, err := client.PluginConfig(ctx, target, author, name)
+	data := writeResultData("plugin.config.update", "")
+	delete(data, "uuid")
+	data["author"] = author
+	data["plugin_name"] = name
+	if err != nil {
+		return Result{Data: data, Meta: preflight.Meta()}, readbackError(err)
+	}
+	actual, ok := pluginConfigValue(config)
+	if !ok || !observableConfigEqual(body, actual) {
+		return Result{Data: data, Meta: preflight.Meta()}, verificationError("更新后回读到的 Plugin 配置不一致")
+	}
+	data["verified"] = true
+	data["config"] = actual
+	return Result{Data: data, Meta: preflight.Meta()}, nil
+}
+
+func (s *Service) PluginDelete(ctx context.Context, author, name string, deleteData, confirmed, dryRun, wait bool, waitOptions WaitOptions, options CheckOptions) (Result, error) {
+	if err := api.ValidateResourceID(author); err != nil {
+		return Result{}, err
+	}
+	if err := api.ValidateResourceID(name); err != nil {
+		return Result{}, err
+	}
+	if dryRun && wait {
+		return Result{}, result.New("input", "dry-run 不能等待异步任务")
+	}
+	if !dryRun && !confirmed {
+		return Result{}, result.New("input", "删除 Plugin 需要 --yes")
+	}
+	preflight, err := s.WritePreflight(ctx, "plugin.delete", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	if wait {
+		if err := requireCapability(preflight, "task.get"); err != nil {
+			return Result{Meta: preflight.Meta()}, err
+		}
+	}
+	client, target := s.writeClient(preflight)
+	if _, err := client.PluginGet(ctx, target, author, name); err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	data := map[string]any{
+		"operation": "plugin.delete", "author": author, "plugin_name": name,
+		"delete_data": deleteData, "dry_run": dryRun, "server_write": false,
+		"preconditions_confirmed": true, "verified": false,
+	}
+	if dryRun {
+		return Result{Data: data, Meta: preflight.Meta()}, nil
+	}
+	taskID, err := client.PluginDelete(ctx, target, author, name, deleteData)
+	if err != nil {
+		markAsyncSubmissionFailure(data, err)
+		return Result{Data: data, Meta: preflight.Meta()}, err
+	}
+	finished, err := s.finishTask(ctx, client, target, taskID, wait, waitOptions, data, preflight.Meta())
+	if err != nil || !wait {
+		return finished, err
+	}
+	_, err = client.PluginGet(ctx, target, author, name)
+	if err != nil && result.AsError(err).Kind == "not_found" {
+		data["verified"] = true
+		return finished, nil
+	}
+	if err != nil {
+		return finished, readbackError(err)
+	}
+	return finished, verificationError("删除任务完成后 Plugin 仍可读取")
+}
+
+func (s *Service) SkillList(ctx context.Context, options CheckOptions) (Result, error) {
+	preflight, err := s.readPreflight(ctx, "skill.list", "resource.view", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	skills, err := (api.Client{Transport: s.deps.Transport}).Skills(ctx, readTarget(preflight))
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	return Result{Data: map[string]any{"skills": skills}, Meta: preflight.Meta()}, nil
+}
+
+func (s *Service) SkillGet(ctx context.Context, name string, options CheckOptions) (Result, error) {
+	if err := api.ValidateResourceID(name); err != nil {
+		return Result{}, err
+	}
+	preflight, err := s.readPreflight(ctx, "skill.get", "resource.view", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	skill, err := (api.Client{Transport: s.deps.Transport}).SkillGet(ctx, readTarget(preflight), name)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	return Result{Data: map[string]any{"skill": skill}, Meta: preflight.Meta()}, nil
+}
+
+func (s *Service) SkillFiles(ctx context.Context, name, path string, includeHidden bool, options CheckOptions) (Result, error) {
+	if err := api.ValidateResourceID(name); err != nil {
+		return Result{}, err
+	}
+	if err := api.ValidateSkillFilePath(path, true); err != nil {
+		return Result{}, err
+	}
+	preflight, err := s.readPreflight(ctx, "skill.files.list", "resource.view", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	files, err := (api.Client{Transport: s.deps.Transport}).SkillFiles(ctx, readTarget(preflight), name, path, includeHidden)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	return Result{Data: files, Meta: preflight.Meta()}, nil
+}
+
+func (s *Service) SkillFileRead(ctx context.Context, name, path string, options CheckOptions) (Result, error) {
+	if err := api.ValidateResourceID(name); err != nil {
+		return Result{}, err
+	}
+	if err := api.ValidateSkillFilePath(path, false); err != nil {
+		return Result{}, err
+	}
+	preflight, err := s.readPreflight(ctx, "skill.files.read", "resource.view", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	data, err := (api.Client{Transport: s.deps.Transport}).SkillFileRead(ctx, readTarget(preflight), name, path)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	return Result{Data: data, Meta: preflight.Meta()}, nil
+}
+
+func (s *Service) SkillPreview(ctx context.Context, name string, options CheckOptions) (Result, error) {
+	if err := api.ValidateResourceID(name); err != nil {
+		return Result{}, err
+	}
+	preflight, err := s.readPreflight(ctx, "skill.preview", "resource.view", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	data, err := (api.Client{Transport: s.deps.Transport}).SkillPreview(ctx, readTarget(preflight), name)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	return Result{Data: data, Meta: preflight.Meta()}, nil
+}
+
+func (s *Service) SkillCreate(ctx context.Context, body map[string]any, dryRun bool, options CheckOptions) (Result, error) {
+	if body == nil {
+		return Result{}, result.New("input", "Skill 请求体必须是 JSON object")
+	}
+	if err := validateBodyFields(body, "name", "display_name", "description", "instructions"); err != nil {
+		return Result{}, err
+	}
+	rawName, ok := body["name"].(string)
+	name := strings.TrimSpace(rawName)
+	if !ok || name == "" {
+		return Result{}, result.New("input", "Skill 创建请求必须包含 name")
+	}
+	if rawName != name {
+		return Result{}, result.New("input", "Skill name 不能包含首尾空白")
+	}
+	if err := api.ValidateResourceID(name); err != nil {
+		return Result{}, err
+	}
+	preflight, err := s.WritePreflight(ctx, "skill.create", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	if dryRun {
+		plan := writePlan(preflight, "skill.create", "")
+		plan.Data.(map[string]any)["skill_name"] = name
+		return plan, nil
+	}
+	client, target := s.writeClient(preflight)
+	written, err := client.SkillCreate(ctx, target, body)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	if written["name"] != name {
+		return Result{Meta: preflight.Meta()}, verificationError("创建响应中的 Skill 名称不一致")
+	}
+	skill, err := client.SkillGet(ctx, target, name)
+	data := writeResultData("skill.create", "")
+	delete(data, "uuid")
+	data["skill_name"] = name
+	if err != nil {
+		return Result{Data: data, Meta: preflight.Meta()}, readbackError(err)
+	}
+	if !observableFieldsEqual(body, skill, "name", "display_name", "description", "instructions") {
+		return Result{Data: data, Meta: preflight.Meta()}, verificationError("创建后回读到的 Skill 内容不一致")
+	}
+	data["verified"] = true
+	data["skill"] = skill
+	return Result{Data: data, Meta: preflight.Meta()}, nil
+}
+
+func (s *Service) SkillUpdate(ctx context.Context, name string, body map[string]any, dryRun bool, options CheckOptions) (Result, error) {
+	if err := api.ValidateResourceID(name); err != nil {
+		return Result{}, err
+	}
+	if body == nil {
+		return Result{}, result.New("input", "Skill 请求体必须是 JSON object")
+	}
+	if err := validateBodyFields(body, "name", "display_name", "description", "instructions"); err != nil {
+		return Result{}, err
+	}
+	if len(body) == 0 {
+		return Result{}, result.New("input", "Skill 更新请求没有可修改字段")
+	}
+	if value, exists := body["name"]; exists {
+		bodyName, ok := value.(string)
+		if !ok || bodyName != name {
+			return Result{}, result.New("input", "Skill 更新不支持改名，name 必须与命令参数一致")
+		}
+	}
+	preflight, err := s.WritePreflight(ctx, "skill.update", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	client, target := s.writeClient(preflight)
+	if _, err := client.SkillGet(ctx, target, name); err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	if dryRun {
+		plan := writePlan(preflight, "skill.update", "")
+		plan.Data.(map[string]any)["skill_name"] = name
+		return plan, nil
+	}
+	if _, err := client.SkillUpdate(ctx, target, name, body); err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	skill, err := client.SkillGet(ctx, target, name)
+	data := writeResultData("skill.update", "")
+	delete(data, "uuid")
+	data["skill_name"] = name
+	if err != nil {
+		return Result{Data: data, Meta: preflight.Meta()}, readbackError(err)
+	}
+	if !observableFieldsEqual(body, skill, "name", "display_name", "description", "instructions") {
+		return Result{Data: data, Meta: preflight.Meta()}, verificationError("更新后回读到的 Skill 内容不一致")
+	}
+	data["verified"] = true
+	data["skill"] = skill
+	return Result{Data: data, Meta: preflight.Meta()}, nil
+}
+
+func (s *Service) SkillDelete(ctx context.Context, name string, confirmed, dryRun bool, options CheckOptions) (Result, error) {
+	if err := api.ValidateResourceID(name); err != nil {
+		return Result{}, err
+	}
+	if !dryRun && !confirmed {
+		return Result{}, result.New("input", "删除 Skill 需要 --yes")
+	}
+	preflight, err := s.WritePreflight(ctx, "skill.delete", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	client, target := s.writeClient(preflight)
+	if _, err := client.SkillGet(ctx, target, name); err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	if dryRun {
+		plan := writePlan(preflight, "skill.delete", "")
+		plan.Data.(map[string]any)["skill_name"] = name
+		return plan, nil
+	}
+	if err := client.SkillDelete(ctx, target, name); err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	data := writeResultData("skill.delete", "")
+	delete(data, "uuid")
+	data["skill_name"] = name
+	_, err = client.SkillGet(ctx, target, name)
+	if err != nil && result.AsError(err).Kind == "not_found" {
+		data["verified"] = true
+		return Result{Data: data, Meta: preflight.Meta()}, nil
+	}
+	if err != nil {
+		return Result{Data: data, Meta: preflight.Meta()}, readbackError(err)
+	}
+	return Result{Data: data, Meta: preflight.Meta()}, verificationError("删除后 Skill 仍可读取")
+}
+
+func (s *Service) SkillFileWrite(ctx context.Context, name, path, content string, dryRun bool, options CheckOptions) (Result, error) {
+	if err := api.ValidateResourceID(name); err != nil {
+		return Result{}, err
+	}
+	if err := api.ValidateSkillFilePath(path, false); err != nil {
+		return Result{}, err
+	}
+	preflight, err := s.WritePreflight(ctx, "skill.files.write", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	client, target := s.writeClient(preflight)
+	if _, err := client.SkillGet(ctx, target, name); err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	if dryRun {
+		plan := writePlan(preflight, "skill.files.write", "")
+		data := plan.Data.(map[string]any)
+		data["skill_name"] = name
+		data["path"] = path
+		return plan, nil
+	}
+	if _, err := client.SkillFileWrite(ctx, target, name, path, content); err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	file, matches, err := client.SkillFileMatches(ctx, target, name, path, content)
+	data := writeResultData("skill.files.write", "")
+	delete(data, "uuid")
+	data["skill_name"] = name
+	data["path"] = path
+	if err != nil {
+		return Result{Data: data, Meta: preflight.Meta()}, readbackError(err)
+	}
+	if !matches {
+		return Result{Data: data, Meta: preflight.Meta()}, verificationError("写入后回读到的 Skill 文件内容不一致")
+	}
+	data["verified"] = true
+	data["file"] = file
+	return Result{Data: data, Meta: preflight.Meta()}, nil
+}
+
+func (s *Service) PluginInstallGitHub(ctx context.Context, body map[string]any, dryRun, wait bool, waitOptions WaitOptions, options CheckOptions) (Result, error) {
+	return s.pluginInstall(ctx, "plugin.install.github", body, "", dryRun, wait, waitOptions, options)
+}
+
+// PluginInstallMarketplace 安装 Marketplace 插件。
+func (s *Service) PluginInstallMarketplace(ctx context.Context, body map[string]any, dryRun, wait bool, waitOptions WaitOptions, options CheckOptions) (Result, error) {
+	return s.pluginInstall(ctx, "plugin.install.marketplace", body, "", dryRun, wait, waitOptions, options)
+}
+
+// PluginInstallLocal 安装本地插件包。
+func (s *Service) PluginInstallLocal(ctx context.Context, filename string, dryRun, wait bool, waitOptions WaitOptions, options CheckOptions) (Result, error) {
+	if err := validateRegularFile(filename); err != nil {
+		return Result{}, err
+	}
+	return s.pluginInstall(ctx, "plugin.install.local", nil, filename, dryRun, wait, waitOptions, options)
+}
+
+func (s *Service) pluginInstall(ctx context.Context, operation string, body map[string]any, filename string, dryRun, wait bool, waitOptions WaitOptions, options CheckOptions) (Result, error) {
+	if dryRun && wait {
+		return Result{}, result.New("input", "dry-run 不能等待异步任务")
+	}
+	preflight, err := s.WritePreflight(ctx, operation, options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	if wait {
+		if err := requireCapability(preflight, "task.get"); err != nil {
+			return Result{Meta: preflight.Meta()}, err
+		}
+	}
+	data := map[string]any{
+		"operation":               operation,
+		"dry_run":                 dryRun,
+		"server_write":            false,
+		"preconditions_confirmed": true,
+		"business_validation":     "not_run",
+	}
+	if dryRun {
+		if filename != "" {
+			if info, statErr := os.Stat(filename); statErr == nil {
+				data["file"] = map[string]any{"name": filepath.Base(filename), "size_bytes": info.Size()}
+			}
+		}
+		return Result{Data: data, Meta: preflight.Meta()}, nil
+	}
+	client, target := s.writeClient(preflight)
+	var taskID string
+	if filename != "" {
+		file, openErr := os.Open(filename)
+		if openErr != nil {
+			return Result{Data: data, Meta: preflight.Meta()}, result.New("input", "无法读取插件包")
+		}
+		defer file.Close()
+		taskID, err = client.PluginInstallLocal(ctx, target, filepath.Base(filename), file)
+	} else if operation == "plugin.install.github" {
+		taskID, err = client.PluginInstallGitHub(ctx, target, body)
+	} else {
+		taskID, err = client.PluginInstallMarketplace(ctx, target, body)
+	}
+	if err != nil {
+		markAsyncSubmissionFailure(data, err)
+		return Result{Data: data, Meta: preflight.Meta()}, err
+	}
+	return s.finishTask(ctx, client, target, taskID, wait, waitOptions, data, preflight.Meta())
+}
+
+// PluginUpgrade 升级已安装插件。
+func (s *Service) PluginUpgrade(ctx context.Context, author, name string, dryRun, wait bool, waitOptions WaitOptions, options CheckOptions) (Result, error) {
+	if dryRun && wait {
+		return Result{}, result.New("input", "dry-run 不能等待异步任务")
+	}
+	preflight, err := s.WritePreflight(ctx, "plugin.upgrade", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	if err := requireCapability(preflight, "plugin.get"); err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	if wait {
+		if err := requireCapability(preflight, "task.get"); err != nil {
+			return Result{Meta: preflight.Meta()}, err
+		}
+	}
+	client, target := s.writeClient(preflight)
+	data := map[string]any{
+		"operation":               "plugin.upgrade",
+		"author":                  author,
+		"name":                    name,
+		"dry_run":                 dryRun,
+		"server_write":            false,
+		"preconditions_confirmed": true,
+		"business_validation":     "not_run",
+	}
+	plugin, getErr := client.PluginGet(ctx, target, author, name)
+	if getErr != nil {
+		return Result{Data: data, Meta: preflight.Meta()}, getErr
+	}
+	data["plugin"] = plugin
+	data["business_validation"] = "target_exists"
+	if dryRun {
+		return Result{Data: data, Meta: preflight.Meta()}, nil
+	}
+	taskID, err := client.PluginUpgrade(ctx, target, author, name)
+	if err != nil {
+		markAsyncSubmissionFailure(data, err)
+		return Result{Data: data, Meta: preflight.Meta()}, err
+	}
+	return s.finishTask(ctx, client, target, taskID, wait, waitOptions, data, preflight.Meta())
+}
+
+// SkillInstallGitHub 安装 GitHub Skill；dry-run 使用服务端预览接口。
+func (s *Service) SkillInstallGitHub(ctx context.Context, body map[string]any, dryRun bool, options CheckOptions) (Result, error) {
+	preflight, err := s.WritePreflight(ctx, "skill.install.github", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	client, target := s.writeClient(preflight)
+	var data map[string]any
+	if dryRun {
+		data, err = client.SkillPreviewGitHub(ctx, target, body)
+	} else {
+		data, err = client.SkillInstallGitHub(ctx, target, body)
+	}
+	if err != nil {
+		return Result{Data: skillFailureData("skill.install.github", dryRun, err), Meta: preflight.Meta()}, err
+	}
+	if data == nil {
+		data = map[string]any{}
+	}
+	data["operation"] = "skill.install.github"
+	data["dry_run"] = dryRun
+	data["server_write"] = !dryRun
+	if dryRun {
+		data["business_validation"] = "server_preview"
+	}
+	return Result{Data: data, Meta: preflight.Meta()}, nil
+}
+
+// SkillInstallUpload 安装 ZIP Skill，并保留 source_paths 多值参数。
+func (s *Service) SkillInstallUpload(ctx context.Context, filename string, sourcePaths []string, dryRun bool, options CheckOptions) (Result, error) {
+	if err := validateRegularFile(filename); err != nil {
+		return Result{}, err
+	}
+	preflight, err := s.WritePreflight(ctx, "skill.install.upload", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	file, err := os.Open(filename)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, result.New("input", "无法读取 Skill ZIP 包")
+	}
+	defer file.Close()
+	client, target := s.writeClient(preflight)
+	var data map[string]any
+	if dryRun {
+		data, err = client.SkillPreviewUpload(ctx, target, filepath.Base(filename), file, sourcePaths)
+	} else {
+		data, err = client.SkillInstallUpload(ctx, target, filepath.Base(filename), file, sourcePaths)
+	}
+	if err != nil {
+		return Result{Data: skillFailureData("skill.install.upload", dryRun, err), Meta: preflight.Meta()}, err
+	}
+	if data == nil {
+		data = map[string]any{}
+	}
+	data["operation"] = "skill.install.upload"
+	data["dry_run"] = dryRun
+	data["server_write"] = !dryRun
+	if dryRun {
+		data["business_validation"] = "server_preview"
+	}
+	return Result{Data: data, Meta: preflight.Meta()}, nil
+}
+
+// MCPServerTest 提交 MCP Server 测试任务。
+func (s *Service) MCPServerTest(ctx context.Context, name string, body map[string]any, dryRun, wait bool, waitOptions WaitOptions, options CheckOptions) (Result, error) {
+	if dryRun && wait {
+		return Result{}, result.New("input", "dry-run 不能等待异步任务")
+	}
+	preflight, err := s.WritePreflight(ctx, "mcp_server.test", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	if wait {
+		if err := requireCapability(preflight, "task.get"); err != nil {
+			return Result{Meta: preflight.Meta()}, err
+		}
+	}
+	client, target := s.writeClient(preflight)
+	data := map[string]any{
+		"operation":               "mcp_server.test",
+		"name":                    name,
+		"dry_run":                 dryRun,
+		"server_write":            false,
+		"preconditions_confirmed": true,
+		"business_validation":     "not_run",
+	}
+	if name != "_" {
+		if err := requireCapability(preflight, "mcp_server.get"); err != nil {
+			return Result{Meta: preflight.Meta()}, err
+		}
+		server, getErr := client.MCPServerGet(ctx, target, name)
+		if getErr != nil {
+			return Result{Data: data, Meta: preflight.Meta()}, getErr
+		}
+		data["server"] = server
+		data["business_validation"] = "target_exists"
+	}
+	if dryRun {
+		return Result{Data: data, Meta: preflight.Meta()}, nil
+	}
+	taskID, err := client.MCPServerTest(ctx, target, name, body)
+	if err != nil {
+		markAsyncSubmissionFailure(data, err)
+		return Result{Data: data, Meta: preflight.Meta()}, err
+	}
+	return s.finishTask(ctx, client, target, taskID, wait, waitOptions, data, preflight.Meta())
+}
+
+func (s *Service) finishTask(ctx context.Context, client api.Client, target api.Target, taskID string, wait bool, waitOptions WaitOptions, data map[string]any, meta map[string]any) (Result, error) {
+	data["server_write"] = true
+	data["submitted"] = true
+	data["task_id"] = taskID
+	data["step"] = "submitted"
+	if !wait {
+		return Result{Data: data, Meta: meta}, nil
+	}
+	task, waitErr := waitForTask(ctx, client, target, taskID, waitOptions)
+	data["task"] = task
+	if waitErr != nil {
+		return Result{Data: data, Meta: meta}, waitErr
+	}
+	data["step"] = "completed"
+	return Result{Data: data, Meta: meta}, nil
+}
+
+func markAsyncSubmissionFailure(data map[string]any, err error) {
+	if result.AsError(err).Type == "result_unknown" {
+		data["submitted"] = "unknown"
+		data["step"] = "submission_unknown"
+		return
+	}
+	data["submitted"] = false
+	data["step"] = "submission_failed"
+}
+
+func skillFailureData(operation string, dryRun bool, err error) map[string]any {
+	data := map[string]any{
+		"operation":    operation,
+		"dry_run":      dryRun,
+		"server_write": false,
+	}
+	if dryRun {
+		data["step"] = "preview_failed"
+		data["business_validation"] = "failed"
+		return data
+	}
+	data["server_write"] = "unconfirmed"
+	data["step"] = "install_failed"
+	if result.AsError(err).Type == "result_unknown" {
+		data["server_write"] = "unknown"
+		data["step"] = "install_unknown"
+	}
+	return data
+}
+
+func validateRegularFile(filename string) error {
+	if strings.TrimSpace(filename) == "" || filename == "-" {
+		return result.New("input", "必须指定本地普通文件")
+	}
+	info, err := os.Stat(filename)
+	if err != nil {
+		return result.New("input", "无法读取上传文件")
+	}
+	if !info.Mode().IsRegular() {
+		return result.New("input", "上传路径必须是普通文件")
+	}
+	if info.Size() > maxExtensionUploadBytes {
+		return result.New("input", "上传文件过大")
+	}
+	return nil
+}
+
+func waitForTask(ctx context.Context, client api.Client, target api.Target, identifier string, options WaitOptions) (*api.Task, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	interval := options.PollInterval
+	if interval <= 0 {
+		interval = time.Second
+	}
+	timeout := options.WaitTimeout
+	if timeout <= 0 {
+		timeout = 5 * time.Minute
+	}
+	waitCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	var lastTask *api.Task
+	for {
+		task, err := client.Task(waitCtx, target, identifier)
+		if err != nil {
+			if waitCtx.Err() != nil {
+				if ctx.Err() != nil {
+					return lastTask, taskStatusError("wait_cancelled", "等待已取消，服务端任务未被取消")
+				}
+				return lastTask, taskStatusError("wait_timeout", "等待异步任务超时")
+			}
+			failure := result.AsError(err)
+			if failure.Kind == "not_found" {
+				failure.Type = "task_not_found"
+				failure.Message = "异步任务记录不存在或已被清理"
+			}
+			return nil, err
+		}
+		taskValue := &task
+		lastTask = taskValue
+		switch task.Status {
+		case "succeeded":
+			return taskValue, nil
+		case "failed":
+			return taskValue, taskStatusError("task_failed", "异步任务执行失败")
+		case "cancelled":
+			return taskValue, taskStatusError("task_cancelled", "异步任务已取消")
+		}
+		timer := time.NewTimer(interval)
+		select {
+		case <-waitCtx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			if ctx.Err() != nil {
+				return taskValue, taskStatusError("wait_cancelled", "等待已取消，服务端任务未被取消")
+			}
+			return taskValue, taskStatusError("wait_timeout", "等待异步任务超时")
+		case <-timer.C:
+		}
+	}
+}
+
+func taskStatusError(kind, message string) *result.Error {
+	err := result.New("server", message)
+	err.Type = kind
+	return err
+}
+
+func partialIngestError(cause error) *result.Error {
+	failure := result.AsError(cause)
+	err := result.New(failure.Kind, "文件已上传，但知识库入库提交失败")
+	err.Type = "partial_write"
+	err.HTTPStatus = failure.HTTPStatus
+	err.ServerCode = failure.ServerCode
+	err.RequestID = failure.RequestID
+	return err
+}
+
+func (s *Service) BotCreate(ctx context.Context, body map[string]any, dryRun bool, options CheckOptions) (Result, error) {
+	if _, exists := body["uuid"]; exists {
+		return Result{}, result.New("input", "创建 Bot 时不能指定 uuid")
+	}
+	preflight, err := s.WritePreflight(ctx, "bot.create", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	if dryRun {
+		return writePlan(preflight, "bot.create", ""), nil
+	}
+	client, target := s.writeClient(preflight)
+	written, err := client.BotCreate(ctx, target, body)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	bot, err := client.Bot(ctx, target, written.UUID)
+	data := writeResultData("bot.create", written.UUID)
+	if err != nil {
+		return Result{Data: data, Meta: preflight.Meta()}, readbackError(err)
+	}
+	data["verified"] = true
+	data["bot"] = bot
+	return Result{Data: data, Meta: preflight.Meta()}, nil
+}
+
+func (s *Service) BotUpdate(ctx context.Context, uuid string, body map[string]any, dryRun bool, options CheckOptions) (Result, error) {
+	if err := api.ValidateResourceID(uuid); err != nil {
+		return Result{}, err
+	}
+	if err := validateBodyUUID(body, uuid); err != nil {
+		return Result{}, err
+	}
+	preflight, err := s.WritePreflight(ctx, "bot.update", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	if dryRun {
+		return writePlan(preflight, "bot.update", uuid), nil
+	}
+	client, target := s.writeClient(preflight)
+	if _, err := client.BotUpdate(ctx, target, uuid, withoutUUID(body)); err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	bot, err := client.Bot(ctx, target, uuid)
+	data := writeResultData("bot.update", uuid)
+	if err != nil {
+		return Result{Data: data, Meta: preflight.Meta()}, readbackError(err)
+	}
+	data["verified"] = true
+	data["bot"] = bot
+	return Result{Data: data, Meta: preflight.Meta()}, nil
+}
+
+func (s *Service) BotDelete(ctx context.Context, uuid string, confirmed, dryRun bool, options CheckOptions) (Result, error) {
+	if err := api.ValidateResourceID(uuid); err != nil {
+		return Result{}, err
+	}
+	if !dryRun && !confirmed {
+		return Result{}, result.New("input", "删除 Bot 需要 --yes")
+	}
+	preflight, err := s.WritePreflight(ctx, "bot.delete", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	if dryRun {
+		return writePlan(preflight, "bot.delete", uuid), nil
+	}
+	client, target := s.writeClient(preflight)
+	if _, err := client.BotDelete(ctx, target, uuid); err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	data := writeResultData("bot.delete", uuid)
+	_, err = client.Bot(ctx, target, uuid)
+	if err != nil && result.AsError(err).Kind == "not_found" {
+		data["verified"] = true
+		return Result{Data: data, Meta: preflight.Meta()}, nil
+	} else if err != nil {
+		return Result{Data: data, Meta: preflight.Meta()}, readbackError(err)
+	}
+	return Result{Data: data, Meta: preflight.Meta()}, verificationError("删除后资源仍可读取")
+}
+
+func (s *Service) PipelineApply(ctx context.Context, body map[string]any, dryRun bool, options CheckOptions) (Result, error) {
+	if body == nil {
+		return Result{}, result.New("input", "请求体必须是 JSON object")
+	}
+	uuid, updating, err := optionalBodyUUID(body)
+	if err != nil {
+		return Result{}, err
+	}
+	operation := "pipeline.create"
+	if updating {
+		if err := api.ValidateResourceID(uuid); err != nil {
+			return Result{}, err
+		}
+		operation = "pipeline.update"
+	}
+	preflight, err := s.WritePreflight(ctx, operation, options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	if !updating {
+		if err := requireCapability(preflight, "pipeline.update"); err != nil {
+			return Result{Meta: preflight.Meta()}, err
+		}
+	}
+	if dryRun {
+		return writePlan(preflight, "pipeline.apply", uuid), nil
+	}
+	client, target := s.writeClient(preflight)
+	payload := withoutUUID(body)
+	if !updating {
+		created, createErr := client.PipelineCreate(ctx, target, payload)
+		if createErr != nil {
+			return Result{Meta: preflight.Meta()}, createErr
+		}
+		uuid = created.UUID
+		if _, updateErr := client.PipelineUpdate(ctx, target, uuid, payload); updateErr != nil {
+			data := writeResultData("pipeline.apply", uuid)
+			data["phase"] = "created"
+			return Result{Data: data, Meta: preflight.Meta()}, partialWriteError(updateErr)
+		}
+	} else if _, err := client.PipelineUpdate(ctx, target, uuid, payload); err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	pipeline, err := client.Pipeline(ctx, target, uuid)
+	data := writeResultData("pipeline.apply", uuid)
+	if err != nil {
+		return Result{Data: data, Meta: preflight.Meta()}, readbackError(err)
+	}
+	data["verified"] = true
+	data["pipeline"] = pipeline
+	return Result{Data: data, Meta: preflight.Meta()}, nil
+}
+
+func (s *Service) PipelineCopy(ctx context.Context, uuid string, dryRun bool, options CheckOptions) (Result, error) {
+	if err := api.ValidateResourceID(uuid); err != nil {
+		return Result{}, err
+	}
+	preflight, err := s.WritePreflight(ctx, "pipeline.copy", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	if dryRun {
+		return writePlan(preflight, "pipeline.copy", uuid), nil
+	}
+	client, target := s.writeClient(preflight)
+	written, err := client.PipelineCopy(ctx, target, uuid)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	pipeline, err := client.Pipeline(ctx, target, written.UUID)
+	data := writeResultData("pipeline.copy", written.UUID)
+	if err != nil {
+		return Result{Data: data, Meta: preflight.Meta()}, readbackError(err)
+	}
+	data["verified"] = true
+	data["pipeline"] = pipeline
+	return Result{Data: data, Meta: preflight.Meta()}, nil
+}
+
+func (s *Service) PipelineDelete(ctx context.Context, uuid string, confirmed, dryRun bool, options CheckOptions) (Result, error) {
+	if err := api.ValidateResourceID(uuid); err != nil {
+		return Result{}, err
+	}
+	if !dryRun && !confirmed {
+		return Result{}, result.New("input", "删除 Pipeline 需要 --yes")
+	}
+	preflight, err := s.WritePreflight(ctx, "pipeline.delete", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	if dryRun {
+		return writePlan(preflight, "pipeline.delete", uuid), nil
+	}
+	client, target := s.writeClient(preflight)
+	if _, err := client.PipelineDelete(ctx, target, uuid); err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	data := writeResultData("pipeline.delete", uuid)
+	_, err = client.Pipeline(ctx, target, uuid)
+	if err != nil && result.AsError(err).Kind == "not_found" {
+		data["verified"] = true
+		return Result{Data: data, Meta: preflight.Meta()}, nil
+	} else if err != nil {
+		return Result{Data: data, Meta: preflight.Meta()}, readbackError(err)
+	}
+	return Result{Data: data, Meta: preflight.Meta()}, verificationError("删除后资源仍可读取")
+}
+
+func (s *Service) writeClient(preflight WritePreflight) (api.Client, api.Target) {
+	return api.Client{Transport: s.deps.Transport}, api.Target{
+		Endpoint: preflight.Connection.Endpoint,
+		APIKey:   preflight.Connection.APIKey,
+		Timeout:  preflight.Connection.Timeout,
+	}
+}
+
+func writePlan(preflight WritePreflight, operation, uuid string) Result {
+	data := map[string]any{
+		"operation":               operation,
+		"dry_run":                 true,
+		"server_write":            false,
+		"preconditions_confirmed": true,
+	}
+	if uuid != "" {
+		data["uuid"] = uuid
+	}
+	return Result{Data: data, Meta: preflight.Meta()}
+}
+
+func writeResultData(operation, uuid string) map[string]any {
+	return map[string]any{"operation": operation, "uuid": uuid, "verified": false}
+}
+
+func requireCapability(preflight WritePreflight, operation string) error {
+	supported, known := preflight.Capabilities.Operations[operation]
+	if !known {
+		return result.New("precondition", "服务端未明确支持该操作")
+	}
+	if !supported {
+		return result.New("precondition", "服务端明确不支持该操作")
+	}
+	return nil
+}
+
+func optionalBodyUUID(body map[string]any) (string, bool, error) {
+	value, exists := body["uuid"]
+	if !exists {
+		return "", false, nil
+	}
+	uuid, ok := value.(string)
+	if !ok || strings.TrimSpace(uuid) == "" {
+		return "", false, result.New("input", "uuid 必须是非空字符串")
+	}
+	return uuid, true, nil
+}
+
+func validateBodyUUID(body map[string]any, expected string) error {
+	uuid, exists, err := optionalBodyUUID(body)
+	if err != nil {
+		return err
+	}
+	if exists && uuid != expected {
+		return result.New("input", "请求体 uuid 与命令参数不一致")
+	}
+	return nil
+}
+
+func withoutUUID(body map[string]any) map[string]any {
+	copy := make(map[string]any, len(body))
+	for key, value := range body {
+		if key != "uuid" {
+			copy[key] = value
+		}
+	}
+	return copy
+}
+
+func validateBodyFields(body map[string]any, allowed ...string) error {
+	allowedSet := make(map[string]struct{}, len(allowed))
+	for _, field := range allowed {
+		allowedSet[field] = struct{}{}
+	}
+	unknown := make([]string, 0)
+	for field := range body {
+		if _, ok := allowedSet[field]; !ok {
+			unknown = append(unknown, field)
+		}
+	}
+	if len(unknown) == 0 {
+		return nil
+	}
+	sort.Strings(unknown)
+	return result.New("input", "请求体包含不支持的字段: "+strings.Join(unknown, ", "))
+}
+
+func readbackError(cause error) *result.Error {
+	failure := result.AsError(cause)
+	err := result.New(failure.Kind, "写操作已返回成功，但回读验证失败")
+	err.Type = "verification_failed"
+	err.HTTPStatus = failure.HTTPStatus
+	err.ServerCode = failure.ServerCode
+	err.RequestID = failure.RequestID
+	return err
+}
+
+func verificationError(message string) *result.Error {
+	err := result.New("server", message)
+	err.Type = "verification_failed"
+	return err
+}
+
+func partialWriteError(cause error) *result.Error {
+	failure := result.AsError(cause)
+	err := result.New(failure.Kind, "Pipeline 已创建，但完整配置未应用")
+	err.Type = "partial_write"
+	err.HTTPStatus = failure.HTTPStatus
+	err.ServerCode = failure.ServerCode
+	err.RequestID = failure.RequestID
+	return err
+}
+
+func (s *Service) resourceConnection(ctx context.Context, options CheckOptions) (config.Connection, api.Context, error) {
+	conn, identity, err := s.connectionWithIdentity(ctx, options)
+	if err != nil {
+		return conn, identity, err
+	}
+	if !hasPermission(identity, "resource.view") {
+		return conn, identity, result.New("permission", "当前 API Key 缺少 resource.view 权限")
+	}
+	return conn, identity, nil
+}
+
+// readPreflight 校验读取操作声明的权限和服务端能力，并保留解析后的连接快照。
+func (s *Service) readPreflight(ctx context.Context, operation, permission string, options CheckOptions) (WritePreflight, error) {
+	conn, identity, err := s.connectionWithIdentity(ctx, options)
+	preflight := WritePreflight{Connection: conn, Identity: identity}
+	if err != nil {
+		return preflight, err
+	}
+	if permission != "" && !hasPermission(identity, permission) {
+		return preflight, result.New("permission", "当前 API Key 缺少 "+permission+" 权限")
+	}
+	capabilities, err := s.capabilities(ctx, conn)
+	if err != nil {
+		return preflight, err
+	}
+	preflight.Capabilities = capabilities
+	if err := requireCapability(preflight, operation); err != nil {
+		return preflight, err
+	}
+	return preflight, nil
+}
+
+func (s *Service) connectionWithIdentity(ctx context.Context, options CheckOptions) (config.Connection, api.Context, error) {
+	file, err := s.load()
+	if err != nil {
+		return config.Connection{}, api.Context{}, err
+	}
+	conn, err := s.resolve(ctx, file, config.Options{
+		Context: options.Context, Endpoint: options.Endpoint, Timeout: options.Timeout,
+		ContextSet: options.ContextSet, EndpointSet: options.EndpointSet,
+		TimeoutSet: options.TimeoutSet, APIKeyStdin: options.APIKeyStdin,
+	})
+	if err != nil {
+		return conn, api.Context{}, err
+	}
+	identity, err := s.identity(ctx, conn)
+	if err != nil {
+		return conn, api.Context{}, err
+	}
+	if err := workspaceBindingError(conn, identity); err != nil {
+		return conn, identity, err
+	}
+	return conn, identity, nil
+}
+
+// WritePreflight 只允许已保存且绑定 Workspace 的命名 context 执行写操作。
+func (s *Service) WritePreflight(ctx context.Context, operation string, options CheckOptions) (WritePreflight, error) {
+	return s.writePreflight(ctx, operation, "resource.manage", options)
+}
+
+// writePreflight 校验写操作所需的权限、能力和连接绑定。
+func (s *Service) writePreflight(ctx context.Context, operation, permission string, options CheckOptions) (WritePreflight, error) {
+	if options.EndpointSet {
+		return WritePreflight{}, result.New("precondition", "写操作不允许使用临时 endpoint")
+	}
+	file, err := s.load()
+	if err != nil {
+		return WritePreflight{}, err
+	}
+	configOptions := config.Options{
+		Context: options.Context, Endpoint: options.Endpoint, Timeout: options.Timeout,
+		ContextSet: options.ContextSet, EndpointSet: options.EndpointSet, TimeoutSet: options.TimeoutSet,
+		APIKeyStdin: options.APIKeyStdin,
+	}
+	contextName, err := writeContextName(file, options, s.deps.LookupEnv)
+	if err != nil {
+		return WritePreflight{}, err
+	}
+	saved, ok := file.Contexts[contextName]
+	if !ok {
+		return WritePreflight{}, result.New("precondition", "写操作要求使用已保存的 context")
+	}
+	if strings.TrimSpace(saved.ExpectedWorkspaceUUID) == "" {
+		return WritePreflight{}, result.New("precondition", "写操作要求 context 已绑定 Workspace")
+	}
+	conn, err := config.Resolve(file, configOptions, s.deps.LookupEnv)
+	if err != nil {
+		return WritePreflight{Connection: conn}, err
+	}
+	if conn.Temporary {
+		return WritePreflight{Connection: conn}, result.New("precondition", "写操作不允许使用临时连接")
+	}
+	conn, err = s.withCredential(ctx, conn, configOptions)
+	if err != nil {
+		return WritePreflight{Connection: conn}, err
+	}
+	identity, err := s.identity(ctx, conn)
+	if err != nil {
+		return WritePreflight{Connection: conn}, err
+	}
+	if err := workspaceBindingError(conn, identity); err != nil {
+		return WritePreflight{Connection: conn, Identity: identity}, err
+	}
+	if permission != "" && !hasPermission(identity, permission) {
+		return WritePreflight{Connection: conn, Identity: identity}, result.New("permission", "当前 API Key 缺少 "+permission+" 权限")
+	}
+	if !hasPermission(identity, "resource.view") {
+		return WritePreflight{Connection: conn, Identity: identity}, result.New("permission", "当前 API Key 缺少写后回读所需的 resource.view 权限")
+	}
+	capabilities, err := s.capabilities(ctx, conn)
+	if err != nil {
+		return WritePreflight{Connection: conn, Identity: identity}, err
+	}
+	preflight := WritePreflight{Connection: conn, Identity: identity, Capabilities: capabilities}
+	if err := requireCapability(preflight, operation); err != nil {
+		return preflight, err
+	}
+	if readback := readbackCapability(operation); readback != "" {
+		if err := requireCapability(preflight, readback); err != nil {
+			return preflight, result.New("precondition", "服务端未明确支持写后回读")
+		}
+	}
+	return preflight, nil
+}
+
+func readbackCapability(operation string) string {
+	switch {
+	case strings.HasPrefix(operation, "bot."):
+		return "bot.get"
+	case strings.HasPrefix(operation, "pipeline."):
+		return "pipeline.get"
+	case operation == "knowledge_base.file.delete":
+		return "knowledge_base.file.list"
+	case strings.HasPrefix(operation, "knowledge_base."):
+		return "knowledge_base.get"
+	case strings.HasPrefix(operation, "mcp_server.") && operation != "mcp_server.test":
+		return "mcp_server.get"
+	case operation == "plugin.config.update":
+		return "plugin.config.get"
+	case operation == "provider.create" || operation == "provider.update" || operation == "provider.delete":
+		return "provider.get"
+	case operation == "provider.scan_models":
+		return "provider.get"
+	case strings.HasPrefix(operation, "model.") && (strings.HasSuffix(operation, ".create") || strings.HasSuffix(operation, ".update") || strings.HasSuffix(operation, ".delete")):
+		modelType := strings.Split(operation, ".")[1]
+		return "model." + modelType + ".get"
+	case strings.HasPrefix(operation, "model.") && strings.HasSuffix(operation, ".test"):
+		modelType := strings.Split(operation, ".")[1]
+		return "model." + modelType + ".get"
+	case operation == "plugin.delete":
+		return "plugin.get"
+	case operation == "skill.files.write":
+		return "skill.files.read"
+	case operation == "skill.create" || operation == "skill.update" || operation == "skill.delete":
+		return "skill.get"
+	default:
+		return ""
+	}
+}
+
+func writeContextName(file config.File, options CheckOptions, lookup func(string) (string, bool)) (string, error) {
+	if options.ContextSet {
+		if strings.TrimSpace(options.Context) == "" {
+			return "", result.New("input", "context 不能为空")
+		}
+		return options.Context, nil
+	}
+	if lookup != nil {
+		if value, present := lookup("LANGBOT_CONTEXT"); present {
+			if strings.TrimSpace(value) == "" {
+				return "", result.New("input", "LANGBOT_CONTEXT 为空")
+			}
+			return value, nil
+		}
+	}
+	if strings.TrimSpace(file.CurrentContext) == "" {
+		return "", result.New("precondition", "写操作要求使用已保存的 context")
+	}
+	return file.CurrentContext, nil
+}
+
+func hasPermission(identity api.Context, required string) bool {
+	for _, permission := range identity.Permissions {
+		if permission == required {
+			return true
+		}
+	}
+	return false
+}
+
+func resourceMeta(conn config.Connection, identity api.Context) map[string]any {
+	meta := connectionMeta(conn)
+	if identity.InstanceUUID != "" && identity.WorkspaceUUID != "" {
+		meta["instance_uuid"] = identity.InstanceUUID
+		meta["workspace_uuid"] = identity.WorkspaceUUID
+	}
+	return meta
 }
 
 func localContextResult(name string, saved config.Context, current string) Result {
@@ -448,6 +2535,10 @@ func (s *Service) resolve(ctx context.Context, file config.File, options config.
 	if err != nil {
 		return conn, err
 	}
+	return s.withCredential(ctx, conn, options)
+}
+
+func (s *Service) withCredential(ctx context.Context, conn config.Connection, options config.Options) (config.Connection, error) {
 	credentialInput := s.deps.In
 	if options.APIKeyStdin {
 		value, readErr := readCredential(ctx, credentialInput)
@@ -456,7 +2547,7 @@ func (s *Service) resolve(ctx context.Context, file config.File, options config.
 		}
 		credentialInput = strings.NewReader(value)
 	}
-	conn, err = conn.WithCredential(options, s.deps.LookupEnv, credentialInput)
+	conn, err := conn.WithCredential(options, s.deps.LookupEnv, credentialInput)
 	if err != nil {
 		return conn, err
 	}
@@ -495,6 +2586,33 @@ func (s *Service) info(ctx context.Context, conn config.Connection) (api.Info, e
 func (s *Service) identity(ctx context.Context, conn config.Connection) (api.Context, error) {
 	client := api.Client{Transport: s.deps.Transport}
 	return client.Context(ctx, api.Target{Endpoint: conn.Endpoint, APIKey: conn.APIKey, Timeout: conn.Timeout})
+}
+
+func (s *Service) capabilities(ctx context.Context, conn config.Connection) (api.Capabilities, error) {
+	client := api.Client{Transport: s.deps.Transport}
+	return client.Capabilities(ctx, api.Target{Endpoint: conn.Endpoint, APIKey: conn.APIKey, Timeout: conn.Timeout})
+}
+
+func unknownCapabilities() map[string]any {
+	return map[string]any{
+		"capabilities": "unknown",
+	}
+}
+
+func capabilityStatuses(capabilities api.Capabilities) map[string]string {
+	statuses := make(map[string]string, len(api.CapabilityOperationIDs()))
+	for _, operationID := range api.CapabilityOperationIDs() {
+		supported, ok := capabilities.Operations[operationID]
+		status := "unknown"
+		if ok {
+			status = "unsupported"
+			if supported {
+				status = "supported"
+			}
+		}
+		statuses[operationID] = status
+	}
+	return statuses
 }
 
 func validateBatchTimeout(options CheckOptions, lookup func(string) (string, bool)) error {

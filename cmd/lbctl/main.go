@@ -20,7 +20,7 @@ func main() {
 	code := command.Execute(ctx, os.Args[1:], command.Dependencies{
 		In: os.Stdin, Out: os.Stdout, Err: os.Stderr,
 		LookupEnv: os.LookupEnv,
-		Version: version, Commit: commit, BuildDate: buildDate,
+		Version:   version, Commit: commit, BuildDate: buildDate,
 	})
 	stop()
 	os.Exit(code)

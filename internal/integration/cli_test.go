@@ -278,8 +278,88 @@ func TestIdentityCommandsKeepPreconditionWithContextOverride(t *testing.T) {
 		t.Fatalf("whoami with missing context should be an input failure: %s", result.out)
 	}
 	result = run(t, path, nil, "", "--context", "demo", "capabilities")
-	if result.code != 6 || result.data["ok"] != false || !strings.Contains(result.out, `"capabilities": "unknown"`) {
-		t.Fatalf("capabilities should report unknown protocol boundary as a precondition: %s", result.out)
+	if result.code != 2 || result.data["ok"] != false || !strings.Contains(result.out, `"capabilities": "unknown"`) {
+		t.Fatalf("capabilities should resolve its connection before discovery: %s", result.out)
+	}
+}
+
+func TestCapabilitiesUsesAuthenticatedIdentityAndReportsStableStatuses(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	const key = "capability-key-value"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-API-Key") != key {
+			w.WriteHeader(http.StatusUnauthorized)
+			fmt.Fprint(w, `{"code":401,"msg":"unauthorized"}`)
+			return
+		}
+		switch r.URL.Path {
+		case "/proxy/api/v1/system/context":
+			fmt.Fprint(w, `{"code":0,"data":{"instance_uuid":"instance-a","workspace_uuid":"workspace-a","api_key_id":"key-a","permissions":[]}}`)
+		case "/proxy/api/v1/system/capabilities":
+			fmt.Fprintf(w, `{"code":0,"msg":%q,"data":{"schema_version":1,"operations":{"bot.list":{"supported":true},"pipeline.list":{"supported":false},"unknown-secret-operation":{"supported":true,"value":%q}}}}`, key, key)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprint(w, `{"code":404,"msg":"missing"}`)
+		}
+	}))
+	defer server.Close()
+
+	requireSuccess(t, run(t, path, nil, "", "context", "add", "production", "--endpoint", server.URL+"/proxy", "--api-key-env", "CAPABILITY_KEY"))
+	result := run(t, path, map[string]string{"CAPABILITY_KEY": key}, "", "--context", "production", "capabilities")
+	requireSuccess(t, result)
+	data := result.data["data"].(map[string]any)
+	if data["instance_uuid"] != "instance-a" || data["workspace_uuid"] != "workspace-a" || data["schema_version"] != float64(1) {
+		t.Fatalf("capability result lost identity or schema: %s", result.out)
+	}
+	operations := data["operations"].(map[string]any)
+	if operations["bot.list"] != "supported" || operations["pipeline.list"] != "unsupported" || operations["bot.get"] != "unknown" {
+		t.Fatalf("capability statuses = %#v", operations)
+	}
+	if strings.Contains(result.out, key) || strings.Contains(result.out, "unknown-secret-operation") {
+		t.Fatalf("capability output exposed secret or unknown operation: %s", result.out)
+	}
+}
+
+func TestCapabilitiesAuthenticationFailureDoesNotProbeCapabilityEndpoint(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	var capabilityCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/system/capabilities" {
+			capabilityCalls.Add(1)
+		}
+		w.WriteHeader(http.StatusUnauthorized)
+		fmt.Fprint(w, `{"code":401,"msg":"unauthorized"}`)
+	}))
+	defer server.Close()
+
+	requireSuccess(t, run(t, path, nil, "", "context", "add", "production", "--endpoint", server.URL, "--api-key-env", "CAPABILITY_KEY"))
+	result := run(t, path, map[string]string{"CAPABILITY_KEY": "invalid-key"}, "", "--context", "production", "capabilities")
+	if result.code != 3 || result.data["error"].(map[string]any)["type"] != "auth" || capabilityCalls.Load() != 0 {
+		t.Fatalf("authentication failure was not stopped at identity: %s", result.out)
+	}
+}
+
+func TestCapabilitiesPermissionFailureKeepsConfirmedIdentity(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	const key = "capability-key-value"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/system/context" {
+			fmt.Fprint(w, `{"code":0,"data":{"instance_uuid":"instance-a","workspace_uuid":"workspace-a","api_key_id":"key-a","permissions":[]}}`)
+			return
+		}
+		w.WriteHeader(http.StatusForbidden)
+		fmt.Fprint(w, `{"code":403,"msg":"forbidden"}`)
+	}))
+	defer server.Close()
+
+	requireSuccess(t, run(t, path, nil, "", "context", "add", "production", "--endpoint", server.URL, "--api-key-env", "CAPABILITY_KEY"))
+	result := run(t, path, map[string]string{"CAPABILITY_KEY": key}, "", "--context", "production", "capabilities")
+	if result.code != 4 || result.data["error"].(map[string]any)["type"] != "permission" {
+		t.Fatalf("capability permission error was not preserved: %s", result.out)
+	}
+	data := result.data["data"].(map[string]any)
+	if data["instance_uuid"] != "instance-a" || data["workspace_uuid"] != "workspace-a" || data["capabilities"] != "unknown" {
+		t.Fatalf("capability permission error lost identity: %s", result.out)
 	}
 }
 
@@ -429,5 +509,111 @@ func TestExpectedWorkspaceMismatchIsPreconditionAndPreservesIdentity(t *testing.
 	identity := data["identity"].(map[string]any)
 	if identity["workspace_uuid"] != "actual-workspace" || strings.Contains(checked.out, "expected-workspace") {
 		t.Fatalf("mismatch lost safe actual identity or exposed unexpected data: %s", checked.out)
+	}
+}
+
+func TestResourceCommandsConfirmIdentityAndPermissionBeforeReading(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	var resourceCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/system/context" {
+			fmt.Fprint(w, `{"code":0,"data":{"instance_uuid":"instance-a","workspace_uuid":"workspace-a","api_key_id":"key-a","permissions":[]}}`)
+			return
+		}
+		resourceCalls.Add(1)
+		fmt.Fprint(w, `{"code":0,"data":{"bots":[]}}`)
+	}))
+	defer server.Close()
+	result := run(t, path, nil, "no-view-key\n", "--endpoint", server.URL, "--api-key-stdin", "bot", "list")
+	if result.code != 4 || result.data["error"].(map[string]any)["type"] != "permission" {
+		t.Fatalf("missing resource.view was not rejected: %s", result.out)
+	}
+	meta := result.data["meta"].(map[string]any)
+	if meta["instance_uuid"] != "instance-a" || meta["workspace_uuid"] != "workspace-a" {
+		t.Fatalf("permission error lost confirmed identity metadata: %s", result.out)
+	}
+	if resourceCalls.Load() != 0 {
+		t.Fatalf("resource request was sent without resource.view: %d", resourceCalls.Load())
+	}
+}
+
+func TestResourceCommandsUseAuthenticatedContextAndSafeProjection(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	const key = "resource-key-value"
+	var resourceCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-API-Key") != key {
+			w.WriteHeader(http.StatusUnauthorized)
+			fmt.Fprint(w, `{"code":401,"msg":"unauthorized"}`)
+			return
+		}
+		switch r.URL.Path {
+		case "/api/v1/system/context":
+			fmt.Fprint(w, `{"code":0,"data":{"instance_uuid":"instance-a","workspace_uuid":"workspace-a","api_key_id":"key-a","permissions":["resource.view"]}}`)
+		case "/api/v1/platform/bots":
+			resourceCalls.Add(1)
+			fmt.Fprint(w, `{"code":0,"data":{"bots":[{"uuid":"bot-a","name":"Bot A","adapter":"http_bot","adapter_config":{"token":"bot-secret"}}]}}`)
+		case "/api/v1/platform/bots/bot-a":
+			resourceCalls.Add(1)
+			fmt.Fprint(w, `{"code":0,"data":{"bot":{"uuid":"bot-a","name":"Bot A","adapter":"http_bot","adapter_config":{"token":"bot-secret"}}}}`)
+		case "/api/v1/pipelines":
+			resourceCalls.Add(1)
+			fmt.Fprint(w, `{"code":0,"data":{"pipelines":[{"uuid":"pipeline-a","name":"Pipeline A","config":{"api_key":"provider-secret"}}]}}`)
+		case "/api/v1/pipelines/pipeline-a":
+			resourceCalls.Add(1)
+			fmt.Fprint(w, `{"code":0,"data":{"pipeline":{"uuid":"pipeline-a","name":"Pipeline A","config":{"token":"pipeline-secret"}}}}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	for _, item := range []struct {
+		args []string
+		want string
+	}{
+		{args: []string{"bot", "list"}, want: "bot-a"},
+		{args: []string{"bot", "get", "bot-a"}, want: "bot-a"},
+		{args: []string{"pipeline", "list"}, want: "pipeline-a"},
+		{args: []string{"pipeline", "get", "pipeline-a"}, want: "pipeline-a"},
+	} {
+		args := append([]string{"--endpoint", server.URL, "--api-key-stdin"}, item.args...)
+		result := run(t, path, nil, key+"\n", args...)
+		requireSuccess(t, result)
+		meta := result.data["meta"].(map[string]any)
+		if meta["instance_uuid"] != "instance-a" || meta["workspace_uuid"] != "workspace-a" {
+			t.Fatalf("resource success lost confirmed identity metadata: %s", result.out)
+		}
+		if !strings.Contains(result.out, item.want) || strings.Contains(result.out, "bot-secret") || strings.Contains(result.out, "provider-secret") || strings.Contains(result.out, "pipeline-secret") {
+			t.Fatalf("resource output was missing safe data or exposed config: %s", result.out)
+		}
+	}
+	if resourceCalls.Load() != 4 {
+		t.Fatalf("resource request count = %d, want 4", resourceCalls.Load())
+	}
+}
+
+func TestResourceCommandsRejectWorkspaceMismatchBeforeReading(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	const key = "resource-key-value"
+	var resourceCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/system/context" {
+			fmt.Fprint(w, `{"code":0,"data":{"instance_uuid":"instance-a","workspace_uuid":"actual-workspace","api_key_id":"key-a","permissions":["resource.view"]}}`)
+			return
+		}
+		resourceCalls.Add(1)
+	}))
+	defer server.Close()
+	requireSuccess(t, run(t, path, nil, "", "context", "add", "production", "--endpoint", server.URL, "--api-key-env", "RESOURCE_KEY", "--expect-workspace", "expected-workspace"))
+	result := run(t, path, map[string]string{"RESOURCE_KEY": key}, "", "--context", "production", "bot", "list")
+	if result.code != 6 || result.data["error"].(map[string]any)["type"] != "target_mismatch" {
+		t.Fatalf("workspace mismatch was not rejected: %s", result.out)
+	}
+	meta := result.data["meta"].(map[string]any)
+	if meta["instance_uuid"] != "instance-a" || meta["workspace_uuid"] != "actual-workspace" {
+		t.Fatalf("workspace mismatch lost confirmed identity metadata: %s", result.out)
+	}
+	if resourceCalls.Load() != 0 {
+		t.Fatalf("resource request was sent after workspace mismatch")
 	}
 }

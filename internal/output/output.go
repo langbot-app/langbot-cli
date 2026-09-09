@@ -79,6 +79,9 @@ func prepare(value any) (any, error) {
 
 func redactValue(value any, field string) any {
 	if isSecretField(field) {
+		if isMaskedSecretValue(value) {
+			return value
+		}
 		return "[REDACTED]"
 	}
 	switch typed := value.(type) {
@@ -96,6 +99,31 @@ func redactValue(value any, field string) any {
 		return result
 	default:
 		return value
+	}
+}
+
+func isMaskedSecretValue(value any) bool {
+	switch typed := value.(type) {
+	case nil:
+		return true
+	case string:
+		return typed == "" || typed == "***"
+	case map[string]any:
+		for _, item := range typed {
+			if !isMaskedSecretValue(item) {
+				return false
+			}
+		}
+		return true
+	case []any:
+		for _, item := range typed {
+			if !isMaskedSecretValue(item) {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
 	}
 }
 
@@ -157,7 +185,7 @@ func renderEnvelopeTable(w io.Writer, envelope map[string]any, data any) error {
 	}
 	itemKey := ""
 	var items []any
-	for _, key := range []string{"contexts", "checks"} {
+	for _, key := range []string{"contexts", "checks", "bots", "pipelines", "tasks", "bases", "files", "servers", "plugins", "skills"} {
 		if candidate, ok := dataMap[key].([]any); ok {
 			itemKey, items = key, candidate
 			break
@@ -347,7 +375,8 @@ func formatCell(value any) string {
 
 func isSecretField(name string) bool {
 	name = strings.ToLower(name)
-	if name == "api_key_id" {
+	switch name {
+	case "api_key_id", "token_count", "input_tokens", "output_tokens", "total_tokens", "max_tokens":
 		return false
 	}
 	for _, part := range []string{"apikey", "api_key", "token", "password", "secret", "authorization"} {
