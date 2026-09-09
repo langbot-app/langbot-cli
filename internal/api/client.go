@@ -23,23 +23,27 @@ import (
 )
 
 const (
-	infoPath           = "/api/v1/system/info"
-	contextPath        = "/api/v1/system/context"
-	capabilitiesPath   = "/api/v1/system/capabilities"
-	botsPath           = "/api/v1/platform/bots"
-	pipelinesPath      = "/api/v1/pipelines"
-	tasksPath          = "/api/v1/system/tasks"
-	knowledgeBasesPath = "/api/v1/knowledge/bases"
-	documentUploadPath = "/api/v1/files/documents"
-	pluginsPath        = "/api/v1/plugins"
-	skillsPath         = "/api/v1/skills"
-	mcpServersPath     = "/api/v1/mcp/servers"
-	defaultTimeout     = 30 * time.Second
-	maxResponseBytes   = 1 << 20
-	maxRequestBytes    = 1 << 20
-	maxUploadBytes     = 10 << 20
-	maxServerCodeSize  = 128
-	maxRequestIDSize   = 128
+	infoPath            = "/api/v1/system/info"
+	contextPath         = "/api/v1/system/context"
+	capabilitiesPath    = "/api/v1/system/capabilities"
+	botsPath            = "/api/v1/platform/bots"
+	pipelinesPath       = "/api/v1/pipelines"
+	tasksPath           = "/api/v1/system/tasks"
+	knowledgeBasesPath  = "/api/v1/knowledge/bases"
+	documentUploadPath  = "/api/v1/files/documents"
+	pluginsPath         = "/api/v1/plugins"
+	skillsPath          = "/api/v1/skills"
+	mcpServersPath      = "/api/v1/mcp/servers"
+	providersPath       = "/api/v1/provider/providers"
+	llmModelsPath       = "/api/v1/provider/models/llm"
+	embeddingModelsPath = "/api/v1/provider/models/embedding"
+	rerankModelsPath    = "/api/v1/provider/models/rerank"
+	defaultTimeout      = 30 * time.Second
+	maxResponseBytes    = 1 << 20
+	maxRequestBytes     = 1 << 20
+	maxUploadBytes      = 10 << 20
+	maxServerCodeSize   = 128
+	maxRequestIDSize    = 128
 )
 
 // Target 是一次请求使用的不可变连接快照。
@@ -136,6 +140,30 @@ var capabilityOperationIDs = []string{
 	"plugin.config.update",
 	"plugin.logs",
 	"plugin.delete",
+	"provider.list",
+	"provider.get",
+	"provider.create",
+	"provider.update",
+	"provider.delete",
+	"provider.scan_models",
+	"model.llm.list",
+	"model.llm.get",
+	"model.llm.create",
+	"model.llm.update",
+	"model.llm.delete",
+	"model.llm.test",
+	"model.embedding.list",
+	"model.embedding.get",
+	"model.embedding.create",
+	"model.embedding.update",
+	"model.embedding.delete",
+	"model.embedding.test",
+	"model.rerank.list",
+	"model.rerank.get",
+	"model.rerank.create",
+	"model.rerank.update",
+	"model.rerank.delete",
+	"model.rerank.test",
 	"skill.list",
 	"skill.get",
 	"skill.create",
@@ -1378,6 +1406,23 @@ func knownWritePath(method, path string) bool {
 	if method == http.MethodPost && path == documentUploadPath {
 		return true
 	}
+	if method == http.MethodPost && (path == providersPath || path == llmModelsPath || path == embeddingModelsPath || path == rerankModelsPath) {
+		return true
+	}
+	if method == http.MethodPost {
+		for _, modelBase := range []string{llmModelsPath, embeddingModelsPath, rerankModelsPath} {
+			if nestedPath(path, modelBase, 1, "test") {
+				return true
+			}
+		}
+	}
+	if method == http.MethodPut || method == http.MethodDelete {
+		for _, base := range []string{providersPath, llmModelsPath, embeddingModelsPath, rerankModelsPath} {
+			if identifierPath(path, base) {
+				return true
+			}
+		}
+	}
 	if method == http.MethodPost && strings.HasPrefix(path, knowledgeBasesPath+"/") && strings.HasSuffix(path, "/files") {
 		identifier := strings.TrimSuffix(strings.TrimPrefix(path, knowledgeBasesPath+"/"), "/files")
 		return identifier != "" && !strings.Contains(identifier, "/")
@@ -1518,6 +1563,24 @@ func knownGetPath(path string) bool {
 	queryIndex := strings.IndexByte(path, '?')
 	if queryIndex >= 0 {
 		base := path[:queryIndex]
+		query, err := url.ParseQuery(path[queryIndex+1:])
+		if err != nil {
+			return false
+		}
+		if base == providersPath || identifierPath(base, providersPath) {
+			return validSecretProjectionQuery(query)
+		}
+		for _, modelBase := range []string{llmModelsPath, embeddingModelsPath, rerankModelsPath} {
+			if base == modelBase {
+				return validModelListQuery(query)
+			}
+			if identifierPath(base, modelBase) {
+				return validSecretProjectionQuery(query)
+			}
+		}
+		if nestedPath(base, providersPath, 1, "scan-models") {
+			return validScanModelsQuery(query)
+		}
 		if base != tasksPath &&
 			!(strings.HasPrefix(base, mcpServersPath+"/") && strings.HasSuffix(base, "/logs")) &&
 			!(strings.HasPrefix(base, pluginsPath+"/") && strings.HasSuffix(base, "/logs")) &&
@@ -1577,7 +1640,44 @@ func knownGetPath(path string) bool {
 			}
 		}
 	}
+	if nestedPath(path, providersPath, 1, "scan-models") {
+		return true
+	}
 	return false
+}
+
+func validSecretProjectionQuery(query url.Values) bool {
+	if len(query) != 1 {
+		return false
+	}
+	values, ok := query["include_secret"]
+	return ok && len(values) == 1 && values[0] == "false"
+}
+
+func validModelListQuery(query url.Values) bool {
+	if !validSecretProjectionQuery(url.Values{"include_secret": query["include_secret"]}) {
+		return false
+	}
+	if len(query) == 1 {
+		return true
+	}
+	values, ok := query["provider_uuid"]
+	if !ok || len(values) != 1 {
+		return false
+	}
+	_, err := resourcePath("", values[0])
+	return err == nil
+}
+
+func validScanModelsQuery(query url.Values) bool {
+	if len(query) == 0 {
+		return true
+	}
+	values, ok := query["type"]
+	if !ok || len(values) != 1 {
+		return false
+	}
+	return values[0] == ModelTypeLLM || values[0] == ModelTypeEmbedding || values[0] == ModelTypeRerank
 }
 
 func capabilitySchemaVersion(value any) (int, bool) {

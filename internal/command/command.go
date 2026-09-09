@@ -136,12 +136,167 @@ func newRoot(deps Dependencies, flags *globalFlags, service *app.Service) *cobra
 	root.AddCommand(newIdentityCommand(service, deps, flags, "capabilities"))
 	root.AddCommand(newBotCommand(service, deps, flags))
 	root.AddCommand(newPipelineCommand(service, deps, flags))
+	root.AddCommand(newProviderCommand(service, deps, flags))
+	root.AddCommand(newModelCommand(service, deps, flags))
 	root.AddCommand(newTaskCommand(service, deps, flags))
 	root.AddCommand(newKnowledgeBaseCommand(service, deps, flags))
 	root.AddCommand(newPluginCommand(service, deps, flags))
 	root.AddCommand(newSkillCommand(service, deps, flags))
 	root.AddCommand(newMCPServerCommand(service, deps, flags))
 	return root
+}
+
+func newProviderCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
+	command := &cobra.Command{Use: "provider", Short: "管理 Provider", Args: cobra.NoArgs}
+	command.AddCommand(&cobra.Command{Use: "list", Short: "列出 Provider", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+		return emitCall(deps, flags, func() (app.Result, error) { return service.ProviderList(cmd.Context(), connectionOptions(flags)) })
+	}})
+	command.AddCommand(&cobra.Command{Use: "get <uuid>", Short: "读取 Provider", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		return emitCall(deps, flags, func() (app.Result, error) {
+			return service.ProviderGet(cmd.Context(), args[0], connectionOptions(flags))
+		})
+	}})
+	var createFile string
+	var createDryRun bool
+	create := &cobra.Command{Use: "create", Short: "创建 Provider", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+		body, err := loadRequestBody(cmd.Context(), createFile, flags.apiKeyStdin, deps.In)
+		if err != nil {
+			return emitCommand(deps, flags, app.Result{}, err)
+		}
+		return emitCall(deps, flags, func() (app.Result, error) {
+			return service.ProviderCreate(cmd.Context(), body, createDryRun, connectionOptions(flags))
+		})
+	}}
+	create.Flags().StringVar(&createFile, "file", "", "JSON/YAML 请求体文件，使用 - 从 stdin 读取")
+	create.Flags().BoolVar(&createDryRun, "dry-run", false, "只检查前置条件，不写入")
+	command.AddCommand(create)
+	var updateFile string
+	var updateDryRun bool
+	update := &cobra.Command{Use: "update <uuid>", Short: "更新 Provider", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		body, err := loadRequestBody(cmd.Context(), updateFile, flags.apiKeyStdin, deps.In)
+		if err != nil {
+			return emitCommand(deps, flags, app.Result{}, err)
+		}
+		return emitCall(deps, flags, func() (app.Result, error) {
+			return service.ProviderUpdate(cmd.Context(), args[0], body, updateDryRun, connectionOptions(flags))
+		})
+	}}
+	update.Flags().StringVar(&updateFile, "file", "", "JSON/YAML 请求体文件，使用 - 从 stdin 读取")
+	update.Flags().BoolVar(&updateDryRun, "dry-run", false, "只检查前置条件，不写入")
+	command.AddCommand(update)
+	var deleteYes, deleteDryRun bool
+	deleteCommand := &cobra.Command{Use: "delete <uuid>", Short: "删除 Provider", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		return emitCall(deps, flags, func() (app.Result, error) {
+			return service.ProviderDelete(cmd.Context(), args[0], deleteYes, deleteDryRun, connectionOptions(flags))
+		})
+	}}
+	deleteCommand.Flags().BoolVar(&deleteYes, "yes", false, "确认删除")
+	deleteCommand.Flags().BoolVar(&deleteDryRun, "dry-run", false, "只检查前置条件，不删除")
+	command.AddCommand(deleteCommand)
+	var scanType string
+	var scanDryRun bool
+	scan := &cobra.Command{Use: "scan-models <uuid>", Short: "扫描 Provider 模型", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		return emitCall(deps, flags, func() (app.Result, error) {
+			return service.ProviderScanModels(cmd.Context(), args[0], strings.ToLower(strings.TrimSpace(scanType)), scanDryRun, connectionOptions(flags))
+		})
+	}}
+	scan.Flags().StringVar(&scanType, "type", "", "模型类型：llm、embedding 或 rerank")
+	scan.Flags().BoolVar(&scanDryRun, "dry-run", false, "只检查前置条件，不调用服务")
+	command.AddCommand(scan)
+	return command
+}
+
+func newModelCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
+	command := &cobra.Command{Use: "model", Short: "管理 Model", Args: cobra.NoArgs}
+	var listType, providerUUID string
+	list := &cobra.Command{Use: "list", Short: "列出 Model", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+		return emitCall(deps, flags, func() (app.Result, error) {
+			return service.ModelList(cmd.Context(), strings.ToLower(strings.TrimSpace(listType)), providerUUID, connectionOptions(flags))
+		})
+	}}
+	list.Flags().StringVar(&listType, "type", "", "模型类型：llm、embedding 或 rerank；不指定时聚合全部类型")
+	list.Flags().StringVar(&providerUUID, "provider", "", "按 Provider UUID 筛选")
+	command.AddCommand(list)
+	var getType string
+	get := &cobra.Command{Use: "get <uuid>", Short: "读取 Model", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		if strings.TrimSpace(getType) == "" {
+			return emitCommand(deps, flags, app.Result{}, result.New("input", "model get 必须指定 --type"))
+		}
+		return emitCall(deps, flags, func() (app.Result, error) {
+			return service.ModelGet(cmd.Context(), strings.ToLower(strings.TrimSpace(getType)), args[0], connectionOptions(flags))
+		})
+	}}
+	get.Flags().StringVar(&getType, "type", "", "模型类型：llm、embedding 或 rerank（必填）")
+	command.AddCommand(get)
+	var createType, createFile string
+	var createDryRun bool
+	create := &cobra.Command{Use: "create", Short: "创建 Model", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+		if strings.TrimSpace(createType) == "" {
+			return emitCommand(deps, flags, app.Result{}, result.New("input", "model create 必须指定 --type"))
+		}
+		body, err := loadRequestBody(cmd.Context(), createFile, flags.apiKeyStdin, deps.In)
+		if err != nil {
+			return emitCommand(deps, flags, app.Result{}, err)
+		}
+		return emitCall(deps, flags, func() (app.Result, error) {
+			return service.ModelCreate(cmd.Context(), strings.ToLower(strings.TrimSpace(createType)), body, createDryRun, connectionOptions(flags))
+		})
+	}}
+	create.Flags().StringVar(&createType, "type", "", "模型类型：llm、embedding 或 rerank（必填）")
+	create.Flags().StringVar(&createFile, "file", "", "JSON/YAML 请求体文件，使用 - 从 stdin 读取")
+	create.Flags().BoolVar(&createDryRun, "dry-run", false, "只检查前置条件，不写入")
+	command.AddCommand(create)
+	var updateType, updateFile string
+	var updateDryRun bool
+	update := &cobra.Command{Use: "update <uuid>", Short: "更新 Model", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		if strings.TrimSpace(updateType) == "" {
+			return emitCommand(deps, flags, app.Result{}, result.New("input", "model update 必须指定 --type"))
+		}
+		body, err := loadRequestBody(cmd.Context(), updateFile, flags.apiKeyStdin, deps.In)
+		if err != nil {
+			return emitCommand(deps, flags, app.Result{}, err)
+		}
+		return emitCall(deps, flags, func() (app.Result, error) {
+			return service.ModelUpdate(cmd.Context(), strings.ToLower(strings.TrimSpace(updateType)), args[0], body, updateDryRun, connectionOptions(flags))
+		})
+	}}
+	update.Flags().StringVar(&updateType, "type", "", "模型类型：llm、embedding 或 rerank（必填）")
+	update.Flags().StringVar(&updateFile, "file", "", "JSON/YAML 请求体文件，使用 - 从 stdin 读取")
+	update.Flags().BoolVar(&updateDryRun, "dry-run", false, "只检查前置条件，不写入")
+	command.AddCommand(update)
+	var deleteType string
+	var deleteYes, deleteDryRun bool
+	deleteCommand := &cobra.Command{Use: "delete <uuid>", Short: "删除 Model", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		if strings.TrimSpace(deleteType) == "" {
+			return emitCommand(deps, flags, app.Result{}, result.New("input", "model delete 必须指定 --type"))
+		}
+		return emitCall(deps, flags, func() (app.Result, error) {
+			return service.ModelDelete(cmd.Context(), strings.ToLower(strings.TrimSpace(deleteType)), args[0], deleteYes, deleteDryRun, connectionOptions(flags))
+		})
+	}}
+	deleteCommand.Flags().StringVar(&deleteType, "type", "", "模型类型：llm、embedding 或 rerank（必填）")
+	deleteCommand.Flags().BoolVar(&deleteYes, "yes", false, "确认删除")
+	deleteCommand.Flags().BoolVar(&deleteDryRun, "dry-run", false, "只检查前置条件，不删除")
+	command.AddCommand(deleteCommand)
+	var testType, testFile string
+	var testDryRun bool
+	test := &cobra.Command{Use: "test <uuid>", Short: "测试 Model", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		if strings.TrimSpace(testType) == "" {
+			return emitCommand(deps, flags, app.Result{}, result.New("input", "model test 必须指定 --type"))
+		}
+		body, err := loadOptionalRequestBody(cmd.Context(), testFile, flags.apiKeyStdin, deps.In)
+		if err != nil {
+			return emitCommand(deps, flags, app.Result{}, err)
+		}
+		return emitCall(deps, flags, func() (app.Result, error) {
+			return service.ModelTest(cmd.Context(), strings.ToLower(strings.TrimSpace(testType)), args[0], body, testDryRun, connectionOptions(flags))
+		})
+	}}
+	test.Flags().StringVar(&testType, "type", "", "模型类型：llm、embedding 或 rerank（必填）")
+	test.Flags().StringVar(&testFile, "file", "", "JSON/YAML 请求体文件，使用 - 从 stdin 读取；省略时使用空对象")
+	test.Flags().BoolVar(&testDryRun, "dry-run", false, "只检查前置条件，不调用服务")
+	command.AddCommand(test)
+	return command
 }
 
 func newBotCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {

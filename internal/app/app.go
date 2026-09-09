@@ -2376,6 +2376,11 @@ func (s *Service) connectionWithIdentity(ctx context.Context, options CheckOptio
 
 // WritePreflight 只允许已保存且绑定 Workspace 的命名 context 执行写操作。
 func (s *Service) WritePreflight(ctx context.Context, operation string, options CheckOptions) (WritePreflight, error) {
+	return s.writePreflight(ctx, operation, "resource.manage", options)
+}
+
+// writePreflight 校验写操作所需的权限、能力和连接绑定。
+func (s *Service) writePreflight(ctx context.Context, operation, permission string, options CheckOptions) (WritePreflight, error) {
 	if options.EndpointSet {
 		return WritePreflight{}, result.New("precondition", "写操作不允许使用临时 endpoint")
 	}
@@ -2417,8 +2422,8 @@ func (s *Service) WritePreflight(ctx context.Context, operation string, options 
 	if err := workspaceBindingError(conn, identity); err != nil {
 		return WritePreflight{Connection: conn, Identity: identity}, err
 	}
-	if !hasPermission(identity, "resource.manage") {
-		return WritePreflight{Connection: conn, Identity: identity}, result.New("permission", "当前 API Key 缺少 resource.manage 权限")
+	if permission != "" && !hasPermission(identity, permission) {
+		return WritePreflight{Connection: conn, Identity: identity}, result.New("permission", "当前 API Key 缺少 "+permission+" 权限")
 	}
 	if !hasPermission(identity, "resource.view") {
 		return WritePreflight{Connection: conn, Identity: identity}, result.New("permission", "当前 API Key 缺少写后回读所需的 resource.view 权限")
@@ -2453,6 +2458,16 @@ func readbackCapability(operation string) string {
 		return "mcp_server.get"
 	case operation == "plugin.config.update":
 		return "plugin.config.get"
+	case operation == "provider.create" || operation == "provider.update" || operation == "provider.delete":
+		return "provider.get"
+	case operation == "provider.scan_models":
+		return "provider.get"
+	case strings.HasPrefix(operation, "model.") && (strings.HasSuffix(operation, ".create") || strings.HasSuffix(operation, ".update") || strings.HasSuffix(operation, ".delete")):
+		modelType := strings.Split(operation, ".")[1]
+		return "model." + modelType + ".get"
+	case strings.HasPrefix(operation, "model.") && strings.HasSuffix(operation, ".test"):
+		modelType := strings.Split(operation, ".")[1]
+		return "model." + modelType + ".get"
 	case operation == "plugin.delete":
 		return "plugin.get"
 	case operation == "skill.files.write":
