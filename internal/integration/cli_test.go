@@ -55,7 +55,7 @@ func invokeRawLookupContext(ctx context.Context, path string, env map[string]str
 }
 
 func invoke(path string, env map[string]string, in io.Reader, args ...string) (int, string, string, error) {
-	code, out, diagnostic, err := invokeRaw(path, env, in, args...)
+	code, out, diagnostic, err := invokeRaw(path, env, in, prependJSONOutput(args)...)
 	if err != nil {
 		return code, out, diagnostic, err
 	}
@@ -64,6 +64,10 @@ func invoke(path string, env map[string]string, in io.Reader, args ...string) (i
 		return code, out, diagnostic, fmt.Errorf("command did not return one JSON result: %w", err)
 	}
 	return code, out, diagnostic, nil
+}
+
+func prependJSONOutput(args []string) []string {
+	return append([]string{"--output", "json"}, args...)
 }
 
 func run(t *testing.T, path string, env map[string]string, stdin string, args ...string) execution {
@@ -81,7 +85,7 @@ func run(t *testing.T, path string, env map[string]string, stdin string, args ..
 
 func runLookup(t *testing.T, path string, env map[string]string, lookup func(string) (string, bool), in io.Reader, args ...string) execution {
 	t.Helper()
-	code, out, _, err := invokeRawLookup(path, env, lookup, in, args...)
+	code, out, _, err := invokeRawLookup(path, env, lookup, in, prependJSONOutput(args)...)
 	if err != nil {
 		t.Fatalf("command %v failed to capture result: %v; output %q", args, err, out)
 	}
@@ -261,9 +265,9 @@ func TestInputErrorsNeverMutateOrExposeArguments(t *testing.T) {
 		{"context", "add", "demo", "--endpoint", "http://localhost:5300", "--api-key-env", ""},
 		{"--config=", "context", "list"},
 	} {
-		r := run(t, path, nil, "", args...)
-		if r.code != 2 || r.data["ok"] != false || strings.Contains(r.out, "secret-value") {
-			t.Fatalf("invalid input was accepted or echoed: %v: %s", args, r.out)
+		code, out := runText(t, path, nil, strings.NewReader(""), args...)
+		if code != 2 || !strings.Contains(out, "错误：") || strings.Contains(out, "Type:") || strings.Contains(out, "secret-value") {
+			t.Fatalf("invalid input was accepted or echoed: %v: %s", args, out)
 		}
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {

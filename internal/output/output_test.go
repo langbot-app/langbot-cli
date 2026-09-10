@@ -2,9 +2,13 @@ package output
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
+
+	"go.yaml.in/yaml/v3"
 )
 
 func TestRenderPreservesNumbersAndRedactsSecrets(t *testing.T) {
@@ -55,7 +59,138 @@ func TestRenderPreservesOnlyConfirmedSecretPlaceholders(t *testing.T) {
 	}
 }
 
-func TestRenderTableKeepsOverallErrorSeparateFromRows(t *testing.T) {
+func TestRenderHumanVersionAndDetail(t *testing.T) {
+	var out bytes.Buffer
+	version := map[string]any{"ok": true, "data": map[string]any{
+		"version": "v1.0.0", "server_version": "v4.10.10", "server_edition": "community",
+	}}
+	if err := RenderCommand(&out, version, FormatHuman, "version"); err != nil {
+		t.Fatal(err)
+	}
+	if got := out.String(); !strings.Contains(got, "CLI: v1.0.0") || !strings.Contains(got, "Server Version: v4.10.10") || !strings.Contains(got, "Edition: community") {
+		t.Fatalf("unexpected version output: %q", got)
+	}
+
+	out.Reset()
+	detail := map[string]any{"ok": true, "data": map[string]any{
+		"skill": map[string]any{"name": "demo", "instructions": "line 1\nline 2"},
+	}}
+	if err := RenderCommand(&out, detail, FormatHuman, "skill.get"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "Skill:") || !strings.Contains(out.String(), "line 1") || !strings.Contains(out.String(), "line 2") {
+		t.Fatalf("detail output lost readable content: %q", out.String())
+	}
+}
+
+func TestNormalizeFormatRejectsRemovedTableAndEmptyValue(t *testing.T) {
+	for _, format := range []string{"table", ""} {
+		if _, err := NormalizeFormat(format); err == nil {
+			t.Fatalf("NormalizeFormat(%q) unexpectedly succeeded", format)
+		}
+	}
+}
+
+func TestRenderHumanActionKeepsExecutionFacts(t *testing.T) {
+	var out bytes.Buffer
+	value := map[string]any{"ok": false, "data": map[string]any{
+		"operation": "skill.install.upload", "skill_name": "demo", "file": "skill.zip",
+		"task_id": "42", "step": "install_unknown", "submitted": "unknown", "verified": false,
+		"result": map[string]any{"message": "partial"},
+	}, "error": map[string]any{"type": "result_unknown", "message": "结果无法确认"}}
+	if err := RenderCommand(&out, value, FormatHuman, "skill.install.upload"); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"错误：结果无法确认", "skill.install.upload", "skill.zip", "42", "install_unknown", "unknown", "false", "partial"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("human action output omitted %q: %s", want, out.String())
+		}
+	}
+	if strings.Contains(strings.ToLower(out.String()), "progress") || strings.Contains(out.String(), "%") {
+		t.Fatalf("human action output invented progress: %s", out.String())
+	}
+}
+
+func TestRenderHumanPreservesFileContentChecksAndModelGroups(t *testing.T) {
+	var out bytes.Buffer
+	file := map[string]any{"ok": true, "data": map[string]any{"path": "README.md", "content": "line 1\nline 2"}}
+	if err := RenderCommand(&out, file, FormatHuman, "skill.file.read"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "line 1") || !strings.Contains(out.String(), "line 2") || strings.Contains(out.String(), `line 1\nline 2`) {
+		t.Fatalf("file content was not readable: %q", out.String())
+	}
+
+	out.Reset()
+	checks := map[string]any{"ok": true, "data": map[string]any{"checks": []any{
+		map[string]any{"context": "alpha", "reachable": true, "diagnostic_ok": true},
+		map[string]any{"context": "beta", "reachable": false, "diagnostic_ok": false, "error": map[string]any{"type": "network", "message": "offline"}},
+	}}}
+	if err := RenderCommand(&out, checks, FormatHuman, "context.check"); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"alpha", "beta", "network", "offline", "false"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("check output omitted %q: %s", want, out.String())
+		}
+	}
+
+	out.Reset()
+	models := map[string]any{"ok": true, "data": map[string]any{"models": map[string]any{
+		"llm":       []any{map[string]any{"uuid": "llm-full-uuid", "name": "chat"}},
+		"embedding": []any{}, "rerank": []any{map[string]any{"uuid": "rerank-full-uuid", "name": "rank"}},
+	}}}
+	if err := RenderCommand(&out, models, FormatHuman, "model.list"); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"llm", "embedding", "rerank", "llm-full-uuid", "rerank-full-uuid"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("model group output omitted %q: %s", want, out.String())
+		}
+	}
+}
+
+func TestMachineJSONAndYAMLRoundTripSameSafeData(t *testing.T) {
+	value := map[string]any{"ok": true, "data": map[string]any{
+		"uuid": "full-resource-uuid", "name": "line\nname", "enabled": false,
+		"api_key": "secret-value", "items": []any{"one", "two"},
+	}}
+	var jsonOut, yamlOut bytes.Buffer
+	if err := Render(&jsonOut, value, FormatJSON); err != nil {
+		t.Fatal(err)
+	}
+	if err := Render(&yamlOut, value, FormatYAML); err != nil {
+		t.Fatal(err)
+	}
+	var fromJSON, fromYAML map[string]any
+	if err := json.Unmarshal(jsonOut.Bytes(), &fromJSON); err != nil {
+		t.Fatal(err)
+	}
+	if err := yaml.Unmarshal(yamlOut.Bytes(), &fromYAML); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(fromJSON, fromYAML) {
+		t.Fatalf("JSON and YAML safe data differ: json=%#v yaml=%#v", fromJSON, fromYAML)
+	}
+	if strings.Contains(jsonOut.String(), "secret-value") || strings.Contains(yamlOut.String(), "secret-value") || !strings.Contains(jsonOut.String(), "full-resource-uuid") {
+		t.Fatalf("machine output lost redaction or full UUID: json=%s yaml=%s", jsonOut.String(), yamlOut.String())
+	}
+}
+
+func TestRenderHumanEscapesControlsAndSecrets(t *testing.T) {
+	var out bytes.Buffer
+	value := map[string]any{"ok": true, "data": map[string]any{
+		"name": "visible\x1b[31m\tvalue", "password": "secret-value",
+	}}
+	if err := RenderCommand(&out, value, FormatHuman, "plugin.config.get"); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.String(), "secret-value") || !strings.Contains(out.String(), "\\u001b") || !strings.Contains(out.String(), "\\t") {
+		t.Fatalf("human output leaked secret or controls: %q", out.String())
+	}
+}
+
+func TestRenderHumanKeepsOverallErrorSeparateFromRows(t *testing.T) {
 	var out bytes.Buffer
 	value := map[string]any{
 		"ok": false,
@@ -68,7 +203,7 @@ func TestRenderTableKeepsOverallErrorSeparateFromRows(t *testing.T) {
 		"error": map[string]any{"type": "permission", "message": "检查失败"},
 		"meta":  map[string]any{"endpoint": "https://example.test"},
 	}
-	if err := Render(&out, value, FormatTable); err != nil {
+	if err := RenderCommand(&out, value, FormatHuman, "context.check"); err != nil {
 		t.Fatal(err)
 	}
 	lines := strings.Split(out.String(), "\n")
@@ -77,14 +212,82 @@ func TestRenderTableKeepsOverallErrorSeparateFromRows(t *testing.T) {
 			t.Fatalf("overall error was attached to a successful row: %s", line)
 		}
 	}
-	for _, want := range []string{"ok", "error", "meta", "checks", "alpha", "beta", "permission", "endpoint"} {
+	for _, want := range []string{"错误：检查失败", "Checks:", "alpha", "beta"} {
 		if !strings.Contains(out.String(), want) {
-			t.Fatalf("table output omitted %q: %s", want, out.String())
+			t.Fatalf("human output omitted %q: %s", want, out.String())
 		}
+	}
+	if strings.Contains(out.String(), "Type:") || strings.Contains(out.String(), "permission") {
+		t.Fatalf("human output exposed machine error fields: %s", out.String())
 	}
 }
 
-func TestRenderTableSupportsResourceLists(t *testing.T) {
+func TestRenderHumanErrorKeepsUsefulDiagnostics(t *testing.T) {
+	var out bytes.Buffer
+	value := map[string]any{
+		"ok": false,
+		"error": map[string]any{
+			"type": "server", "message": "请求失败", "http_status": 503,
+			"server_code": "UPSTREAM_BUSY", "request_id": "request-a",
+		},
+	}
+	if err := RenderCommand(&out, value, FormatHuman, "status"); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"错误：请求失败", "HTTP 状态：503", "服务端错误码：UPSTREAM_BUSY", "请求 ID：request-a"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("human error omitted %q: %s", want, out.String())
+		}
+	}
+	if strings.Contains(out.String(), "Type:") || strings.Contains(out.String(), "server\n") {
+		t.Fatalf("human error exposed machine type: %s", out.String())
+	}
+}
+
+func TestRenderHumanTargetIsConcise(t *testing.T) {
+	var out bytes.Buffer
+	value := map[string]any{
+		"ok":    false,
+		"error": map[string]any{"type": "not_found", "message": "服务返回 HTTP 404", "http_status": 404},
+		"meta": map[string]any{
+			"context": "production", "endpoint": "https://cloud.langbot.app",
+			"credential_source": "env:LANGBOT_PRODUCTION_API_KEY",
+		},
+	}
+	if err := RenderCommand(&out, value, FormatHuman, "whoami"); err != nil {
+		t.Fatal(err)
+	}
+	if out.String() != "错误：服务返回 HTTP 404\n目标：production (https://cloud.langbot.app)\n" {
+		t.Fatalf("human target/error output is not concise: %q", out.String())
+	}
+}
+
+func TestRenderHumanSummarizesSingleContextCheck(t *testing.T) {
+	var out bytes.Buffer
+	value := map[string]any{
+		"ok": true,
+		"data": map[string]any{
+			"reachable": true, "diagnostic_ok": true, "server_version": "v4.10.10", "server_edition": "cloud",
+			"identity": map[string]any{
+				"instance_uuid": "instance-a", "workspace_uuid": "workspace-a", "api_key_id": "key-a",
+				"permissions": []any{"resource.view", "resource.manage"},
+			},
+		},
+	}
+	if err := RenderCommand(&out, value, FormatHuman, "context.check"); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Reachable: true", "Server Version: v4.10.10", "Instance: instance-a", "Workspace: workspace-a", "API Key ID: key-a"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("single check output omitted %q: %s", want, out.String())
+		}
+	}
+	if strings.Contains(out.String(), "resource.manage") {
+		t.Fatalf("single check output is not concise: %s", out.String())
+	}
+}
+
+func TestRenderHumanSupportsResourceLists(t *testing.T) {
 	var out bytes.Buffer
 	value := map[string]any{
 		"ok": true,
@@ -98,30 +301,43 @@ func TestRenderTableSupportsResourceLists(t *testing.T) {
 			},
 		},
 	}
-	if err := Render(&out, value, FormatTable); err != nil {
+	if err := RenderCommand(&out, value, FormatHuman, "bot.list"); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), "bots") || !strings.Contains(out.String(), "bot-a") {
-		t.Fatalf("resource table omitted list rows: %s", out.String())
+	if !strings.Contains(out.String(), "Bots:") || !strings.Contains(out.String(), "bot-a") {
+		t.Fatalf("resource human output omitted list rows: %s", out.String())
 	}
 	if strings.Contains(out.String(), "bot-secret") {
 		t.Fatalf("resource table exposed sensitive configuration: %s", out.String())
 	}
 }
 
-func TestRenderTableSupportsManagedResourceLists(t *testing.T) {
+func TestRenderHumanSupportsManagedResourceLists(t *testing.T) {
+	commands := map[string]string{
+		"tasks": "task.list", "bases": "knowledge-base.list", "files": "knowledge-base.file.list",
+		"servers": "mcp-server.list", "plugins": "plugin.list", "skills": "skill.list",
+	}
 	for _, key := range []string{"tasks", "bases", "files", "servers", "plugins", "skills"} {
 		t.Run(key, func(t *testing.T) {
 			var out bytes.Buffer
-			value := map[string]any{
-				"ok":   true,
-				"data": map[string]any{key: []any{map[string]any{"uuid": "resource-a", "name": "Resource A"}}},
+			item := map[string]any{"name": "Resource A"}
+			expected := "Resource A"
+			switch key {
+			case "tasks":
+				item, expected = map[string]any{"id": "resource-a", "task_type": "extension-operation", "status": "running"}, "resource-a"
+			case "files":
+				item, expected = map[string]any{"uuid": "resource-a", "file_name": "document.pdf", "status": "completed"}, "document.pdf"
+			case "plugins":
+				item = map[string]any{"author": "author-a", "name": "Resource A"}
 			}
-			if err := Render(&out, value, FormatTable); err != nil {
+			value := map[string]any{
+				"ok": true, "data": map[string]any{key: []any{item}},
+			}
+			if err := RenderCommand(&out, value, FormatHuman, commands[key]); err != nil {
 				t.Fatal(err)
 			}
-			if !strings.Contains(out.String(), key) || !strings.Contains(out.String(), "resource-a") {
-				t.Fatalf("table output omitted %s rows: %s", key, out.String())
+			if !strings.Contains(out.String(), expected) {
+				t.Fatalf("human output omitted %s rows: %s", key, out.String())
 			}
 		})
 	}

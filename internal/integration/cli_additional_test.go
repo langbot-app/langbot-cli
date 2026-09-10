@@ -121,7 +121,7 @@ func TestCheckAllUsesBoundedConcurrentIndependentTimeouts(t *testing.T) {
 func TestOutputFormatsAndBusinessErrorExit(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	requireSuccess(t, run(t, path, nil, "", "context", "add", "demo", "--endpoint", "http://127.0.0.1:5300"))
-	for _, format := range []string{"json", "yaml", "table"} {
+	for _, format := range []string{"json", "yaml"} {
 		code, out := runText(t, path, nil, strings.NewReader(""), "--output", format, "context", "list")
 		if code != 0 || !strings.Contains(out, "demo") {
 			t.Fatalf("format %s did not render a successful result: code=%d output=%q", format, code, out)
@@ -129,9 +129,13 @@ func TestOutputFormatsAndBusinessErrorExit(t *testing.T) {
 		if format == "yaml" && !strings.Contains(out, "ok: true") {
 			t.Fatalf("yaml output is not an envelope: %q", out)
 		}
-		if format == "table" && !strings.Contains(out, "contexts") {
-			t.Fatalf("table output has no context column: %q", out)
-		}
+	}
+	code, out := runText(t, path, nil, strings.NewReader(""), "context", "list")
+	if code != 0 || !strings.Contains(out, "Contexts:") || !strings.Contains(out, "demo") {
+		t.Fatalf("default human output is not concise context list: code=%d output=%q", code, out)
+	}
+	if code, out := runText(t, path, nil, strings.NewReader(""), "--output", "table", "context", "list"); code != 2 || !strings.Contains(out, "输出格式无效") {
+		t.Fatalf("table output was not rejected: code=%d output=%q", code, out)
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -153,7 +157,7 @@ func TestOutputFormatsAndBusinessErrorExit(t *testing.T) {
 func TestOfflineVersionAndHelpDoNotReadConfig(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "does-not-exist", "config.yaml")
 	code, out := runText(t, path, nil, strings.NewReader(""), "version")
-	if code != 0 || !strings.Contains(out, `"version": "test"`) {
+	if code != 0 || strings.TrimSpace(out) != "test" {
 		t.Fatalf("offline version unexpectedly needed config: code=%d output=%q", code, out)
 	}
 	code, out = runText(t, path, nil, strings.NewReader(""), "help")
