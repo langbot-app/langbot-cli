@@ -10,7 +10,17 @@ LangBot 的独立命令行工具，二进制名为 `lbctl`。它通过 HTTP 管�
 
 服务端未声明某项 capability 时，`lbctl` 会拒绝执行该操作。
 
-## 构建
+## 安装
+
+macOS、Linux 或 Windows Git Bash：
+
+```sh
+curl -fsSL https://github.com/langbot-app/langbot-cli/releases/latest/download/install.sh | sh
+```
+
+安装脚本会自动选择当前平台的二进制并校验 SHA-256，默认安装到 `~/.local/bin`。
+
+## 源码构建
 
 ```sh
 make build
@@ -54,7 +64,7 @@ lbctl capabilities
 lbctl context add dev --endpoint http://localhost:5300 \
   --api-key-env LANGBOT_DEV_API_KEY \
   --expect-workspace '<workspace_uuid>'
-lbctl context list -o table
+lbctl context list
 lbctl context show production
 lbctl context check --all
 lbctl --context dev whoami
@@ -211,7 +221,7 @@ Provider/Model 管理、安装、测试和其他敏感操作必须使用专用�
 
 ## 输出与检查
 
-默认输出 JSON，也支持 `-o table` 和 `-o yaml`。成功和错误结果写入 stdout，诊断信息写入 stderr。
+默认输出便于人工阅读的简洁视图；自动化可使用 `-o json` 或 `-o yaml` 获取完整结构化结果。成功和错误结果写入 stdout，诊断信息写入 stderr。
 
 | 退出码 | 含义 |
 |---|---|
