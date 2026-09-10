@@ -93,7 +93,9 @@ type schemaCommand struct {
 	SupportsDryRun        bool              `json:"supports_dry_run"`
 	SupportsWait          bool              `json:"supports_wait"`
 	InputConflicts        []schemaConflict  `json:"input_conflicts,omitempty"`
-	OutputEnvelope        string            `json:"output_envelope"`
+	DefaultOutput         string            `json:"default_output"`
+	MachineOutputs        []string          `json:"machine_outputs"`
+	OutputEnvelope        string            `json:"output_envelope,omitempty"`
 }
 
 type schemaArguments struct {
@@ -118,6 +120,7 @@ type schemaFlag struct {
 	Scope         string                   `json:"scope"`
 	Usage         string                   `json:"usage,omitempty"`
 	Applicability *schemaFlagApplicability `json:"applicability,omitempty"`
+	Enum          []string                 `json:"enum,omitempty"`
 }
 
 var placeholderPattern = regexp.MustCompile(`(<[^>]+>|\[[^]]+\])`)
@@ -478,10 +481,39 @@ func collectSchemaCommands(parent *cobra.Command, prefix []string, result *[]sch
 			SupportsDryRun:        meta.SupportsDryRun,
 			SupportsWait:          meta.SupportsWait,
 			InputConflicts:        schemaInputConflicts(meta, schemaFlagsFor(child, meta)),
-			OutputEnvelope:        "result-envelope",
+			DefaultOutput:         defaultOutputFor(child),
+			MachineOutputs:        machineOutputsFor(child),
+			OutputEnvelope:        outputEnvelopeFor(child),
 		})
 		collectSchemaCommands(child, path, result)
 	}
+}
+
+func defaultOutputFor(command *cobra.Command) string {
+	if !command.Runnable() {
+		return "help"
+	}
+	if strings.HasPrefix(commandPath(command), "completion.") {
+		return "shell"
+	}
+	if commandPath(command) == "schema" {
+		return "json"
+	}
+	return "human"
+}
+
+func machineOutputsFor(command *cobra.Command) []string {
+	if defaultOutputFor(command) == "help" || defaultOutputFor(command) == "shell" {
+		return []string{}
+	}
+	return []string{"json", "yaml"}
+}
+
+func outputEnvelopeFor(command *cobra.Command) string {
+	if len(machineOutputsFor(command)) == 0 {
+		return ""
+	}
+	return "result-envelope"
 }
 
 func validateSchemaMetadata(root *cobra.Command) error {
@@ -585,6 +617,10 @@ func schemaFlagsFor(command *cobra.Command, meta schemaCommandMeta) []schemaFlag
 			schemaFlagValue := schemaFlag{
 				Name: flag.Name, Shorthand: flag.Shorthand, Type: flag.Value.Type(),
 				Default: parseDefault(flag), Required: meta.RequiredFlags[flag.Name], Scope: scope, Usage: flag.Usage,
+			}
+			if flag.Name == "output" {
+				schemaFlagValue.Default = nil
+				schemaFlagValue.Enum = []string{"json", "yaml", "yml"}
 			}
 			if applicability, ok := meta.FlagApplicability[flag.Name]; ok {
 				value := applicability

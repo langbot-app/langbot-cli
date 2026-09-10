@@ -39,6 +39,8 @@ type globalFlags struct {
 	timeout     string
 	apiKeyStdin bool
 	output      string
+	outputSet   bool
+	commandPath string
 	contextSet  bool
 	endpointSet bool
 	timeoutSet  bool
@@ -47,7 +49,7 @@ type globalFlags struct {
 
 func Execute(ctx context.Context, args []string, deps Dependencies) int {
 	deps = normalizeDependencies(deps)
-	flags := &globalFlags{output: output.FormatJSON}
+	flags := &globalFlags{}
 	service := app.New(app.Dependencies{
 		In: deps.In, LookupEnv: deps.LookupEnv, DefaultConfigPath: func() (string, error) {
 			if flags.config != "" {
@@ -59,12 +61,14 @@ func Execute(ctx context.Context, args []string, deps Dependencies) int {
 	})
 	root := newRoot(deps, flags, service)
 	root.SetArgs(args)
-	if err := root.ExecuteContext(ctx); err != nil {
+	executed, err := root.ExecuteContextC(ctx)
+	if err != nil {
+		selectOutput(executed, flags)
 		var typed *result.Error
 		if !errors.As(err, &typed) {
-			err = result.New("input", "参数无效，请使用 --help 查看用法")
+			err = result.New("input", "参数无效；请运行 lbctl --help 查看用法")
 		}
-		return emit(deps, flags.output, app.Result{}, err)
+		return emit(deps, flags, app.Result{}, err)
 	}
 	return flags.exitCode
 }
@@ -97,7 +101,7 @@ func newRoot(deps Dependencies, flags *globalFlags, service *app.Service) *cobra
 		Args:          cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 0 {
-				return result.New("input", "未知命令或参数，请使用 --help 查看用法")
+				return result.New("input", "未知命令或参数；请运行 lbctl --help 查看可用命令")
 			}
 			return cmd.Help()
 		},
@@ -105,7 +109,7 @@ func newRoot(deps Dependencies, flags *globalFlags, service *app.Service) *cobra
 	root.SetOut(deps.Out)
 	root.SetErr(deps.Err)
 	root.SetFlagErrorFunc(func(*cobra.Command, error) error {
-		return result.New("input", "参数无效，请使用 --help 查看用法")
+		return result.New("input", "参数无效；请运行 lbctl --help 查看用法")
 	})
 	persistent := root.PersistentFlags()
 	persistent.StringVar(&flags.config, "config", "", "配置文件路径")
@@ -113,8 +117,9 @@ func newRoot(deps Dependencies, flags *globalFlags, service *app.Service) *cobra
 	persistent.StringVar(&flags.endpoint, "endpoint", "", "临时服务地址")
 	persistent.StringVar(&flags.timeout, "timeout", "", "请求超时时间")
 	persistent.BoolVar(&flags.apiKeyStdin, "api-key-stdin", false, "从 stdin 读取本次请求的 API Key")
-	persistent.StringVarP(&flags.output, "output", "o", output.FormatJSON, "输出格式：json、table 或 yaml")
+	persistent.StringVarP(&flags.output, "output", "o", "", "输出格式：json 或 yaml；默认简洁模式（schema 默认 JSON）")
 	root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
+		selectOutput(cmd, flags)
 		flags.configSet = cmd.InheritedFlags().Changed("config")
 		if flags.configSet && strings.TrimSpace(flags.config) == "" {
 			return result.New("input", "config 不能为空")
@@ -122,8 +127,10 @@ func newRoot(deps Dependencies, flags *globalFlags, service *app.Service) *cobra
 		flags.contextSet = cmd.InheritedFlags().Changed("context")
 		flags.endpointSet = cmd.InheritedFlags().Changed("endpoint")
 		flags.timeoutSet = cmd.InheritedFlags().Changed("timeout")
-		if _, err := output.NormalizeFormat(flags.output); err != nil {
-			return result.New("input", "输出格式无效，请使用 json、table 或 yaml")
+		if flags.outputSet {
+			if _, err := output.NormalizeFormat(flags.output); err != nil {
+				return result.New("input", "输出格式无效，请使用 json 或 yaml")
+			}
 		}
 		return nil
 	}
@@ -1272,7 +1279,7 @@ func newIdentityCommand(service *app.Service, deps Dependencies, flags *globalFl
 }
 
 func emitCommand(deps Dependencies, flags *globalFlags, value app.Result, err error) error {
-	flags.exitCode = emit(deps, flags.output, value, err)
+	flags.exitCode = emit(deps, flags, value, err)
 	return nil
 }
 
@@ -1281,19 +1288,38 @@ func emitCall(deps Dependencies, flags *globalFlags, call func() (app.Result, er
 	return emitCommand(deps, flags, value, err)
 }
 
-func emit(deps Dependencies, format string, value app.Result, callErr error) int {
-	if _, err := output.NormalizeFormat(format); err != nil {
+func emit(deps Dependencies, flags *globalFlags, value app.Result, callErr error) int {
+	format := output.FormatHuman
+	if flags.outputSet {
+		if normalized, err := output.NormalizeFormat(flags.output); err == nil {
+			format = normalized
+		}
+	} else if flags.commandPath == "schema" {
 		format = output.FormatJSON
 	}
 	envelope := result.Envelope{OK: callErr == nil, Data: value.Data, Meta: value.Meta}
 	if callErr != nil {
 		envelope.Error = result.AsError(callErr)
 	}
-	if err := output.Render(deps.Out, envelope, format); err != nil {
+	if err := output.RenderCommand(deps.Out, envelope, format, flags.commandPath); err != nil {
 		fmt.Fprintln(deps.Err, "输出失败")
 		return 10
 	}
 	return result.ExitCode(callErr)
+}
+
+func commandPath(cmd *cobra.Command) string {
+	path := strings.TrimSpace(cmd.CommandPath())
+	path = strings.TrimPrefix(path, "lbctl ")
+	return strings.ReplaceAll(path, " ", ".")
+}
+
+func selectOutput(cmd *cobra.Command, flags *globalFlags) {
+	if cmd == nil {
+		return
+	}
+	flags.commandPath = commandPath(cmd)
+	flags.outputSet = cmd.Flags().Changed("output")
 }
 
 func rejectCredentialInput(flags *globalFlags) error {

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -46,11 +47,18 @@ func TestSchemaIsOfflineStableAndDescribesCommands(t *testing.T) {
 		}
 	}
 	create := commands["bot.create"]
+	if create.DefaultOutput != "human" || !containsString(create.MachineOutputs, "json") || !containsString(create.MachineOutputs, "yaml") {
+		t.Fatalf("resource output contract is inaccurate: %#v", create)
+	}
 	if !create.Mutating || !create.RequiresConnection || !create.RequiresSavedContext || !create.SupportsDryRun || create.RequiresYes {
 		t.Fatalf("unexpected bot.create metadata: %#v", create)
 	}
 	if !hasFlag(create.Flags, "file", "local", true) || !hasFlag(create.Flags, "dry-run", "local", false) || !hasFlag(create.Flags, "output", "inherited", false) {
 		t.Fatalf("bot.create flags are incomplete: %#v", create.Flags)
+	}
+	outputFlag, ok := findFlag(create.Flags, "output")
+	if !ok || outputFlag.Default != nil || !reflect.DeepEqual(outputFlag.Enum, []string{"json", "yaml", "yml"}) {
+		t.Fatalf("output flag schema is inaccurate: %#v", outputFlag)
 	}
 	if len(create.InputConflicts) != 1 || !hasConflictOperand(create.InputConflicts[0].Operands, "api-key-stdin", true) || !hasConflictOperand(create.InputConflicts[0].Operands, "file", "-") {
 		t.Fatalf("stdin conflict is missing: %#v", create.InputConflicts)
@@ -109,8 +117,18 @@ func TestSchemaIsOfflineStableAndDescribesCommands(t *testing.T) {
 		t.Fatalf("context.list applicability is inaccurate: %#v", contextList)
 	}
 	version := commands["version"]
+	if version.DefaultOutput != "human" {
+		t.Fatalf("version default output = %q, want human", version.DefaultOutput)
+	}
 	if !isConditional(version.Flags, "endpoint", "server", true) || !isConditional(version.Flags, "api-key-stdin", "server", true) {
 		t.Fatalf("version applicability is inaccurate: %#v", version)
+	}
+	if commands["schema"].DefaultOutput != "json" || commands["schema"].OutputEnvelope != "result-envelope" {
+		t.Fatalf("schema output contract is inaccurate: %#v", commands["schema"])
+	}
+	completion := commands["completion.bash"]
+	if completion.DefaultOutput != "shell" || len(completion.MachineOutputs) != 0 || completion.OutputEnvelope != "" {
+		t.Fatalf("completion output contract is inaccurate: %#v", completion)
 	}
 	if !isRejected(commands["raw"].Flags, "file") {
 		t.Fatalf("raw file flag must be rejected: %#v", commands["raw"].Flags)
@@ -123,6 +141,15 @@ func TestSchemaIsOfflineStableAndDescribesCommands(t *testing.T) {
 	if len(check.InputConflicts) != 4 || !hasConflictOperand(check.InputConflicts[0].Operands, "all", true) || !hasConflictArgument(check.InputConflicts[3].Operands, "name") {
 		t.Fatalf("context.check conflicts are incomplete: %#v", check.InputConflicts)
 	}
+}
+
+func containsString(values []string, expected string) bool {
+	for _, value := range values {
+		if value == expected {
+			return true
+		}
+	}
+	return false
 }
 
 func TestSchemaCommandFilterAndUnknownCommand(t *testing.T) {
@@ -199,6 +226,15 @@ func hasFlag(flags []schemaFlag, name, scope string, required bool) bool {
 		}
 	}
 	return false
+}
+
+func findFlag(flags []schemaFlag, name string) (schemaFlag, bool) {
+	for _, flag := range flags {
+		if flag.Name == name {
+			return flag, true
+		}
+	}
+	return schemaFlag{}, false
 }
 
 func isRejected(flags []schemaFlag, name string) bool {
