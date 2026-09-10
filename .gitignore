@@ -1,4 +1,5 @@
 .*/
+!/.github/
 /bin/
 /dist/
 /docs/
