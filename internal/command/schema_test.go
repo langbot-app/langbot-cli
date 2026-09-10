@@ -1,0 +1,267 @@
+package command
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"strings"
+	"testing"
+)
+
+type schemaEnvelope struct {
+	OK    bool             `json:"ok"`
+	Data  schemaDocument   `json:"data"`
+	Error *schemaTestError `json:"error"`
+}
+
+type schemaTestError struct {
+	Type string `json:"type"`
+}
+
+func TestSchemaIsOfflineStableAndDescribesCommands(t *testing.T) {
+	first := executeSchemaForTest(t, "schema")
+	second := executeSchemaForTest(t, "schema")
+	if first.code != 0 || second.code != 0 {
+		t.Fatalf("schema exit codes = %d, %d", first.code, second.code)
+	}
+	if first.output != second.output {
+		t.Fatal("schema output is not stable")
+	}
+	var envelope schemaEnvelope
+	if err := json.Unmarshal([]byte(first.output), &envelope); err != nil {
+		t.Fatalf("schema output is not JSON: %v", err)
+	}
+	if !envelope.OK || envelope.Data.SchemaVersion != 1 || envelope.Data.CLIVersion != "test" {
+		t.Fatalf("unexpected schema envelope: %s", first.output)
+	}
+	if envelope.Data.ExitCodes["input"] != 2 || envelope.Data.ExitCodes["network"] != 7 {
+		t.Fatalf("stable exit codes missing: %#v", envelope.Data.ExitCodes)
+	}
+	commands := indexSchemaCommands(envelope.Data.Commands)
+	for _, name := range []string{"bot.create", "bot.delete", "knowledge-base.ingest", "bot.list"} {
+		if _, ok := commands[name]; !ok {
+			t.Fatalf("schema is missing %s", name)
+		}
+	}
+	create := commands["bot.create"]
+	if !create.Mutating || !create.RequiresConnection || !create.RequiresSavedContext || !create.SupportsDryRun || create.RequiresYes {
+		t.Fatalf("unexpected bot.create metadata: %#v", create)
+	}
+	if !hasFlag(create.Flags, "file", "local", true) || !hasFlag(create.Flags, "dry-run", "local", false) || !hasFlag(create.Flags, "output", "inherited", false) {
+		t.Fatalf("bot.create flags are incomplete: %#v", create.Flags)
+	}
+	if len(create.InputConflicts) != 1 || !hasConflictOperand(create.InputConflicts[0].Operands, "api-key-stdin", true) || !hasConflictOperand(create.InputConflicts[0].Operands, "file", "-") {
+		t.Fatalf("stdin conflict is missing: %#v", create.InputConflicts)
+	}
+	deleteCommand := commands["bot.delete"]
+	if !deleteCommand.Destructive || !deleteCommand.RequiresYes || !hasFlag(deleteCommand.Flags, "yes", "local", false) {
+		t.Fatalf("unexpected bot.delete metadata: %#v", deleteCommand)
+	}
+	ingest := commands["knowledge-base.ingest"]
+	if !ingest.Mutating || !ingest.SupportsDryRun || !ingest.SupportsWait || len(ingest.Operations) < 3 {
+		t.Fatalf("knowledge-base.ingest metadata is incomplete: %#v", ingest)
+	}
+	if len(ingest.InputConflicts) != 1 || !hasConflictOperand(ingest.InputConflicts[0].Operands, "dry-run", true) || !hasConflictOperand(ingest.InputConflicts[0].Operands, "wait", true) {
+		t.Fatalf("dry-run and wait conflict is missing: %#v", ingest.InputConflicts)
+	}
+	if !commands["model.create"].OperationTemplateIsModel() {
+		t.Fatalf("model.create must describe its type-dependent operation: %#v", commands["model.create"])
+	}
+	if !hasOperationRole(create.Operations, "bot.get", "readback") || !hasOperationRole(commands["model.test"].Operations, "model.{type}.get", "precondition") || !hasOperationRole(commands["knowledge-base.file.delete"].Operations, "knowledge_base.file.list", "readback") {
+		t.Fatalf("readback operation metadata is incomplete")
+	}
+	if commands["bot.list"].Mutating || len(commands["bot.list"].Operations) != 1 {
+		t.Fatalf("bot.list must be a read operation: %#v", commands["bot.list"])
+	}
+	for _, name := range []string{"status", "context.check", "capabilities"} {
+		if !commands[name].RequiresConnection {
+			t.Fatalf("%s must declare a connection requirement", name)
+		}
+	}
+	if !hasOperationID(commands["status"].Operations, "system.info") || len(commands["status"].Operations) != 1 {
+		t.Fatalf("status operation metadata is inaccurate: %#v", commands["status"].Operations)
+	}
+	if !hasOperationID(commands["context.check"].Operations, "system.info") || !hasOperationID(commands["context.check"].Operations, "system.context") || hasOperationID(commands["context.check"].Operations, "system.capabilities") {
+		t.Fatalf("context.check operation metadata is inaccurate: %#v", commands["context.check"].Operations)
+	}
+	if !hasOperationID(commands["capabilities"].Operations, "system.context") || !hasOperationID(commands["capabilities"].Operations, "system.capabilities") {
+		t.Fatalf("capabilities operation metadata is incomplete: %#v", commands["capabilities"].Operations)
+	}
+	scan := commands["provider.scan-models"]
+	if !scan.SupportsDryRun || !scan.RequiresSavedContext {
+		t.Fatalf("provider scan metadata is inaccurate: %#v", scan)
+	}
+	if !commands["model.test"].Mutating || !commands["model.test"].SupportsDryRun || !commands["model.test"].RequiresSavedContext {
+		t.Fatalf("model test metadata is inaccurate: %#v", commands["model.test"])
+	}
+	if envelope.Data.ExitCodes["server"] != 10 || envelope.Data.ExitCodes["result_unknown"] != 7 || envelope.Data.ExitCodeDescriptions["internal"] == "" {
+		t.Fatalf("error exit code definitions are incomplete: %#v %#v", envelope.Data.ExitCodes, envelope.Data.ExitCodeDescriptions)
+	}
+	for name := range envelope.Data.ExitCodes {
+		if envelope.Data.ExitCodeDescriptions[name] == "" {
+			t.Fatalf("exit code %s is missing a description", name)
+		}
+	}
+	contextList := commands["context.list"]
+	if contextList.RequiresConnection || contextList.RequiresSavedContext || contextList.RequiresWorkspaceBind || !isRejected(contextList.Flags, "api-key-stdin") || !isRejected(contextList.Flags, "endpoint") {
+		t.Fatalf("context.list applicability is inaccurate: %#v", contextList)
+	}
+	version := commands["version"]
+	if !isConditional(version.Flags, "endpoint", "server", true) || !isConditional(version.Flags, "api-key-stdin", "server", true) {
+		t.Fatalf("version applicability is inaccurate: %#v", version)
+	}
+	if !isRejected(commands["raw"].Flags, "file") {
+		t.Fatalf("raw file flag must be rejected: %#v", commands["raw"].Flags)
+	}
+	update := commands["context.update"]
+	if len(update.InputConflicts) != 2 || !hasConflictOperand(update.InputConflicts[0].Operands, "clear-credential", true) || !hasConflictOperand(update.InputConflicts[1].Operands, "clear-binding", true) {
+		t.Fatalf("context.update conflicts are incomplete: %#v", update.InputConflicts)
+	}
+	check := commands["context.check"]
+	if len(check.InputConflicts) != 4 || !hasConflictOperand(check.InputConflicts[0].Operands, "all", true) || !hasConflictArgument(check.InputConflicts[3].Operands, "name") {
+		t.Fatalf("context.check conflicts are incomplete: %#v", check.InputConflicts)
+	}
+}
+
+func TestSchemaCommandFilterAndUnknownCommand(t *testing.T) {
+	filtered := executeSchemaForTest(t, "schema", "--command", "bot.create")
+	if filtered.code != 0 {
+		t.Fatalf("filtered schema exit code = %d: %s", filtered.code, filtered.output)
+	}
+	var envelope schemaEnvelope
+	if err := json.Unmarshal([]byte(filtered.output), &envelope); err != nil {
+		t.Fatalf("filtered schema is not JSON: %v", err)
+	}
+	if len(envelope.Data.Commands) != 1 || envelope.Data.Commands[0].Name != "bot.create" {
+		t.Fatalf("unexpected filtered commands: %#v", envelope.Data.Commands)
+	}
+
+	unknown := executeSchemaForTest(t, "schema", "--command", "bot.missing")
+	if unknown.code != 2 {
+		t.Fatalf("unknown schema command exit code = %d, want 2", unknown.code)
+	}
+	if unknown.output == "" || !strings.Contains(unknown.output, `"type": "input"`) {
+		t.Fatalf("unknown schema command did not return input error: %s", unknown.output)
+	}
+}
+
+func TestSchemaSupportsGlobalOutputFormat(t *testing.T) {
+	run := executeSchemaForTest(t, "--output", "yaml", "schema", "--command", "bot.list")
+	if run.code != 0 || !strings.Contains(run.output, "schema_version: 1\n") || !strings.Contains(run.output, "ok: true\n") {
+		t.Fatalf("unexpected YAML schema output: code=%d output=%s", run.code, run.output)
+	}
+}
+
+type schemaExecution struct {
+	code   int
+	output string
+}
+
+func executeSchemaForTest(t *testing.T, args ...string) schemaExecution {
+	t.Helper()
+	var out, diagnostic bytes.Buffer
+	code := Execute(context.Background(), args, Dependencies{
+		In: &panicReader{}, Out: &out, Err: &diagnostic,
+		LookupEnv:         func(string) (string, bool) { panic("schema read environment") },
+		DefaultConfigPath: func() (string, error) { panic("schema read config") },
+		Transport:         panicRoundTripper{}, Version: "test", Commit: "test", BuildDate: "test",
+	})
+	if diagnostic.Len() != 0 {
+		t.Fatalf("schema wrote diagnostics: %s", diagnostic.String())
+	}
+	return schemaExecution{code: code, output: out.String()}
+}
+
+type panicReader struct{}
+
+func (*panicReader) Read([]byte) (int, error) { panic("schema read stdin") }
+
+type panicRoundTripper struct{}
+
+func (panicRoundTripper) RoundTrip(*http.Request) (*http.Response, error) {
+	panic("schema performed network request")
+}
+
+func indexSchemaCommands(commands []schemaCommand) map[string]schemaCommand {
+	indexed := make(map[string]schemaCommand, len(commands))
+	for _, command := range commands {
+		indexed[command.Name] = command
+	}
+	return indexed
+}
+
+func hasFlag(flags []schemaFlag, name, scope string, required bool) bool {
+	for _, flag := range flags {
+		if flag.Name == name && flag.Scope == scope && flag.Required == required {
+			return true
+		}
+	}
+	return false
+}
+
+func isRejected(flags []schemaFlag, name string) bool {
+	for _, flag := range flags {
+		if flag.Name == name && flag.Applicability != nil && flag.Applicability.Status == "rejected" {
+			return true
+		}
+	}
+	return false
+}
+
+func isConditional(flags []schemaFlag, name, conditionFlag string, conditionValue any) bool {
+	for _, flag := range flags {
+		if flag.Name == name && flag.Applicability != nil && flag.Applicability.Status == "conditional" && flag.Applicability.When != nil && flag.Applicability.When.Flag == conditionFlag && flag.Applicability.When.Equals == conditionValue {
+			return true
+		}
+	}
+	return false
+}
+
+func hasConflictOperand(operands []schemaOperand, name string, equals any) bool {
+	for _, operand := range operands {
+		if operand.Flag == name && operand.Equals == equals {
+			return true
+		}
+	}
+	return false
+}
+
+func hasConflictArgument(operands []schemaOperand, name string) bool {
+	for _, operand := range operands {
+		if operand.Argument == name && operand.Present {
+			return true
+		}
+	}
+	return false
+}
+
+func hasOperationRole(operations []schemaOperation, expected, role string) bool {
+	for _, operation := range operations {
+		if operation.Role == role && (operation.ID == expected || operation.Template == expected) {
+			return true
+		}
+	}
+	return false
+}
+
+func (command schemaCommand) OperationTemplateIsModel() bool {
+	for _, operation := range command.Operations {
+		if operation.Template == "model.{type}.create" && operation.When != nil && operation.When.Flag == "type" && operation.Role == "" {
+			return true
+		}
+	}
+	return false
+}
+
+func hasOperationID(operations []schemaOperation, expected string) bool {
+	for _, operation := range operations {
+		if operation.ID == expected {
+			return true
+		}
+	}
+	return false
+}
+
+var _ io.Reader = (*panicReader)(nil)

@@ -132,6 +132,7 @@ func newRoot(deps Dependencies, flags *globalFlags, service *app.Service) *cobra
 	root.AddCommand(newVersionCommand(service, deps, flags))
 	root.AddCommand(newRawCommand(service, deps, flags))
 	root.AddCommand(newAPICommand(service, deps, flags))
+	root.AddCommand(newSchemaCommand(deps, flags))
 	root.AddCommand(newIdentityCommand(service, deps, flags, "whoami"))
 	root.AddCommand(newIdentityCommand(service, deps, flags, "capabilities"))
 	root.AddCommand(newBotCommand(service, deps, flags))
