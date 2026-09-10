@@ -39,23 +39,22 @@ jobs:
           make cross-build
 
       - name: Package release assets
-        env:
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
         shell: bash
         run: |
           set -euo pipefail
 
-          release_version="${RELEASE_TAG#v}"
           release_dir="dist/release"
           mkdir -p "$release_dir"
 
           for target in darwin_amd64 darwin_arm64 linux_amd64 linux_arm64; do
-            tar -C dist -czf "$release_dir/lbctl_${release_version}_${target}.tar.gz" "lbctl_${target}"
+            cp "dist/lbctl_${target}" "$release_dir/"
           done
-          zip -j "$release_dir/lbctl_${release_version}_windows_amd64.zip" dist/lbctl_windows_amd64.exe
+          cp dist/lbctl_windows_amd64.exe "$release_dir/"
+          cp dist/lbctl_windows_arm64.exe "$release_dir/"
+          cp install.sh "$release_dir/"
 
           cd "$release_dir"
-          sha256sum lbctl_* > checksums.txt
+          sha256sum lbctl_* install.sh > checksums.txt
 
       - name: Upload to GitHub Release
         env:
