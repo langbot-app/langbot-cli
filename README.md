@@ -18,7 +18,13 @@ macOS、Linux 或 Windows Git Bash：
 curl -fsSL https://github.com/langbot-app/langbot-cli/releases/latest/download/install.sh | sh
 ```
 
-安装脚本会自动选择当前平台的二进制并校验 SHA-256，默认安装到 `~/.local/bin`。
+Windows PowerShell：
+
+```powershell
+irm https://github.com/langbot-app/langbot-cli/releases/latest/download/install.ps1 | iex
+```
+
+安装脚本会自动选择当前平台的二进制并校验 SHA-256。Shell 脚本默认安装到 `~/.local/bin`；PowerShell 脚本默认安装到 `%LOCALAPPDATA%\Programs\lbctl` 并加入用户 `PATH`。
 
 ## 源码构建
 
