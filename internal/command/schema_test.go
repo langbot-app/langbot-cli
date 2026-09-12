@@ -110,6 +110,26 @@ func TestSchemaIsOfflineStableAndDescribesCommands(t *testing.T) {
 	if _, exists := commands["deployment"]; exists {
 		t.Fatal("schema exposes the removed deployment command group")
 	}
+	install := commands["install"]
+	if !install.Mutating || !install.SupportsDryRun || install.RequiresConnection || !isRejected(install.Flags, "context") || !isRejected(install.Flags, "endpoint") || !isRejected(install.Flags, "api-key-stdin") {
+		t.Fatalf("install lifecycle contract is inaccurate: %#v", install)
+	}
+	adopt := commands["adopt"]
+	if !adopt.Mutating || !adopt.RequiresConnection || !hasFlag(adopt.Flags, "endpoint", "inherited", true) || !hasFlag(adopt.Flags, "file", "local", true) || !hasFlag(adopt.Flags, "project", "local", true) || !isRejected(adopt.Flags, "context") {
+		t.Fatalf("adopt lifecycle contract is inaccurate: %#v", adopt)
+	}
+	for _, name := range []string{"start", "stop", "restart"} {
+		if !commands[name].Mutating || commands[name].RequiresYes {
+			t.Fatalf("%s lifecycle contract is inaccurate: %#v", name, commands[name])
+		}
+	}
+	logs := commands["logs"]
+	if logs.Mutating || len(logs.InputConflicts) != 1 || !hasConflictOperand(logs.InputConflicts[0].Operands, "follow", true) || !hasConflictOperand(logs.InputConflicts[0].Operands, "output", "yaml") {
+		t.Fatalf("logs lifecycle contract is inaccurate: %#v", logs)
+	}
+	if len(logs.ConditionalOutputs) != 2 || logs.ConditionalOutputs[0].Encoding != "text-lines" || logs.ConditionalOutputs[1].Encoding != "json-lines" {
+		t.Fatalf("logs follow output contract is missing: %#v", logs.ConditionalOutputs)
+	}
 	if !hasOperationID(commands["context.check"].Operations, "system.info") || !hasOperationID(commands["context.check"].Operations, "system.context") || hasOperationID(commands["context.check"].Operations, "system.capabilities") {
 		t.Fatalf("context.check operation metadata is inaccurate: %#v", commands["context.check"].Operations)
 	}
