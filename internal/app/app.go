@@ -35,6 +35,10 @@ type Dependencies struct {
 	LocalRunner       deploy.Runner
 	LocalHTTP         *http.Client
 	LocalDir          string
+	LocalLocatorPath  string
+	LatestRelease     func(context.Context) (string, error)
+	LocalLogOut       io.Writer
+	LocalLogErr       io.Writer
 }
 
 type Result struct {
@@ -379,10 +383,7 @@ func (s *Service) Check(ctx context.Context, options CheckOptions) (Result, erro
 }
 
 func (s *Service) localDiagnostics(dir string) (deploy.Diagnostics, error) {
-	if strings.TrimSpace(dir) == "" {
-		dir = s.deps.LocalDir
-	}
-	resolved, err := deploy.ResolveDir(dir)
+	resolved, err := s.resolveLocalDir(dir)
 	if err != nil {
 		return deploy.Diagnostics{}, result.New("input", "部署目录无效")
 	}
@@ -391,6 +392,13 @@ func (s *Service) localDiagnostics(dir string) (deploy.Diagnostics, error) {
 		runner = deploy.DockerRunner{}
 	}
 	return deploy.Diagnostics{Dir: resolved, Store: deploy.Store{Dir: resolved}, Runner: runner, HTTP: s.deps.LocalHTTP}, nil
+}
+
+func (s *Service) resolveLocalDir(dir string) (string, error) {
+	if strings.TrimSpace(dir) == "" && strings.TrimSpace(s.deps.LocalDir) != "" {
+		return deploy.ResolveDir(s.deps.LocalDir)
+	}
+	return (deploy.Locator{Path: s.deps.LocalLocatorPath}).Resolve(dir)
 }
 
 func mapLocalError(err error) error {

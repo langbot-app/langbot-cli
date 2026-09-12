@@ -24,6 +24,31 @@ func TestDefaultVersionUsesConciseOutput(t *testing.T) {
 	}
 }
 
+func TestLifecycleHelpAndEarlyValidation(t *testing.T) {
+	code, out, diagnostic := executeCommand(t, nil, "--help")
+	if code != 0 || diagnostic != "" {
+		t.Fatalf("help failed: code=%d diagnostic=%q", code, diagnostic)
+	}
+	for _, command := range []string{"install", "adopt", "start", "stop", "restart", "logs"} {
+		if !strings.Contains(out, command) {
+			t.Fatalf("help is missing %s: %s", command, out)
+		}
+	}
+	for _, args := range [][]string{
+		{"adopt"},
+		{"--endpoint", "http://127.0.0.1:5300", "install"},
+	} {
+		code, out, diagnostic = executeCommand(t, nil, args...)
+		if code != 2 || diagnostic != "" || !strings.Contains(out, "错误：") {
+			t.Fatalf("%v did not fail early: code=%d diagnostic=%q output=%q", args, code, diagnostic, out)
+		}
+	}
+	code, out, diagnostic = executeCommand(t, nil, "--output", "yaml", "logs", "--follow")
+	if code != 2 || diagnostic != "" || !strings.Contains(out, "type: input") {
+		t.Fatalf("follow YAML conflict mismatch: code=%d diagnostic=%q output=%q", code, diagnostic, out)
+	}
+}
+
 func TestMachineOutputsPreserveResultEnvelope(t *testing.T) {
 	for _, format := range []string{"json", "yaml"} {
 		t.Run(format, func(t *testing.T) {

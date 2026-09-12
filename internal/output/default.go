@@ -168,6 +168,17 @@ func renderDefaultData(w io.Writer, value any, command string) error {
 			return renderDoctorChecks(w, checks)
 		}
 		return renderValue(w, data, "")
+	case "logs":
+		if lines, ok := data["lines"].([]any); ok {
+			for _, line := range lines {
+				if _, err := fmt.Fprintln(w, formatCell(line)); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+	case "install", "adopt", "start", "stop", "restart":
+		return renderLocalAction(w, data)
 	case "whoami":
 		return renderValue(w, data, "")
 	case "capabilities":
@@ -217,6 +228,83 @@ func renderDefaultData(w io.Writer, value any, command string) error {
 	}
 	// 文件正文、日志、检索和未专门编排的响应使用完整的安全详情。
 	return renderValue(w, data, "")
+}
+
+func renderLocalAction(w io.Writer, data map[string]any) error {
+	action, _ := data["action"].(string)
+	record, _ := data["record"].(map[string]any)
+	status, _ := data["status"].(map[string]any)
+	version, _ := data["version"].(string)
+	if version == "" {
+		version, _ = record["core_version"].(string)
+	}
+	endpoint, _ := data["endpoint"].(string)
+	if endpoint == "" {
+		endpoint, _ = record["endpoint"].(string)
+	}
+	state, _ := status["status"].(string)
+	line := ""
+	switch action {
+	case "install":
+		if data["dry_run"] == true {
+			line = "安装计划：LangBot " + version + " → " + endpoint
+		} else if data["changed"] != true {
+			line = "安装未执行：前置检查未通过"
+		} else if state != "running" || data["step"] != nil {
+			line = "安装已执行，运行状态待确认：" + endpoint
+		} else {
+			line = "已安装 LangBot " + version + "：" + endpoint
+		}
+	case "adopt":
+		line = "已接管本机部署：" + endpoint
+		if data["changed"] == false {
+			line = "本机部署已接管：" + endpoint
+		}
+	case "start", "stop", "restart":
+		line = map[string]string{"start": "已启动本机部署", "stop": "已停止本机部署", "restart": "已重启本机部署"}[action]
+		if data["changed"] == false {
+			line = map[string]string{"start": "本机部署已在运行", "stop": "本机部署已停止", "restart": "本机部署已重启"}[action]
+		} else if state != map[string]string{"start": "running", "stop": "stopped", "restart": "running"}[action] {
+			line = "命令已执行，本机部署状态待确认"
+		}
+	}
+	expected := map[string]string{"install": "running", "start": "running", "stop": "stopped", "restart": "running"}[action]
+	if state != "" && state != expected && data["changed"] != false {
+		label := map[string]string{"running": "运行中", "stopped": "已停止", "starting": "启动中", "degraded": "部分服务异常", "unknown": "状态未知"}[state]
+		if label == "" {
+			label = state
+		}
+		line += "（" + label + "）"
+	}
+	if line != "" {
+		if _, err := fmt.Fprintln(w, line); err != nil {
+			return err
+		}
+	}
+	if data["dry_run"] == true || (action == "install" && data["changed"] != true) {
+		if dir, ok := data["dir"].(string); ok && dir != "" {
+			if _, err := fmt.Fprintln(w, "部署目录："+dir); err != nil {
+				return err
+			}
+		}
+		if checks, ok := data["checks"].([]any); ok {
+			failed := 0
+			for _, item := range checks {
+				check, _ := item.(map[string]any)
+				if check["status"] == "error" {
+					failed++
+					if _, err := fmt.Fprintf(w, "未通过：%s（%s）\n", displayCell(check["name"]), displayCell(check["reason"])); err != nil {
+						return err
+					}
+				}
+			}
+			if failed == 0 {
+				_, err := fmt.Fprintf(w, "预检：%d 项通过\n", len(checks))
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func renderActiveEnvironment(w io.Writer, environment map[string]any) error {
@@ -337,7 +425,7 @@ func lifecycleLabel(info map[string]any) string {
 }
 
 func isAction(data map[string]any) bool {
-	for _, key := range []string{"operation", "step", "task_id", "submitted", "verified", "dry_run"} {
+	for _, key := range []string{"operation", "action", "step", "task_id", "submitted", "verified", "dry_run"} {
 		if _, exists := data[key]; exists {
 			return true
 		}
@@ -346,7 +434,7 @@ func isAction(data map[string]any) bool {
 }
 
 func renderAction(w io.Writer, data map[string]any) error {
-	keys := []string{"operation", "action", "uuid", "model_uuid", "provider_uuid", "skill_name", "name", "author", "plugin_name", "server_name", "path", "file_id", "task_id", "model_type", "dry_run", "executed", "step", "submitted", "submission_result", "server_write", "verified", "server_cancelled", "delete_data", "business_validation"}
+	keys := []string{"operation", "action", "changed", "version", "profile", "endpoint", "dir", "image", "uuid", "model_uuid", "provider_uuid", "skill_name", "name", "author", "plugin_name", "server_name", "path", "file_id", "task_id", "model_type", "dry_run", "executed", "step", "submitted", "submission_result", "server_write", "verified", "server_cancelled", "delete_data", "business_validation"}
 	if err := renderFields(w, data, keys); err != nil {
 		return err
 	}

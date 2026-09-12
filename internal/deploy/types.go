@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -43,6 +44,7 @@ type Record struct {
 	Profile        string    `yaml:"profile" json:"profile"`
 	ComposeProject string    `yaml:"compose_project" json:"compose_project"`
 	ComposeFile    string    `yaml:"compose_file" json:"compose_file"`
+	EnvFile        string    `yaml:"env_file,omitempty" json:"env_file,omitempty"`
 	DataDir        string    `yaml:"data_dir" json:"data_dir"`
 	Endpoint       string    `yaml:"endpoint" json:"endpoint"`
 	Port           int       `yaml:"port" json:"port"`
@@ -81,6 +83,10 @@ type Runner interface {
 	Compose(context.Context, Record, ...string) (CommandResult, error)
 }
 
+type StreamRunner interface {
+	ComposeStream(context.Context, Record, io.Writer, io.Writer, ...string) error
+}
+
 type ExecFunc func(context.Context, string, ...string) (CommandResult, error)
 
 type DockerRunner struct {
@@ -109,14 +115,47 @@ func (r DockerRunner) Compose(ctx context.Context, record Record, args ...string
 	if err != nil {
 		return result, err
 	}
+	base := r.composeArgs(contextName, record)
+	return r.exec(ctx, append(base, args...)...)
+}
+
+func (r DockerRunner) ComposeStream(ctx context.Context, record Record, stdout, stderr io.Writer, args ...string) error {
+	if len(args) == 0 {
+		return errors.New("docker compose 命令不能为空")
+	}
+	if r.Exec != nil {
+		result, err := r.Compose(ctx, record, args...)
+		_, _ = io.WriteString(stdout, result.Stdout)
+		_, _ = io.WriteString(stderr, result.Stderr)
+		return err
+	}
+	contextName, _, err := r.localContext(ctx)
+	if err != nil {
+		return err
+	}
+	base := r.composeArgs(contextName, record)
+	command := exec.CommandContext(ctx, base[0], append(base[1:], args...)...)
+	command.Env = localDockerEnvironment()
+	command.Stdout = stdout
+	command.Stderr = stderr
+	return command.Run()
+}
+
+func (r DockerRunner) composeArgs(contextName string, record Record) []string {
 	base := []string{"docker", "--context", contextName, "compose"}
+	if record.EnvFile != "" {
+		base = append(base, "--env-file", record.EnvFile)
+	}
 	if record.ComposeProject != "" {
 		base = append(base, "--project-name", record.ComposeProject)
 	}
 	if record.ComposeFile != "" {
 		base = append(base, "--file", record.ComposeFile)
 	}
-	return r.exec(ctx, append(base, args...)...)
+	if strings.EqualFold(record.Profile, "all") || strings.EqualFold(record.Profile, "box") {
+		base = append(base, "--profile", "all")
+	}
+	return base
 }
 
 func (r DockerRunner) localContext(ctx context.Context) (string, CommandResult, error) {
@@ -394,7 +433,7 @@ func (s Store) Write(ctx context.Context, record Record) error {
 
 func hasUnexpectedEntries(entries []os.DirEntry) bool {
 	for _, entry := range entries {
-		if entry.Name() != ".lock" {
+		if entry.Name() != ".lock" && entry.Name() != ".operation.lock" {
 			return true
 		}
 	}
