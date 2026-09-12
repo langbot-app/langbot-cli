@@ -17,6 +17,7 @@ import (
 
 	"github.com/langbot-app/langbot-cli/internal/api"
 	"github.com/langbot-app/langbot-cli/internal/config"
+	"github.com/langbot-app/langbot-cli/internal/deploy"
 	endpointutil "github.com/langbot-app/langbot-cli/internal/endpoint"
 	"github.com/langbot-app/langbot-cli/internal/result"
 )
@@ -31,6 +32,9 @@ type Dependencies struct {
 	Version           string
 	Commit            string
 	BuildDate         string
+	LocalRunner       deploy.Runner
+	LocalHTTP         *http.Client
+	LocalDir          string
 }
 
 type Result struct {
@@ -374,26 +378,30 @@ func (s *Service) Check(ctx context.Context, options CheckOptions) (Result, erro
 	return Result{Data: data, Meta: connectionMeta(conn)}, nil
 }
 
-func (s *Service) Status(ctx context.Context, options CheckOptions) (Result, error) {
-	file, err := s.load()
+func (s *Service) localDiagnostics(dir string) (deploy.Diagnostics, error) {
+	if strings.TrimSpace(dir) == "" {
+		dir = s.deps.LocalDir
+	}
+	resolved, err := deploy.ResolveDir(dir)
 	if err != nil {
-		return Result{}, err
+		return deploy.Diagnostics{}, result.New("input", "部署目录无效")
 	}
-	conn, err := s.resolve(ctx, file, config.Options{
-		Context: options.Context, Endpoint: options.Endpoint, Timeout: options.Timeout,
-		ContextSet: options.ContextSet, EndpointSet: options.EndpointSet,
-		TimeoutSet: options.TimeoutSet, APIKeyStdin: options.APIKeyStdin,
-	})
-	if err != nil {
-		return Result{Meta: connectionMeta(conn)}, err
+	runner := s.deps.LocalRunner
+	if runner == nil {
+		runner = deploy.DockerRunner{}
 	}
-	info, infoErr := s.info(ctx, conn)
-	data := checkData(conn, info, infoErr, api.Context{}, nil)
-	data["identity"] = "unknown"
-	if infoErr != nil {
-		return Result{Data: data, Meta: connectionMeta(conn)}, infoErr
+	return deploy.Diagnostics{Dir: resolved, Store: deploy.Store{Dir: resolved}, Runner: runner, HTTP: s.deps.LocalHTTP}, nil
+}
+
+func mapLocalError(err error) error {
+	if err == nil {
+		return nil
 	}
-	return Result{Data: data, Meta: connectionMeta(conn)}, nil
+	var problem deploy.Problem
+	if errors.As(err, &problem) {
+		return result.New(problem.Kind, problem.Msg)
+	}
+	return result.New("server", "本地部署检查失败")
 }
 
 func (s *Service) RawInfo(ctx context.Context, options CheckOptions, methodAndPath ...string) (Result, error) {

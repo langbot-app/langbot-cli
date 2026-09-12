@@ -14,7 +14,7 @@ import (
 	"github.com/langbot-app/langbot-cli/internal/command"
 )
 
-func TestDefaultVersionUsesHumanOutput(t *testing.T) {
+func TestDefaultVersionUsesConciseOutput(t *testing.T) {
 	code, out, diagnostic := executeCommand(t, nil, "version")
 	if code != 0 || diagnostic != "" {
 		t.Fatalf("version failed: code=%d diagnostic=%q output=%q", code, diagnostic, out)
@@ -80,26 +80,26 @@ func TestSchemaDefaultsToJSONIncludingEarlyValidationErrors(t *testing.T) {
 	}
 
 	code, out, diagnostic := executeCommand(t, nil, "--output", "yaml", "schema", "--command", "version")
-	if code != 0 || diagnostic != "" || !strings.Contains(out, "schema_version: 1") || !strings.Contains(out, "default_output: human") {
+	if code != 0 || diagnostic != "" || !strings.Contains(out, "schema_version: 1") || !strings.Contains(out, "default_output: default") {
 		t.Fatalf("explicit YAML schema output is invalid: code=%d diagnostic=%q output=%s", code, diagnostic, out)
 	}
 }
 
-func TestRemovedHumanFormatValuesAreRejected(t *testing.T) {
+func TestRemovedOutputFormatValuesAreRejected(t *testing.T) {
 	for _, value := range []string{"", "table", "human", "HUMAN"} {
 		t.Run(value, func(t *testing.T) {
 			code, out, diagnostic := executeCommand(t, nil, "--output="+value, "version")
 			if code != 2 || diagnostic != "" || strings.HasPrefix(strings.TrimSpace(out), "{") || !strings.Contains(out, "输出格式无效") {
-				t.Fatalf("format %q was not rejected as a human input error: code=%d diagnostic=%q output=%q", value, code, diagnostic, out)
+				t.Fatalf("format %q was not rejected as a default-mode input error: code=%d diagnostic=%q output=%q", value, code, diagnostic, out)
 			}
 		})
 	}
 }
 
-func TestDefaultErrorsAreHumanAndMachineErrorsStayStructured(t *testing.T) {
+func TestDefaultErrorsAreDefaultAndMachineErrorsStayStructured(t *testing.T) {
 	code, out, diagnostic := executeCommand(t, nil, "unknown-command")
 	if code != 2 || diagnostic != "" || strings.HasPrefix(strings.TrimSpace(out), "{") || !strings.Contains(out, "错误：未知命令或参数") || strings.Contains(out, "Type:") {
-		t.Fatalf("default error output is not human readable: code=%d diagnostic=%q output=%q", code, diagnostic, out)
+		t.Fatalf("default error output is not concise: code=%d diagnostic=%q output=%q", code, diagnostic, out)
 	}
 
 	for _, format := range []string{"json", "yaml"} {

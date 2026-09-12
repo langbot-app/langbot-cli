@@ -122,20 +122,30 @@ func TestContextSnapshotAndCredentialIsolation(t *testing.T) {
 	server := func(version, expected string, count *atomic.Int32, wait bool) *httptest.Server {
 		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			count.Add(1)
-			if r.URL.Path != "/prefix/api/v1/system/info" || r.Header.Get("X-API-Key") != expected {
+			if r.Header.Get("X-API-Key") != expected {
 				crossed.Store(true)
 				w.WriteHeader(http.StatusForbidden)
 				return
 			}
-			if wait && hold.Load() {
-				started <- struct{}{}
-				select {
-				case <-release:
-				case <-r.Context().Done():
-					return
+			switch r.URL.Path {
+			case "/prefix/api/v1/system/info":
+				if wait && hold.Load() {
+					started <- struct{}{}
+					select {
+					case <-release:
+					case <-r.Context().Done():
+						return
+					}
 				}
+				fmt.Fprintf(w, `{"code":0,"data":{"version":%q,"edition":"community"}}`, version)
+			case "/prefix/api/v1/system/context":
+				fmt.Fprint(w, `{"code":0,"data":{"instance_uuid":"instance-`+version+`","workspace_uuid":"workspace-`+version+`","api_key_id":"key-`+version+`","permissions":[]}}`)
+			case "/prefix/api/v1/system/capabilities":
+				fmt.Fprint(w, `{"code":0,"data":{"schema_version":1,"operations":{}}}`)
+			default:
+				crossed.Store(true)
+				w.WriteHeader(http.StatusNotFound)
 			}
-			fmt.Fprintf(w, `{"code":0,"data":{"version":%q,"edition":"community"}}`, version)
 		}))
 	}
 	a := server("alpha", keys["ALPHA_KEY"], &countA, true)
@@ -178,7 +188,7 @@ func TestContextSnapshotAndCredentialIsolation(t *testing.T) {
 	if crossed.Load() {
 		t.Fatal("request target or credential crossed contexts")
 	}
-	if !strings.Contains(first.out, `"server_version": "alpha"`) {
+	if !strings.Contains(first.out, `"version": "alpha"`) {
 		t.Fatalf("in-flight command lost its snapshot: %s", first.out)
 	}
 	requireSuccess(t, run(t, path, keys, "", "status"))

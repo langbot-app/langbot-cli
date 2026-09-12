@@ -12,9 +12,9 @@ import (
 )
 
 const (
-	FormatHuman = "human"
-	FormatJSON  = "json"
-	FormatYAML  = "yaml"
+	FormatDefault = "default"
+	FormatJSON    = "json"
+	FormatYAML    = "yaml"
 )
 
 func NormalizeFormat(value string) (string, error) {
@@ -34,12 +34,12 @@ func Render(w io.Writer, value any, format string) error {
 
 // RenderCommand 在统一脱敏结果上选择机器编码或人工摘要。
 func RenderCommand(w io.Writer, value any, format, command string) error {
-	if format == FormatHuman {
+	if format == FormatDefault {
 		safe, err := prepare(value)
 		if err != nil {
 			return err
 		}
-		return renderHuman(w, safe, command)
+		return renderDefault(w, safe, command)
 	}
 	format, err := NormalizeFormat(format)
 	if err != nil {

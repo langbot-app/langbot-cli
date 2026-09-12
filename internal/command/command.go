@@ -13,6 +13,7 @@ import (
 	"github.com/langbot-app/langbot-cli/internal/api"
 	"github.com/langbot-app/langbot-cli/internal/app"
 	"github.com/langbot-app/langbot-cli/internal/config"
+	"github.com/langbot-app/langbot-cli/internal/deploy"
 	"github.com/langbot-app/langbot-cli/internal/output"
 	"github.com/langbot-app/langbot-cli/internal/requestbody"
 	"github.com/langbot-app/langbot-cli/internal/result"
@@ -29,6 +30,9 @@ type Dependencies struct {
 	Version           string
 	Commit            string
 	BuildDate         string
+	LocalRunner       deploy.Runner
+	LocalHTTP         *http.Client
+	LocalDir          string
 }
 
 type globalFlags struct {
@@ -58,6 +62,7 @@ func Execute(ctx context.Context, args []string, deps Dependencies) int {
 			return deps.DefaultConfigPath()
 		},
 		Transport: deps.Transport, Version: deps.Version, Commit: deps.Commit, BuildDate: deps.BuildDate,
+		LocalRunner: deps.LocalRunner, LocalHTTP: deps.LocalHTTP, LocalDir: deps.LocalDir,
 	})
 	root := newRoot(deps, flags, service)
 	root.SetArgs(args)
@@ -115,7 +120,7 @@ func newRoot(deps Dependencies, flags *globalFlags, service *app.Service) *cobra
 	persistent.StringVar(&flags.config, "config", "", "配置文件路径")
 	persistent.StringVar(&flags.context, "context", "", "使用指定 context")
 	persistent.StringVar(&flags.endpoint, "endpoint", "", "临时服务地址")
-	persistent.StringVar(&flags.timeout, "timeout", "", "请求超时时间")
+	persistent.StringVar(&flags.timeout, "timeout", "", "操作超时时间")
 	persistent.BoolVar(&flags.apiKeyStdin, "api-key-stdin", false, "从 stdin 读取本次请求的 API Key")
 	persistent.StringVarP(&flags.output, "output", "o", "", "输出格式：json 或 yaml；默认简洁模式（schema 默认 JSON）")
 	root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
@@ -136,6 +141,7 @@ func newRoot(deps Dependencies, flags *globalFlags, service *app.Service) *cobra
 	}
 	root.AddCommand(newContextCommand(service, deps, flags))
 	root.AddCommand(newStatusCommand(service, deps, flags))
+	root.AddCommand(newDoctorCommand(service, deps, flags))
 	root.AddCommand(newVersionCommand(service, deps, flags))
 	root.AddCommand(newRawCommand(service, deps, flags))
 	root.AddCommand(newAPICommand(service, deps, flags))
@@ -1161,10 +1167,25 @@ func newContextCheck(service *app.Service, deps Dependencies, flags *globalFlags
 
 func newStatusCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
 	return &cobra.Command{
-		Use: "status", Short: "查看服务连接状态", Args: cobra.NoArgs,
+		Use: "status", Short: "查看 Active Environment 状态", Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return emitCall(deps, flags, func() (app.Result, error) {
 				return service.Status(cmd.Context(), app.CheckOptions{
+					Context: flags.context, Endpoint: flags.endpoint, Timeout: flags.timeout,
+					ContextSet: flags.contextSet, EndpointSet: flags.endpointSet, TimeoutSet: flags.timeoutSet,
+					APIKeyStdin: flags.apiKeyStdin,
+				})
+			})
+		},
+	}
+}
+
+func newDoctorCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
+	return &cobra.Command{
+		Use: "doctor", Short: "诊断 Active Environment", Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return emitCall(deps, flags, func() (app.Result, error) {
+				return service.Doctor(cmd.Context(), app.CheckOptions{
 					Context: flags.context, Endpoint: flags.endpoint, Timeout: flags.timeout,
 					ContextSet: flags.contextSet, EndpointSet: flags.endpointSet, TimeoutSet: flags.timeoutSet,
 					APIKeyStdin: flags.apiKeyStdin,
@@ -1289,7 +1310,7 @@ func emitCall(deps Dependencies, flags *globalFlags, call func() (app.Result, er
 }
 
 func emit(deps Dependencies, flags *globalFlags, value app.Result, callErr error) int {
-	format := output.FormatHuman
+	format := output.FormatDefault
 	if flags.outputSet {
 		if normalized, err := output.NormalizeFormat(flags.output); err == nil {
 			format = normalized

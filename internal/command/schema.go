@@ -132,7 +132,8 @@ var schemaMetaByName = map[string]schemaCommandMeta{
 	"completion.fish":       {},
 	"completion.powershell": {},
 	"completion.zsh":        {},
-	"status":                readMeta(operationIDs("system.info")...),
+	"status":                readMeta(operationIDs("system.info", "system.context", "system.capabilities")...),
+	"doctor":                readMeta(operationIDs("system.info", "system.context", "system.capabilities")...),
 	"version":               {Operations: []schemaOperation{conditionalOperation("system.info", flagEquals("server", true))}, FlagApplicability: serverOnlyConnectionFlags()},
 	"raw": func() schemaCommandMeta {
 		meta := readMeta(operationIDs("system.info")...)
@@ -499,7 +500,7 @@ func defaultOutputFor(command *cobra.Command) string {
 	if commandPath(command) == "schema" {
 		return "json"
 	}
-	return "human"
+	return "default"
 }
 
 func machineOutputsFor(command *cobra.Command) []string {

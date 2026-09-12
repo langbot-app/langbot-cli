@@ -9,7 +9,7 @@ import (
 	"unicode"
 )
 
-func renderHuman(w io.Writer, value any, command string) error {
+func renderDefault(w io.Writer, value any, command string) error {
 	envelope, ok := value.(map[string]any)
 	if !ok {
 		return renderValue(w, value, "")
@@ -18,7 +18,7 @@ func renderHuman(w io.Writer, value any, command string) error {
 		return renderValue(w, value, "")
 	}
 	if envelope["ok"] == false {
-		if err := renderHumanError(w, envelope["error"]); err != nil {
+		if err := renderDefaultError(w, envelope["error"]); err != nil {
 			return err
 		}
 	}
@@ -38,8 +38,10 @@ func renderHuman(w io.Writer, value any, command string) error {
 		}
 		return renderTarget(w, envelope["meta"])
 	}
-	if err := renderTarget(w, envelope["meta"]); err != nil {
-		return err
+	if command != "status" && command != "doctor" {
+		if err := renderTarget(w, envelope["meta"]); err != nil {
+			return err
+		}
 	}
 	if data == nil {
 		if envelope["ok"] == false {
@@ -62,16 +64,16 @@ func renderHuman(w io.Writer, value any, command string) error {
 		}
 		data = view
 	}
-	return renderHumanData(w, data, command)
+	return renderDefaultData(w, data, command)
 }
 
-func renderHumanError(w io.Writer, value any) error {
+func renderDefaultError(w io.Writer, value any) error {
 	detail, ok := value.(map[string]any)
 	if !ok {
 		_, err := fmt.Fprintln(w, "错误：操作失败")
 		return err
 	}
-	message := humanCell(detail["message"])
+	message := displayCell(detail["message"])
 	if message == "-" {
 		message = "操作失败"
 	}
@@ -86,7 +88,7 @@ func renderHumanError(w io.Writer, value any) error {
 		if field == "http_status" && strings.Contains(message, "HTTP "+formatCell(value)) {
 			continue
 		}
-		if _, err := fmt.Fprintln(w, fieldLabel(field)+"："+humanCell(value)); err != nil {
+		if _, err := fmt.Fprintln(w, fieldLabel(field)+"："+displayCell(value)); err != nil {
 			return err
 		}
 	}
@@ -98,8 +100,8 @@ func renderTarget(w io.Writer, value any) error {
 	if !ok {
 		return nil
 	}
-	contextName := humanCell(meta["context"])
-	endpoint := humanCell(meta["endpoint"])
+	contextName := displayCell(meta["context"])
+	endpoint := displayCell(meta["endpoint"])
 	if contextName == "-" && endpoint == "-" {
 		return nil
 	}
@@ -116,7 +118,7 @@ func renderTarget(w io.Writer, value any) error {
 	return err
 }
 
-func renderHumanData(w io.Writer, value any, command string) error {
+func renderDefaultData(w io.Writer, value any, command string) error {
 	data, ok := value.(map[string]any)
 	if !ok {
 		return renderValue(w, value, "")
@@ -131,7 +133,9 @@ func renderHumanData(w io.Writer, value any, command string) error {
 			}
 		}
 		return nil
-	case "context.check", "status":
+	case "status":
+		return renderActiveEnvironment(w, data)
+	case "context.check":
 		if checks, ok := data["checks"].([]any); ok {
 			return renderChecks(w, checks)
 		}
@@ -154,6 +158,16 @@ func renderHumanData(w io.Writer, value any, command string) error {
 			return renderValue(w, item, "Error")
 		}
 		return nil
+	case "doctor":
+		if environment, ok := data["environment"].(map[string]any); ok {
+			if err := renderActiveEnvironment(w, environment); err != nil {
+				return err
+			}
+		}
+		if checks, ok := data["checks"].([]any); ok {
+			return renderDoctorChecks(w, checks)
+		}
+		return renderValue(w, data, "")
 	case "whoami":
 		return renderValue(w, data, "")
 	case "capabilities":
@@ -203,6 +217,123 @@ func renderHumanData(w io.Writer, value any, command string) error {
 	}
 	// 文件正文、日志、检索和未专门编排的响应使用完整的安全详情。
 	return renderValue(w, data, "")
+}
+
+func renderActiveEnvironment(w io.Writer, environment map[string]any) error {
+	line := func(label string, value any) error {
+		if value == nil || value == "" {
+			return nil
+		}
+		_, err := fmt.Fprintf(w, "%s: %s\n", label, displayCell(value))
+		return err
+	}
+	if err := line("Active Environment", environment["name"]); err != nil {
+		return err
+	}
+	if err := line("Type", environmentTypeLabel(formatCell(environment["type"]))); err != nil {
+		return err
+	}
+	connection, _ := environment["connection"].(map[string]any)
+	if err := line("Endpoint", connection["endpoint"]); err != nil {
+		return err
+	}
+	connectionLabel := "Unreachable"
+	if formatCell(environment["discovery"]) == "unconfigured" {
+		connectionLabel = "Not configured"
+	} else if connection["reachable"] == true {
+		connectionLabel = "Connected"
+	}
+	if err := line("Connection", connectionLabel); err != nil {
+		return err
+	}
+	if err := line("Authentication", discoveryStateLabel(formatCell(connection["authentication"]))); err != nil {
+		return err
+	}
+	service, _ := environment["service"].(map[string]any)
+	core := formatCell(service["version"])
+	if edition := formatCell(service["edition"]); core != "" && edition != "" {
+		core += " (" + edition + ")"
+	}
+	if err := line("Core", core); err != nil {
+		return err
+	}
+	identity, _ := environment["identity"].(map[string]any)
+	if err := line("Workspace", identity["workspace_uuid"]); err != nil {
+		return err
+	}
+	if err := line("Instance", identity["instance_uuid"]); err != nil {
+		return err
+	}
+	capabilities, _ := environment["capabilities"].(map[string]any)
+	if err := line("Capabilities", discoveryStateLabel(formatCell(capabilities["status"]))); err != nil {
+		return err
+	}
+	runtimeInfo, _ := environment["runtime"].(map[string]any)
+	if err := line("Lifecycle", lifecycleLabel(runtimeInfo)); err != nil {
+		return err
+	}
+	if binding := formatCell(runtimeInfo["binding"]); binding != "" && binding != "none" && binding != "verified" && binding != "missing" {
+		if err := line("Binding", discoveryStateLabel(binding)); err != nil {
+			return err
+		}
+	}
+	return line("Directory", runtimeInfo["dir"])
+}
+
+func environmentTypeLabel(value string) string {
+	switch value {
+	case "cloud":
+		return "LangBot Cloud"
+	case "self_hosted":
+		return "Self-hosted"
+	default:
+		return "Unknown"
+	}
+}
+
+func discoveryStateLabel(value string) string {
+	switch value {
+	case "verified", "complete":
+		return "Verified"
+	case "partial":
+		return "Partial"
+	case "not_checked":
+		return "Not checked"
+	case "failed":
+		return "Failed"
+	case "mismatch":
+		return "Mismatch"
+	case "corrupt":
+		return "Corrupt"
+	case "unreadable":
+		return "Unreadable"
+	case "unavailable":
+		return "Unavailable"
+	default:
+		return "Unknown"
+	}
+}
+
+func lifecycleLabel(info map[string]any) string {
+	switch formatCell(info["management"]) {
+	case "cloud_managed":
+		return "Managed by LangBot Cloud"
+	case "local_managed":
+		driver := formatCell(info["driver"])
+		if driver == "docker_compose" {
+			driver = "Docker Compose"
+		} else if driver == "native_process" {
+			driver = "Native process"
+		}
+		if status := formatCell(info["status"]); status != "" {
+			return driver + " · " + localStatusLabel(status)
+		}
+		return driver + " · Managed"
+	case "unbound":
+		return "Not bound"
+	default:
+		return "Unavailable"
+	}
 }
 
 func isAction(data map[string]any) bool {
@@ -285,6 +416,20 @@ func renderChecks(w io.Writer, checks []any) error {
 	return nil
 }
 
+func renderDoctorChecks(w io.Writer, checks []any) error {
+	rows := make([]any, 0, len(checks))
+	for _, item := range checks {
+		check, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		rows = append(rows, map[string]any{
+			"name": check["name"], "status": check["status"], "reason": check["reason"],
+		})
+	}
+	return renderResourceList(w, "checks", rows)
+}
+
 func commandListKey(command string) string {
 	switch command {
 	case "context.list":
@@ -318,7 +463,9 @@ func resourceFields(key string) []string {
 	case "contexts":
 		return []string{"current", "name", "endpoint", "expected_workspace_uuid"}
 	case "checks":
-		return []string{"context", "endpoint", "reachable", "diagnostic_ok", "identity", "capabilities", "server_version", "error"}
+		return []string{"name", "status", "reason", "context", "endpoint", "reachable", "diagnostic_ok", "identity", "capabilities", "server_version", "error"}
+	case "containers":
+		return []string{"service", "name", "state", "health"}
 	case "bots":
 		return []string{"uuid", "name", "adapter", "enable", "use_pipeline_uuid"}
 	case "pipelines":
@@ -368,7 +515,7 @@ func renderResourceList(w io.Writer, key string, items []any) error {
 		}
 		line := make([]string, len(fields))
 		for i, field := range fields {
-			line[i] = humanCell(row[field])
+			line[i] = displayCell(row[field])
 			if key == "contexts" && field == "current" {
 				line[i] = "-"
 				if row[field] == true {
@@ -450,7 +597,7 @@ func renderValueAt(w io.Writer, value any, label, indent string) error {
 		if scalar {
 			parts := make([]string, len(v))
 			for i, item := range v {
-				parts[i] = humanCell(item)
+				parts[i] = displayCell(item)
 			}
 			_, err := fmt.Fprintln(w, prefix+strings.Join(parts, ", "))
 			return err
@@ -482,7 +629,7 @@ func renderValueAt(w io.Writer, value any, label, indent string) error {
 			return nil
 		}
 	}
-	_, err := fmt.Fprintln(w, prefix+humanCell(value))
+	_, err := fmt.Fprintln(w, prefix+displayCell(value))
 	return err
 }
 
@@ -502,11 +649,30 @@ func sortedKeys(value map[string]any) []string {
 	return keys
 }
 
-func humanCell(value any) string {
+func displayCell(value any) string {
 	if value == nil || value == "" {
 		return "-"
 	}
 	return formatCell(value)
+}
+
+func localStatusLabel(value string) string {
+	switch value {
+	case "not_installed":
+		return "Not installed"
+	case "stopped":
+		return "Stopped"
+	case "starting":
+		return "Starting"
+	case "running":
+		return "Running"
+	case "degraded":
+		return "Degraded"
+	case "unknown":
+		return "Unknown"
+	default:
+		return value
+	}
 }
 
 func fieldLabel(field string) string {
@@ -525,6 +691,8 @@ func fieldLabel(field string) string {
 		return "API Key ID"
 	case "credential_source":
 		return "Credential Source"
+	case "dir":
+		return "Directory"
 	case "server_version":
 		return "Server Version"
 	case "server_edition":
