@@ -122,8 +122,10 @@ func TestContextSnapshotAndCredentialIsolation(t *testing.T) {
 	server := func(version, expected string, count *atomic.Int32, wait bool) *httptest.Server {
 		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			count.Add(1)
-			if r.Header.Get("X-API-Key") != expected {
-				crossed.Store(true)
+			if supplied := r.Header.Get("X-API-Key"); supplied != expected {
+				if supplied != "" {
+					crossed.Store(true)
+				}
 				w.WriteHeader(http.StatusForbidden)
 				return
 			}
@@ -194,8 +196,8 @@ func TestContextSnapshotAndCredentialIsolation(t *testing.T) {
 	requireSuccess(t, run(t, path, keys, "", "status"))
 	before := countB.Load()
 	blocked := run(t, path, keys, "", "--context", "alpha", "--endpoint", b.URL+"/prefix", "status")
-	if blocked.code == 0 || countB.Load() != before {
-		t.Fatal("endpoint override reused the previous target's key")
+	if blocked.code == 0 || countB.Load() <= before || crossed.Load() {
+		t.Fatal("endpoint override should probe anonymously without reusing the previous target's key")
 	}
 	requireSuccess(t, run(t, path, keys, keys["BETA_KEY"]+"\n", "--context", "alpha", "--endpoint", b.URL+"/prefix", "--api-key-stdin", "status"))
 	show := run(t, path, nil, "", "context", "show", "alpha")

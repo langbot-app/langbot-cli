@@ -24,6 +24,7 @@ func (f environmentTransport) RoundTrip(request *http.Request) (*http.Response, 
 type recordingRunner struct {
 	calls    int
 	blocking bool
+	stopped  bool
 }
 
 func (r *recordingRunner) Docker(ctx context.Context, _ ...string) (deploy.CommandResult, error) {
@@ -37,7 +38,55 @@ func (r *recordingRunner) Docker(ctx context.Context, _ ...string) (deploy.Comma
 
 func (r *recordingRunner) Compose(context.Context, deploy.Record, ...string) (deploy.CommandResult, error) {
 	r.calls++
+	if r.stopped {
+		return deploy.CommandResult{Stdout: `[{"Service":"langbot","State":"exited"},{"Service":"langbot_plugin_runtime","State":"exited"}]`}, nil
+	}
 	return deploy.CommandResult{Stdout: `[{"Service":"langbot","State":"running","Health":"healthy"},{"Service":"langbot_plugin_runtime","State":"running","Health":"healthy"}]`}, nil
+}
+
+func TestTemporaryEndpointDiscoveryDoesNotReuseCurrentContextKey(t *testing.T) {
+	configPath := writeEnvironmentConfig(t, "https://cloud.example", "workspace-local")
+	localDir := writeDeploymentRecord(t, deploy.Record{Driver: deploy.DriverDockerCompose, Endpoint: "http://127.0.0.1:5300", ComposeProject: "langbot"})
+	runner := &recordingRunner{}
+	requests := 0
+	transport := environmentTransport(func(request *http.Request) (*http.Response, error) {
+		requests++
+		if request.URL.Host != "127.0.0.1:5300" || request.Header.Get("X-API-Key") != "" {
+			t.Fatalf("temporary discovery used the wrong target or credential: %s", request.URL)
+		}
+		return response(http.StatusOK, `{"code":0,"data":{"version":"v4.10.10","edition":"community"}}`), nil
+	})
+	localHTTP := &http.Client{Transport: environmentTransport(func(*http.Request) (*http.Response, error) {
+		return response(http.StatusOK, `{}`), nil
+	})}
+	deps := Dependencies{LookupEnv: environmentLookup, Transport: transport, LocalRunner: runner, LocalHTTP: localHTTP, LocalDir: localDir}
+	var out bytes.Buffer
+	deps.Out = &out
+	code := Execute(context.Background(), []string{"--config", configPath, "--endpoint", "http://127.0.0.1:5300", "--output", "json", "status"}, deps)
+	if code != 0 || requests != 1 || runner.calls == 0 || !strings.Contains(out.String(), `"management": "local_managed"`) || !strings.Contains(out.String(), `"name": "temporary"`) {
+		t.Fatalf("temporary local status failed: code=%d requests=%d output=%s", code, requests, out.String())
+	}
+	out.Reset()
+	code = Execute(context.Background(), []string{"--config", configPath, "--endpoint", "http://127.0.0.1:5300", "--output", "json", "whoami"}, deps)
+	if code != 3 || requests != 1 || !strings.Contains(out.String(), `"type": "auth"`) {
+		t.Fatalf("protected command accepted an anonymous endpoint override: code=%d requests=%d output=%s", code, requests, out.String())
+	}
+}
+
+func TestStatusReportsStoppedManagedDeploymentWithoutHTTP(t *testing.T) {
+	configPath := writeEnvironmentConfig(t, "https://cloud.example", "workspace-local")
+	localDir := writeDeploymentRecord(t, deploy.Record{Driver: deploy.DriverDockerCompose, Endpoint: "http://127.0.0.1:5300", ComposeProject: "langbot"})
+	runner := &recordingRunner{stopped: true}
+	offline := environmentTransport(func(*http.Request) (*http.Response, error) {
+		return nil, fmt.Errorf("connection refused")
+	})
+	var out bytes.Buffer
+	code := Execute(context.Background(), []string{"--config", configPath, "--endpoint", "http://127.0.0.1:5300", "--output", "json", "status"}, Dependencies{
+		Out: &out, LookupEnv: environmentLookup, Transport: offline, LocalHTTP: &http.Client{Transport: offline}, LocalRunner: runner, LocalDir: localDir,
+	})
+	if code != 0 || runner.calls == 0 || !strings.Contains(out.String(), `"status": "stopped"`) || !strings.Contains(out.String(), `"discovery": "partial"`) {
+		t.Fatalf("offline local status failed: code=%d calls=%d output=%s", code, runner.calls, out.String())
+	}
 }
 
 func TestStatusDiscoversCloudWithoutDocker(t *testing.T) {

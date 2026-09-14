@@ -455,6 +455,9 @@ func (s *Service) runLifecycle(ctx context.Context, action string, options Lifec
 
 func (s *Service) lifecycleTarget(ctx context.Context, options CheckOptions) (deploy.Record, deploy.Diagnostics, error) {
 	resolved, discoveryErr := s.discoverActiveEnvironment(ctx, options, false)
+	if discoveryErr != nil && result.AsError(discoveryErr).Kind != "network" {
+		return deploy.Record{}, deploy.Diagnostics{}, discoveryErr
+	}
 	if resolved.Environment.Identity.Status == "mismatch" || resolved.Environment.Connection.Authentication == "failed" {
 		if discoveryErr != nil {
 			return deploy.Record{}, deploy.Diagnostics{}, discoveryErr

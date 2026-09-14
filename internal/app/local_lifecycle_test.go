@@ -193,6 +193,27 @@ func TestLifecycleRejectsCloudWithoutDockerMutation(t *testing.T) {
 	}
 }
 
+func TestLifecycleRejectsFailedServiceDiscoveryBeforeDockerMutation(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "deployment")
+	runner := &lifecycleTestRunner{state: "running"}
+	record := deploy.Record{DeploymentID: "local-test", Driver: deploy.DriverDockerCompose, Profile: "basic", ComposeProject: "langbot", ComposeFile: filepath.Join(root, "compose.yaml"), Endpoint: "http://127.0.0.1:15300", Port: 15300}
+	if err := os.WriteFile(record.ComposeFile, []byte("services: {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := (deploy.Store{Dir: dir}).Write(context.Background(), record); err != nil {
+		t.Fatal(err)
+	}
+	transport := taskRoundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusInternalServerError, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"code":500,"msg":"failed"}`))}, nil
+	})
+	service := New(Dependencies{LocalDir: dir, LocalRunner: runner, Transport: transport, DefaultConfigPath: func() (string, error) { return filepath.Join(root, "config.yaml"), nil }})
+	_, err := service.Stop(context.Background(), LifecycleOptions{CheckOptions: CheckOptions{Endpoint: record.Endpoint, EndpointSet: true}})
+	if result.AsError(err).Kind != "server" || len(runner.calls) != 0 {
+		t.Fatalf("Stop() should reject failed discovery before Docker: error=%v calls=%v", err, runner.calls)
+	}
+}
+
 func TestRestartStoppedDeploymentDoesNotStart(t *testing.T) {
 	root := t.TempDir()
 	dir := filepath.Join(root, "deployment")

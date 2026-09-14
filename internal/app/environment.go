@@ -111,7 +111,7 @@ func (s *Service) discoverActiveEnvironment(ctx context.Context, options CheckOp
 	if err != nil {
 		return resolved, err
 	}
-	conn, err := s.resolve(ctx, file, config.Options{
+	conn, err := s.resolveDiscovery(ctx, file, config.Options{
 		Context: options.Context, Endpoint: options.Endpoint, Timeout: options.Timeout,
 		ContextSet: options.ContextSet, EndpointSet: options.EndpointSet,
 		TimeoutSet: options.TimeoutSet, APIKeyStdin: options.APIKeyStdin,
@@ -123,7 +123,7 @@ func (s *Service) discoverActiveEnvironment(ctx context.Context, options CheckOp
 				fallback := options
 				fallback.Endpoint = record.Endpoint
 				fallback.EndpointSet = true
-				conn, err = s.resolve(ctx, file, config.Options{
+				conn, err = s.resolveDiscovery(ctx, file, config.Options{
 					Endpoint: fallback.Endpoint, Timeout: fallback.Timeout,
 					EndpointSet: true, TimeoutSet: fallback.TimeoutSet, APIKeyStdin: fallback.APIKeyStdin,
 				})
@@ -220,6 +220,18 @@ func (s *Service) discoverActiveEnvironment(ctx context.Context, options CheckOp
 	return s.completeRuntime(callCtx, resolved, identity, identityErr == nil, inspectRuntime, nil)
 }
 
+func (s *Service) resolveDiscovery(ctx context.Context, file config.File, options config.Options) (config.Connection, error) {
+	conn, err := config.Resolve(file, options, s.deps.LookupEnv)
+	if err != nil {
+		return conn, err
+	}
+	if conn.Temporary && conn.CredentialSource == "" {
+		conn.Context = ""
+		return conn, nil
+	}
+	return s.withCredential(ctx, conn, options)
+}
+
 func (s *Service) localPreflight(ctx context.Context, resolved environmentResolution, options CheckOptions) (Result, error) {
 	timeout, err := localOperationTimeout(options, s.deps.LookupEnv)
 	if err != nil {
@@ -280,6 +292,10 @@ func (s *Service) completeRuntime(ctx context.Context, resolved environmentResol
 	runtimeInfo, runtimeErr := s.resolveRuntime(ctx, resolved.Environment, identity, identityVerified, inspect, &resolved)
 	resolved.Environment.Runtime = runtimeInfo
 	if priorErr != nil {
+		if inspect && resolved.LocalMatch && runtimeErr == nil && runtimeInfo.Status == "stopped" && result.AsError(priorErr).Kind == "network" {
+			resolved.Environment.Discovery = "partial"
+			return resolved, nil
+		}
 		return resolved, priorErr
 	}
 	return resolved, runtimeErr
