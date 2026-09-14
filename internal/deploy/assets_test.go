@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -31,7 +32,7 @@ func TestInstallAssetsUsePinnedImageAndRestrictedFiles(t *testing.T) {
 		if statErr != nil {
 			t.Fatalf("stat %s: %v", path, statErr)
 		}
-		if info.Mode().Perm() != 0o600 {
+		if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 			t.Fatalf("%s mode = %v", path, info.Mode().Perm())
 		}
 	}
@@ -66,7 +67,7 @@ func TestLocatorResolvesCustomDeployment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0o600 {
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Fatalf("locator mode = %v", info.Mode().Perm())
 	}
 }

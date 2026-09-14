@@ -48,6 +48,8 @@ func ExitCode(err error) int {
 		return 7
 	case "incompatible":
 		return 8
+	case "recovery_required":
+		return 9
 	default:
 		return 10
 	}

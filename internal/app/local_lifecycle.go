@@ -408,6 +408,9 @@ func (s *Service) runLifecycle(ctx context.Context, action string, options Lifec
 	defer cancel()
 	var response Result
 	err = deploy.WithMutationLock(operationCtx, diagnostics.Dir, func() error {
+		if err := deploy.CheckUpgradeInterrupted(diagnostics.Dir); err != nil {
+			return result.New("recovery_required", err.Error())
+		}
 		current, readErr := diagnostics.Store.Read()
 		if readErr != nil || current.DeploymentID != record.DeploymentID {
 			return result.New("precondition", "本机部署绑定已变更")

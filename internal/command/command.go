@@ -151,6 +151,7 @@ func newRoot(deps Dependencies, flags *globalFlags, service *app.Service) *cobra
 	root.AddCommand(newLifecycleCommand(service, deps, flags, "start"))
 	root.AddCommand(newLifecycleCommand(service, deps, flags, "stop"))
 	root.AddCommand(newLifecycleCommand(service, deps, flags, "restart"))
+	root.AddCommand(newUpgradeCommand(service, deps, flags))
 	root.AddCommand(newLocalLogsCommand(service, deps, flags))
 	root.AddCommand(newVersionCommand(service, deps, flags))
 	root.AddCommand(newRawCommand(service, deps, flags))
@@ -1275,6 +1276,31 @@ func newLifecycleCommand(service *app.Service, deps Dependencies, flags *globalF
 			})
 		},
 	}
+}
+
+func newUpgradeCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
+	var version string
+	var dryRun, yes bool
+	cmd := &cobra.Command{
+		Use: "upgrade", Short: "安全升级本机受管部署", Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if strings.TrimSpace(version) == "" {
+				return emitCommand(deps, flags, app.Result{}, result.New("input", "upgrade 需要 --version <tag>"))
+			}
+			if !dryRun && !yes {
+				return emitCommand(deps, flags, app.Result{}, result.New("precondition", "升级会停止并修改本机部署，请显式传入 --yes"))
+			}
+			return emitCall(deps, flags, func() (app.Result, error) {
+				return service.Upgrade(cmd.Context(), app.UpgradeOptions{
+					CheckOptions: connectionOptions(flags), Version: version, DryRun: dryRun, Yes: yes,
+				})
+			})
+		},
+	}
+	cmd.Flags().StringVar(&version, "version", "", "目标 LangBot 稳定 Release tag")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "只验证前置条件并输出升级计划")
+	cmd.Flags().BoolVar(&yes, "yes", false, "确认停服、备份和升级")
+	return cmd
 }
 
 func newLocalLogsCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {

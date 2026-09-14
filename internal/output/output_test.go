@@ -92,6 +92,8 @@ func TestLocalLifecycleDefaultOutputIsConcise(t *testing.T) {
 		{"start", map[string]any{"action": "start", "changed": true, "status": map[string]any{"status": "running"}}, "已启动本机部署\n"},
 		{"stop", map[string]any{"action": "stop", "changed": false, "status": map[string]any{"status": "stopped"}}, "本机部署已停止\n"},
 		{"install", map[string]any{"action": "install", "version": "v4.10.10", "endpoint": "http://127.0.0.1:5300", "checks": []any{map[string]any{"name": "port", "status": "error", "reason": "已占用"}}}, "安装未执行：前置检查未通过\n未通过：port（已占用）\n"},
+		{"upgrade", map[string]any{"action": "upgrade", "source_version": "v4.10.9", "target_version": "v4.10.10", "dry_run": true}, "升级计划：LangBot v4.10.9 → v4.10.10\n"},
+		{"upgrade", map[string]any{"action": "upgrade", "source_version": "v4.10.9", "target_version": "v4.10.10", "completed": true}, "已升级 LangBot v4.10.9 → v4.10.10\n"},
 	} {
 		var out bytes.Buffer
 		value := map[string]any{"ok": true, "data": test.data}

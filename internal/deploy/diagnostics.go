@@ -32,6 +32,7 @@ type StatusResult struct {
 	Containers       []Container    `json:"containers,omitempty" yaml:"containers,omitempty"`
 	HTTP             map[string]any `json:"http,omitempty" yaml:"http,omitempty"`
 	Evidence         map[string]any `json:"evidence" yaml:"evidence"`
+	Upgrade          *UpgradeState  `json:"upgrade,omitempty" yaml:"upgrade,omitempty"`
 }
 
 type Diagnostics struct {
@@ -62,6 +63,17 @@ func (d Diagnostics) Status(ctx context.Context) (StatusResult, error) {
 		return result, Problem{Kind: "precondition", Msg: "无法读取本地部署记录"}
 	}
 	result.Record = record
+	if upgrade, upgradeErr := ReadUpgradeState(d.Dir); upgradeErr == nil {
+		if upgrade.DeploymentID != record.DeploymentID {
+			return result, Problem{Kind: "precondition", Msg: "升级记录与部署不一致"}
+		}
+		if upgrade.Phase == "completed" && upgrade.TargetVersion != record.CoreVersion {
+			return result, Problem{Kind: "precondition", Msg: "已完成的升级记录与 Core 版本不一致"}
+		}
+		result.Upgrade = &upgrade
+	} else if !errors.Is(upgradeErr, os.ErrNotExist) {
+		return result, Problem{Kind: "precondition", Msg: "升级记录损坏或无法读取"}
+	}
 	result.RequiredServices = requiredServices(record)
 	result.Evidence["record"] = "valid"
 	if !regularFile(record.ComposeFile) {
@@ -196,6 +208,15 @@ func (d Diagnostics) Doctor(ctx context.Context) ([]Check, error) {
 		add("deployment_record", "ok", "部署记录有效", record)
 	}
 	if recordErr == nil {
+		if upgrade, upgradeErr := ReadUpgradeState(d.Dir); upgradeErr == nil {
+			if upgrade.DeploymentID != record.DeploymentID || upgrade.Phase != "completed" || upgrade.TargetVersion != record.CoreVersion {
+				add("upgrade", "error", "存在未完成的升级，需要人工检查恢复现场", upgrade)
+			} else {
+				add("upgrade", "ok", "上次升级已完成", upgrade)
+			}
+		} else if !errors.Is(upgradeErr, os.ErrNotExist) {
+			add("upgrade", "error", "升级记录损坏或无法读取", nil)
+		}
 		if !regularFile(record.ComposeFile) {
 			add("compose_assets", "error", "Compose 文件不存在", record.ComposeFile)
 		} else {

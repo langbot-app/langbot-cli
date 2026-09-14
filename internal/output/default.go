@@ -177,7 +177,7 @@ func renderDefaultData(w io.Writer, value any, command string) error {
 			}
 			return nil
 		}
-	case "install", "adopt", "start", "stop", "restart":
+	case "install", "adopt", "start", "stop", "restart", "upgrade":
 		return renderLocalAction(w, data)
 	case "whoami":
 		return renderValue(w, data, "")
@@ -266,6 +266,16 @@ func renderLocalAction(w io.Writer, data map[string]any) error {
 			line = map[string]string{"start": "本机部署已在运行", "stop": "本机部署已停止", "restart": "本机部署已重启"}[action]
 		} else if state != map[string]string{"start": "running", "stop": "stopped", "restart": "running"}[action] {
 			line = "命令已执行，本机部署状态待确认"
+		}
+	case "upgrade":
+		from, _ := data["source_version"].(string)
+		to, _ := data["target_version"].(string)
+		if data["dry_run"] == true {
+			line = "升级计划：LangBot " + from + " → " + to
+		} else if data["completed"] == true {
+			line = "已升级 LangBot " + from + " → " + to
+		} else {
+			line = "升级未完成；请运行 lbctl status 和 lbctl doctor 检查恢复现场"
 		}
 	}
 	expected := map[string]string{"install": "running", "start": "running", "stop": "stopped", "restart": "running"}[action]
@@ -359,6 +369,20 @@ func renderActiveEnvironment(w io.Writer, environment map[string]any) error {
 	runtimeInfo, _ := environment["runtime"].(map[string]any)
 	if err := line("Lifecycle", lifecycleLabel(runtimeInfo)); err != nil {
 		return err
+	}
+	if details, ok := runtimeInfo["details"].(map[string]any); ok {
+		if upgrade, ok := details["upgrade"].(map[string]any); ok && upgrade["phase"] != "completed" {
+			label := "Interrupted (" + formatCell(upgrade["phase"]) + ")"
+			if upgrade["phase"] == "recovery_required" {
+				label = "Recovery required"
+				if step := formatCell(upgrade["failure_step"]); step != "" && step != "-" {
+					label += " (" + step + ")"
+				}
+			}
+			if err := line("Upgrade", label); err != nil {
+				return err
+			}
+		}
 	}
 	if binding := formatCell(runtimeInfo["binding"]); binding != "" && binding != "none" && binding != "verified" && binding != "missing" {
 		if err := line("Binding", discoveryStateLabel(binding)); err != nil {
