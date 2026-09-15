@@ -177,7 +177,7 @@ func renderDefaultData(w io.Writer, value any, command string) error {
 			}
 			return nil
 		}
-	case "install", "adopt", "start", "stop", "restart", "upgrade":
+	case "install", "adopt", "start", "stop", "restart", "upgrade", "uninstall":
 		return renderLocalAction(w, data)
 	case "whoami":
 		return renderValue(w, data, "")
@@ -276,6 +276,15 @@ func renderLocalAction(w io.Writer, data map[string]any) error {
 			line = "已升级 LangBot " + from + " → " + to
 		} else {
 			line = "升级未完成；请运行 lbctl status 和 lbctl doctor 检查恢复现场"
+		}
+	case "uninstall":
+		if data["project_removed"] == true {
+			line = "已卸载本机受管部署；数据和部署记录已保留"
+			if data["purge_data"] == true {
+				line = "已卸载本机受管部署并清理数据；备份和部署记录已保留"
+			}
+		} else {
+			line = "卸载未完成；请运行 lbctl status 和 lbctl doctor 检查"
 		}
 	}
 	expected := map[string]string{"install": "running", "start": "running", "stop": "stopped", "restart": "running"}[action]

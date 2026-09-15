@@ -76,20 +76,8 @@ func CompareReleaseVersions(current, target string) (int, error) {
 }
 
 func ComposeForUpgrade(record Record, dir, version string) ([]byte, string, error) {
-	if record.Driver != DriverDockerCompose || record.ComposeProject != DefaultComposeProject ||
-		record.ComposeFile != filepath.Join(dir, "compose.yaml") || record.EnvFile != filepath.Join(dir, ".env") ||
-		record.DataDir != filepath.Join(dir, "data") || record.Asset.Name != DefaultImageRepository+":"+record.CoreVersion ||
-		record.Endpoint != fmt.Sprintf("http://127.0.0.1:%d", record.Port) ||
-		!regularFile(record.EnvFile) || !releaseVersionPattern.MatchString(record.CoreVersion) {
-		return nil, "", errors.New("仅支持 lbctl 安装的默认 Compose 部署自动升级")
-	}
-	if record.Profile != "basic" && record.Profile != "all" {
-		return nil, "", errors.New("部署 profile 不支持自动升级")
-	}
-	current := []byte(renderCompose(record.Asset.Name, record.Port, filepath.Join(dir, "data", "box")))
-	actual, err := os.ReadFile(record.ComposeFile)
-	if err != nil || !equalDigest(actual, current) {
-		return nil, "", errors.New("Compose 资产已变更，拒绝自动升级")
+	if err := ValidateOwnedLayout(record, dir); err != nil {
+		return nil, "", err
 	}
 	if !releaseVersionPattern.MatchString(version) {
 		return nil, "", errors.New("版本必须为 vX.Y.Z 形式的稳定 Release tag")
@@ -97,6 +85,25 @@ func ComposeForUpgrade(record Record, dir, version string) ([]byte, string, erro
 	image := DefaultImageRepository + ":" + version
 	updated := []byte(renderCompose(image, record.Port, filepath.Join(dir, "data", "box")))
 	return updated, fileDigest(updated), nil
+}
+
+func ValidateOwnedLayout(record Record, dir string) error {
+	if record.Driver != DriverDockerCompose || record.ComposeProject != DefaultComposeProject ||
+		record.ComposeFile != filepath.Join(dir, "compose.yaml") || record.EnvFile != filepath.Join(dir, ".env") ||
+		record.DataDir != filepath.Join(dir, "data") || record.Asset.Name != DefaultImageRepository+":"+record.CoreVersion ||
+		record.Endpoint != fmt.Sprintf("http://127.0.0.1:%d", record.Port) ||
+		!regularFile(record.EnvFile) || !releaseVersionPattern.MatchString(record.CoreVersion) {
+		return errors.New("仅支持 lbctl 安装的默认 Compose 部署")
+	}
+	if record.Profile != "basic" && record.Profile != "all" {
+		return errors.New("部署 profile 不受支持")
+	}
+	current := []byte(renderCompose(record.Asset.Name, record.Port, filepath.Join(dir, "data", "box")))
+	actual, err := os.ReadFile(record.ComposeFile)
+	if err != nil || !equalDigest(actual, current) {
+		return errors.New("Compose 资产已变更")
+	}
+	return nil
 }
 
 func InspectUpgradeData(record Record) (int64, uint64, error) {

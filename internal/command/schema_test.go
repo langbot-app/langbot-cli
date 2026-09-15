@@ -123,6 +123,10 @@ func TestSchemaIsOfflineStableAndDescribesCommands(t *testing.T) {
 			t.Fatalf("%s lifecycle contract is inaccurate: %#v", name, commands[name])
 		}
 	}
+	uninstall := commands["uninstall"]
+	if !uninstall.Mutating || !uninstall.Destructive || !uninstall.RequiresYes || !hasFlag(uninstall.Flags, "yes", "local", false) || !hasFlag(uninstall.Flags, "purge-data", "local", false) {
+		t.Fatalf("uninstall lifecycle contract is inaccurate: %#v", uninstall)
+	}
 	logs := commands["logs"]
 	if logs.Mutating || len(logs.InputConflicts) != 1 || !hasConflictOperand(logs.InputConflicts[0].Operands, "follow", true) || !hasConflictOperand(logs.InputConflicts[0].Operands, "output", "yaml") {
 		t.Fatalf("logs lifecycle contract is inaccurate: %#v", logs)

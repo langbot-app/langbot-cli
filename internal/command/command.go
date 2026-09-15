@@ -152,6 +152,7 @@ func newRoot(deps Dependencies, flags *globalFlags, service *app.Service) *cobra
 	root.AddCommand(newLifecycleCommand(service, deps, flags, "stop"))
 	root.AddCommand(newLifecycleCommand(service, deps, flags, "restart"))
 	root.AddCommand(newUpgradeCommand(service, deps, flags))
+	root.AddCommand(newUninstallCommand(service, deps, flags))
 	root.AddCommand(newLocalLogsCommand(service, deps, flags))
 	root.AddCommand(newVersionCommand(service, deps, flags))
 	root.AddCommand(newRawCommand(service, deps, flags))
@@ -1300,6 +1301,26 @@ func newUpgradeCommand(service *app.Service, deps Dependencies, flags *globalFla
 	cmd.Flags().StringVar(&version, "version", "", "目标 LangBot 稳定 Release tag")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "只验证前置条件并输出升级计划")
 	cmd.Flags().BoolVar(&yes, "yes", false, "确认停服、备份和升级")
+	return cmd
+}
+
+func newUninstallCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
+	var purgeData, yes bool
+	cmd := &cobra.Command{
+		Use: "uninstall", Short: "卸载本机受管部署", Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if !yes {
+				return emitCommand(deps, flags, app.Result{}, result.New("precondition", "卸载会删除受管容器和网络，请显式传入 --yes"))
+			}
+			return emitCall(deps, flags, func() (app.Result, error) {
+				return service.Uninstall(cmd.Context(), app.UninstallOptions{
+					CheckOptions: connectionOptions(flags), PurgeData: purgeData, Yes: yes,
+				})
+			})
+		},
+	}
+	cmd.Flags().BoolVar(&purgeData, "purge-data", false, "同时清理 lbctl 受管数据目录")
+	cmd.Flags().BoolVar(&yes, "yes", false, "确认卸载")
 	return cmd
 }
 

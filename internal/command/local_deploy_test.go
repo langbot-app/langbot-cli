@@ -474,3 +474,14 @@ func TestUpgradeRequiresVersionAndExplicitConfirmation(t *testing.T) {
 		}
 	}
 }
+
+func TestUninstallRequiresExplicitConfirmationBeforeDocker(t *testing.T) {
+	runner := &recordingRunner{}
+	var out bytes.Buffer
+	code := Execute(context.Background(), []string{"--output", "json", "uninstall"}, Dependencies{
+		Out: &out, LocalRunner: runner, LocalDir: filepath.Join(t.TempDir(), "deployment"),
+	})
+	if code != 6 || runner.calls != 0 || !strings.Contains(out.String(), "--yes") {
+		t.Fatalf("uninstall confirmation mismatch: code=%d calls=%d output=%s", code, runner.calls, out.String())
+	}
+}
