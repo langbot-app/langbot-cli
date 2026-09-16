@@ -126,6 +126,10 @@ type schemaFlag struct {
 var placeholderPattern = regexp.MustCompile(`(<[^>]+>|\[[^]]+\])`)
 
 var schemaMetaByName = map[string]schemaCommandMeta{
+	"sandbox.status":   readMeta(operationIDs("sandbox.status")...),
+	"sandbox.sessions": readMeta(operationIDs("sandbox.sessions")...),
+	"sandbox.errors":   readMeta(operationIDs("sandbox.errors")...),
+
 	"schema":                {},
 	"completion":            {},
 	"completion.bash":       {},
