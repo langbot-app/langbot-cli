@@ -1178,33 +1178,37 @@ func newContextCheck(service *app.Service, deps Dependencies, flags *globalFlags
 }
 
 func newStatusCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
-	return &cobra.Command{
-		Use: "status", Short: "查看 Active Environment 状态", Args: cobra.NoArgs,
+	var dir string
+	cmd := &cobra.Command{
+		Use: "status", Short: "查看本机受管部署状态", Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := rejectLocalConnectionOverrides(flags); err != nil {
+				return emitCommand(deps, flags, app.Result{}, err)
+			}
 			return emitCall(deps, flags, func() (app.Result, error) {
-				return service.Status(cmd.Context(), app.CheckOptions{
-					Context: flags.context, Endpoint: flags.endpoint, Timeout: flags.timeout,
-					ContextSet: flags.contextSet, EndpointSet: flags.endpointSet, TimeoutSet: flags.timeoutSet,
-					APIKeyStdin: flags.apiKeyStdin,
-				})
+				return service.Status(cmd.Context(), localTargetOptions(flags, dir))
 			})
 		},
 	}
+	cmd.Flags().StringVar(&dir, "dir", "", "本机部署目录")
+	return cmd
 }
 
 func newDoctorCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
-	return &cobra.Command{
-		Use: "doctor", Short: "诊断 Active Environment", Args: cobra.NoArgs,
+	var dir string
+	cmd := &cobra.Command{
+		Use: "doctor", Short: "诊断本机部署与依赖", Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := rejectLocalConnectionOverrides(flags); err != nil {
+				return emitCommand(deps, flags, app.Result{}, err)
+			}
 			return emitCall(deps, flags, func() (app.Result, error) {
-				return service.Doctor(cmd.Context(), app.CheckOptions{
-					Context: flags.context, Endpoint: flags.endpoint, Timeout: flags.timeout,
-					ContextSet: flags.contextSet, EndpointSet: flags.endpointSet, TimeoutSet: flags.timeoutSet,
-					APIKeyStdin: flags.apiKeyStdin,
-				})
+				return service.Doctor(cmd.Context(), localTargetOptions(flags, dir))
 			})
 		},
 	}
+	cmd.Flags().StringVar(&dir, "dir", "", "本机部署目录")
+	return cmd
 }
 
 func newInstallCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
@@ -1261,10 +1265,14 @@ func newAdoptCommand(service *app.Service, deps Dependencies, flags *globalFlags
 
 func newLifecycleCommand(service *app.Service, deps Dependencies, flags *globalFlags, action string) *cobra.Command {
 	short := map[string]string{"start": "启动本机受管部署", "stop": "停止本机受管部署", "restart": "重启本机受管部署"}[action]
-	return &cobra.Command{
+	var dir string
+	cmd := &cobra.Command{
 		Use: action, Short: short, Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			options := app.LifecycleOptions{CheckOptions: connectionOptions(flags)}
+			if err := rejectLocalConnectionOverrides(flags); err != nil {
+				return emitCommand(deps, flags, app.Result{}, err)
+			}
+			options := app.LifecycleOptions{LocalTargetOptions: localTargetOptions(flags, dir)}
 			return emitCall(deps, flags, func() (app.Result, error) {
 				switch action {
 				case "start":
@@ -1277,14 +1285,19 @@ func newLifecycleCommand(service *app.Service, deps Dependencies, flags *globalF
 			})
 		},
 	}
+	cmd.Flags().StringVar(&dir, "dir", "", "本机部署目录")
+	return cmd
 }
 
 func newUpgradeCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
-	var version string
+	var dir, version string
 	var dryRun, yes bool
 	cmd := &cobra.Command{
 		Use: "upgrade", Short: "安全升级本机受管部署", Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := rejectLocalConnectionOverrides(flags); err != nil {
+				return emitCommand(deps, flags, app.Result{}, err)
+			}
 			if strings.TrimSpace(version) == "" {
 				return emitCommand(deps, flags, app.Result{}, result.New("input", "upgrade 需要 --version <tag>"))
 			}
@@ -1293,11 +1306,12 @@ func newUpgradeCommand(service *app.Service, deps Dependencies, flags *globalFla
 			}
 			return emitCall(deps, flags, func() (app.Result, error) {
 				return service.Upgrade(cmd.Context(), app.UpgradeOptions{
-					CheckOptions: connectionOptions(flags), Version: version, DryRun: dryRun, Yes: yes,
+					LocalTargetOptions: localTargetOptions(flags, dir), Version: version, DryRun: dryRun, Yes: yes,
 				})
 			})
 		},
 	}
+	cmd.Flags().StringVar(&dir, "dir", "", "本机部署目录")
 	cmd.Flags().StringVar(&version, "version", "", "目标 LangBot 稳定 Release tag")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "只验证前置条件并输出升级计划")
 	cmd.Flags().BoolVar(&yes, "yes", false, "确认停服、备份和升级")
@@ -1305,38 +1319,46 @@ func newUpgradeCommand(service *app.Service, deps Dependencies, flags *globalFla
 }
 
 func newUninstallCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
+	var dir string
 	var purgeData, yes bool
 	cmd := &cobra.Command{
 		Use: "uninstall", Short: "卸载本机受管部署", Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := rejectLocalConnectionOverrides(flags); err != nil {
+				return emitCommand(deps, flags, app.Result{}, err)
+			}
 			if !yes {
 				return emitCommand(deps, flags, app.Result{}, result.New("precondition", "卸载会删除受管容器和网络，请显式传入 --yes"))
 			}
 			return emitCall(deps, flags, func() (app.Result, error) {
 				return service.Uninstall(cmd.Context(), app.UninstallOptions{
-					CheckOptions: connectionOptions(flags), PurgeData: purgeData, Yes: yes,
+					LocalTargetOptions: localTargetOptions(flags, dir), PurgeData: purgeData, Yes: yes,
 				})
 			})
 		},
 	}
+	cmd.Flags().StringVar(&dir, "dir", "", "本机部署目录")
 	cmd.Flags().BoolVar(&purgeData, "purge-data", false, "同时清理 lbctl 受管数据目录")
 	cmd.Flags().BoolVar(&yes, "yes", false, "确认卸载")
 	return cmd
 }
 
 func newLocalLogsCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
-	var serviceName, since string
+	var dir, serviceName, since string
 	var tail int
 	var follow bool
 	cmd := &cobra.Command{
 		Use: "logs", Short: "读取本机受管部署日志", Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := rejectLocalConnectionOverrides(flags); err != nil {
+				return emitCommand(deps, flags, app.Result{}, err)
+			}
 			format := output.FormatDefault
 			if flags.outputSet {
 				format, _ = output.NormalizeFormat(flags.output)
 			}
 			options := app.LocalLogsOptions{
-				CheckOptions: connectionOptions(flags), Service: serviceName, Tail: tail, Since: since, Follow: follow, Format: format,
+				LocalTargetOptions: localTargetOptions(flags, dir), Service: serviceName, Tail: tail, Since: since, Follow: follow, Format: format,
 			}
 			if !follow {
 				return emitCall(deps, flags, func() (app.Result, error) { return service.LocalLogs(cmd.Context(), options) })
@@ -1360,6 +1382,7 @@ func newLocalLogsCommand(service *app.Service, deps Dependencies, flags *globalF
 			return emitCommand(deps, flags, app.Result{}, err)
 		},
 	}
+	cmd.Flags().StringVar(&dir, "dir", "", "本机部署目录")
 	cmd.Flags().StringVar(&serviceName, "service", "", "服务名：langbot、langbot_plugin_runtime 或 langbot_box")
 	cmd.Flags().IntVar(&tail, "tail", 200, "返回最后日志行数，上限 5000")
 	cmd.Flags().StringVar(&since, "since", "", "只读取指定时间之后的日志")
@@ -1527,4 +1550,15 @@ func rejectCredentialInput(flags *globalFlags) error {
 
 func hasConnectionOverride(flags *globalFlags) bool {
 	return flags.contextSet || flags.endpointSet || flags.timeoutSet || flags.apiKeyStdin
+}
+
+func rejectLocalConnectionOverrides(flags *globalFlags) error {
+	if flags.contextSet || flags.endpointSet || flags.apiKeyStdin {
+		return result.New("input", "本机部署命令不接受 context、endpoint 或 API Key")
+	}
+	return nil
+}
+
+func localTargetOptions(flags *globalFlags, dir string) app.LocalTargetOptions {
+	return app.LocalTargetOptions{Dir: dir, Timeout: flags.timeout, TimeoutSet: flags.timeoutSet}
 }

@@ -140,8 +140,8 @@ var schemaMetaByName = map[string]schemaCommandMeta{
 	"completion.fish":       {},
 	"completion.powershell": {},
 	"completion.zsh":        {},
-	"status":                readMeta(operationIDs("system.info", "system.context", "system.capabilities")...),
-	"doctor":                readMeta(operationIDs("system.info", "system.context", "system.capabilities")...),
+	"status":                localCommandMeta(schemaCommandMeta{}),
+	"doctor":                localCommandMeta(schemaCommandMeta{}),
 	"install": {
 		Mutating: true, SupportsDryRun: true,
 		FlagApplicability: map[string]schemaFlagApplicability{
@@ -156,18 +156,18 @@ var schemaMetaByName = map[string]schemaCommandMeta{
 			"context": {Status: "rejected", Reason: "adopt 使用显式 endpoint"},
 		},
 	},
-	"start":     {Mutating: true},
-	"stop":      {Mutating: true},
-	"restart":   {Mutating: true},
-	"upgrade":   {Mutating: true, Destructive: true, RequiresYes: true, SupportsDryRun: true, RequiredFlags: map[string]bool{"version": true}},
-	"uninstall": {Mutating: true, Destructive: true, RequiresYes: true},
-	"logs": {ConditionalOutputs: []schemaConditionalOutput{
+	"start":     localCommandMeta(schemaCommandMeta{Mutating: true}),
+	"stop":      localCommandMeta(schemaCommandMeta{Mutating: true}),
+	"restart":   localCommandMeta(schemaCommandMeta{Mutating: true}),
+	"upgrade":   localCommandMeta(schemaCommandMeta{Mutating: true, Destructive: true, RequiresYes: true, SupportsDryRun: true, RequiredFlags: map[string]bool{"version": true}}),
+	"uninstall": localCommandMeta(schemaCommandMeta{Mutating: true, Destructive: true, RequiresYes: true}),
+	"logs": localCommandMeta(schemaCommandMeta{ConditionalOutputs: []schemaConditionalOutput{
 		{When: flagEquals("follow", true), Format: "default", Encoding: "text-lines"},
 		{When: flagEquals("follow", true), Format: "json", Encoding: "json-lines"},
 	}, InputConflicts: []schemaConflict{{
 		Operands: []schemaOperand{{Flag: "follow", Equals: true}, {Flag: "output", Equals: "yaml"}},
 		Reason:   "logs --follow 不支持 YAML 输出",
-	}}},
+	}}}),
 	"version": {Operations: []schemaOperation{conditionalOperation("system.info", flagEquals("server", true))}, FlagApplicability: serverOnlyConnectionFlags()},
 	"raw": func() schemaCommandMeta {
 		meta := readMeta(operationIDs("system.info")...)
@@ -295,6 +295,15 @@ func localContextMutationFlags() map[string]schemaFlagApplicability {
 		"api-key-stdin": {Status: "rejected", Reason: "本地 context 命令不接受连接覆盖参数"},
 		"context":       {Status: "rejected", Reason: "本地 context 命令不接受连接覆盖参数"},
 	}
+}
+
+func localCommandMeta(meta schemaCommandMeta) schemaCommandMeta {
+	meta.FlagApplicability = map[string]schemaFlagApplicability{
+		"api-key-stdin": {Status: "rejected", Reason: "本机部署命令不接受 API Key"},
+		"context":       {Status: "rejected", Reason: "本机部署命令不使用 API context"},
+		"endpoint":      {Status: "rejected", Reason: "本机部署目标由 --dir 或默认部署确定"},
+	}
+	return meta
 }
 
 func serverOnlyConnectionFlags() map[string]schemaFlagApplicability {

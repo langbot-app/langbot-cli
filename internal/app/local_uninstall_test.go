@@ -78,7 +78,7 @@ func uninstallFixture(t *testing.T, containers bool) (*Service, *uninstallRunner
 func TestUninstallPreservesDataAndRecord(t *testing.T) {
 	service, runner, record, dir := uninstallFixture(t, true)
 	value, err := service.Uninstall(context.Background(), UninstallOptions{
-		CheckOptions: CheckOptions{Endpoint: record.Endpoint, EndpointSet: true}, Yes: true,
+		Yes: true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -104,7 +104,7 @@ func TestUninstallPurgeRemovesDataAfterProject(t *testing.T) {
 		t.Fatal(err)
 	}
 	value, err := service.Uninstall(context.Background(), UninstallOptions{
-		CheckOptions: CheckOptions{Endpoint: record.Endpoint, EndpointSet: true}, PurgeData: true, Yes: true,
+		PurgeData: true, Yes: true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -125,7 +125,7 @@ func TestUninstallPurgeRemovesDataAfterProject(t *testing.T) {
 
 func TestUninstallRequiresConfirmationAndBlocksInterruptedUpgrade(t *testing.T) {
 	service, runner, record, dir := uninstallFixture(t, true)
-	options := UninstallOptions{CheckOptions: CheckOptions{Endpoint: record.Endpoint, EndpointSet: true}}
+	options := UninstallOptions{}
 	if _, err := service.Uninstall(context.Background(), options); result.AsError(err).Kind != "precondition" || runner.downCalls != 0 {
 		t.Fatalf("缺少确认仍执行卸载: %v, down=%d", err, runner.downCalls)
 	}
@@ -149,7 +149,7 @@ func TestUninstallPurgeRejectsAdoptedComposeBeforeDown(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err := service.Uninstall(context.Background(), UninstallOptions{
-		CheckOptions: CheckOptions{Endpoint: record.Endpoint, EndpointSet: true}, PurgeData: true, Yes: true,
+		PurgeData: true, Yes: true,
 	})
 	if result.AsError(err).Kind != "precondition" || runner.downCalls != 0 {
 		t.Fatalf("自定义 Compose 清理没有在 down 前拒绝: %v, down=%d", err, runner.downCalls)

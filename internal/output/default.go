@@ -134,7 +134,7 @@ func renderDefaultData(w io.Writer, value any, command string) error {
 		}
 		return nil
 	case "status":
-		return renderActiveEnvironment(w, data)
+		return renderLocalStatus(w, data)
 	case "context.check":
 		if checks, ok := data["checks"].([]any); ok {
 			return renderChecks(w, checks)
@@ -159,8 +159,8 @@ func renderDefaultData(w io.Writer, value any, command string) error {
 		}
 		return nil
 	case "doctor":
-		if environment, ok := data["environment"].(map[string]any); ok {
-			if err := renderActiveEnvironment(w, environment); err != nil {
+		if dir := formatCell(data["dir"]); dir != "" && dir != "-" {
+			if _, err := fmt.Fprintln(w, "Directory: "+dir); err != nil {
 				return err
 			}
 		}
@@ -228,6 +228,47 @@ func renderDefaultData(w io.Writer, value any, command string) error {
 	}
 	// 文件正文、日志、检索和未专门编排的响应使用完整的安全详情。
 	return renderValue(w, data, "")
+}
+
+func renderLocalStatus(w io.Writer, data map[string]any) error {
+	if _, err := fmt.Fprintln(w, "Status: "+localStatusLabel(formatCell(data["status"]))); err != nil {
+		return err
+	}
+	if dir := formatCell(data["dir"]); dir != "" && dir != "-" {
+		if _, err := fmt.Fprintln(w, "Directory: "+dir); err != nil {
+			return err
+		}
+	}
+	if record, ok := data["record"].(map[string]any); ok {
+		if err := renderFields(w, record, []string{"core_version", "profile", "endpoint", "compose_project"}); err != nil {
+			return err
+		}
+	}
+	if httpStatus, ok := data["http"].(map[string]any); ok {
+		label := "Unreachable"
+		if httpStatus["reachable"] == true {
+			label = "Healthy"
+		}
+		if _, err := fmt.Fprintln(w, "HTTP: "+label); err != nil {
+			return err
+		}
+	}
+	if upgrade, ok := data["upgrade"].(map[string]any); ok && upgrade["phase"] != "completed" {
+		label := "Interrupted (" + formatCell(upgrade["phase"]) + ")"
+		if upgrade["phase"] == "recovery_required" {
+			label = "Recovery required"
+			if step := formatCell(upgrade["failure_step"]); step != "" && step != "-" {
+				label += " (" + step + ")"
+			}
+		}
+		if _, err := fmt.Fprintln(w, "Upgrade: "+label); err != nil {
+			return err
+		}
+	}
+	if containers, ok := data["containers"].([]any); ok && len(containers) > 0 {
+		return renderResourceList(w, "containers", containers)
+	}
+	return nil
 }
 
 func renderLocalAction(w io.Writer, data map[string]any) error {
@@ -324,137 +365,6 @@ func renderLocalAction(w io.Writer, data map[string]any) error {
 		}
 	}
 	return nil
-}
-
-func renderActiveEnvironment(w io.Writer, environment map[string]any) error {
-	line := func(label string, value any) error {
-		if value == nil || value == "" {
-			return nil
-		}
-		_, err := fmt.Fprintf(w, "%s: %s\n", label, displayCell(value))
-		return err
-	}
-	if err := line("Active Environment", environment["name"]); err != nil {
-		return err
-	}
-	if err := line("Type", environmentTypeLabel(formatCell(environment["type"]))); err != nil {
-		return err
-	}
-	connection, _ := environment["connection"].(map[string]any)
-	if err := line("Endpoint", connection["endpoint"]); err != nil {
-		return err
-	}
-	connectionLabel := "Unreachable"
-	if formatCell(environment["discovery"]) == "unconfigured" {
-		connectionLabel = "Not configured"
-	} else if connection["reachable"] == true {
-		connectionLabel = "Connected"
-	}
-	if err := line("Connection", connectionLabel); err != nil {
-		return err
-	}
-	if err := line("Authentication", discoveryStateLabel(formatCell(connection["authentication"]))); err != nil {
-		return err
-	}
-	service, _ := environment["service"].(map[string]any)
-	core := formatCell(service["version"])
-	if edition := formatCell(service["edition"]); core != "" && edition != "" {
-		core += " (" + edition + ")"
-	}
-	if err := line("Core", core); err != nil {
-		return err
-	}
-	identity, _ := environment["identity"].(map[string]any)
-	if err := line("Workspace", identity["workspace_uuid"]); err != nil {
-		return err
-	}
-	if err := line("Instance", identity["instance_uuid"]); err != nil {
-		return err
-	}
-	capabilities, _ := environment["capabilities"].(map[string]any)
-	if err := line("Capabilities", discoveryStateLabel(formatCell(capabilities["status"]))); err != nil {
-		return err
-	}
-	runtimeInfo, _ := environment["runtime"].(map[string]any)
-	if err := line("Lifecycle", lifecycleLabel(runtimeInfo)); err != nil {
-		return err
-	}
-	if details, ok := runtimeInfo["details"].(map[string]any); ok {
-		if upgrade, ok := details["upgrade"].(map[string]any); ok && upgrade["phase"] != "completed" {
-			label := "Interrupted (" + formatCell(upgrade["phase"]) + ")"
-			if upgrade["phase"] == "recovery_required" {
-				label = "Recovery required"
-				if step := formatCell(upgrade["failure_step"]); step != "" && step != "-" {
-					label += " (" + step + ")"
-				}
-			}
-			if err := line("Upgrade", label); err != nil {
-				return err
-			}
-		}
-	}
-	if binding := formatCell(runtimeInfo["binding"]); binding != "" && binding != "none" && binding != "verified" && binding != "missing" {
-		if err := line("Binding", discoveryStateLabel(binding)); err != nil {
-			return err
-		}
-	}
-	return line("Directory", runtimeInfo["dir"])
-}
-
-func environmentTypeLabel(value string) string {
-	switch value {
-	case "cloud":
-		return "LangBot Cloud"
-	case "self_hosted":
-		return "Self-hosted"
-	default:
-		return "Unknown"
-	}
-}
-
-func discoveryStateLabel(value string) string {
-	switch value {
-	case "verified", "complete":
-		return "Verified"
-	case "partial":
-		return "Partial"
-	case "not_checked":
-		return "Not checked"
-	case "failed":
-		return "Failed"
-	case "mismatch":
-		return "Mismatch"
-	case "corrupt":
-		return "Corrupt"
-	case "unreadable":
-		return "Unreadable"
-	case "unavailable":
-		return "Unavailable"
-	default:
-		return "Unknown"
-	}
-}
-
-func lifecycleLabel(info map[string]any) string {
-	switch formatCell(info["management"]) {
-	case "cloud_managed":
-		return "Managed by LangBot Cloud"
-	case "local_managed":
-		driver := formatCell(info["driver"])
-		if driver == "docker_compose" {
-			driver = "Docker Compose"
-		} else if driver == "native_process" {
-			driver = "Native process"
-		}
-		if status := formatCell(info["status"]); status != "" {
-			return driver + " · " + localStatusLabel(status)
-		}
-		return driver + " · Managed"
-	case "unbound":
-		return "Not bound"
-	default:
-		return "Unavailable"
-	}
 }
 
 func isAction(data map[string]any) bool {

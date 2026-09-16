@@ -19,7 +19,7 @@ const upgradeTimeout = 20 * time.Minute
 var imageDigestPattern = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
 
 type UpgradeOptions struct {
-	CheckOptions
+	LocalTargetOptions
 	Version string
 	DryRun  bool
 	Yes     bool
@@ -42,7 +42,7 @@ func (s *Service) Upgrade(ctx context.Context, options UpgradeOptions) (Result, 
 	}
 	operationCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	record, diagnostics, err := s.lifecycleTarget(operationCtx, options.CheckOptions)
+	record, diagnostics, err := s.lifecycleTarget(options.LocalTargetOptions)
 	if err != nil {
 		return Result{}, err
 	}

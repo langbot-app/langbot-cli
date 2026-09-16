@@ -10,7 +10,7 @@ import (
 )
 
 type UninstallOptions struct {
-	CheckOptions
+	LocalTargetOptions
 	PurgeData bool
 	Yes       bool
 }
@@ -25,7 +25,7 @@ func (s *Service) Uninstall(ctx context.Context, options UninstallOptions) (Resu
 	}
 	operationCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	record, diagnostics, err := s.lifecycleTarget(operationCtx, options.CheckOptions)
+	record, diagnostics, err := s.lifecycleTarget(options.LocalTargetOptions)
 	if err != nil {
 		return Result{}, err
 	}

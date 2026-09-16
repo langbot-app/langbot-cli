@@ -53,11 +53,11 @@ type AdoptOptions struct {
 }
 
 type LifecycleOptions struct {
-	CheckOptions
+	LocalTargetOptions
 }
 
 type LocalLogsOptions struct {
-	CheckOptions
+	LocalTargetOptions
 	Service string
 	Tail    int
 	Since   string
@@ -226,7 +226,7 @@ func (s *Service) Adopt(ctx context.Context, options AdoptOptions) (Result, erro
 	if err != nil {
 		return Result{}, err
 	}
-	if environmentType(info.Edition) == "cloud" {
+	if strings.EqualFold(strings.TrimSpace(info.Edition), "cloud") {
 		return Result{}, result.New("precondition", "Cloud 服务不能绑定为本机生命周期")
 	}
 	record := deploy.Record{Driver: deploy.DriverDockerCompose, CoreVersion: info.Version, Profile: profile, ComposeProject: project, ComposeFile: composeFile, DataDir: filepath.Join(filepath.Dir(composeFile), "data"), Endpoint: endpoint, Port: endpointPort(endpoint)}
@@ -316,7 +316,7 @@ func (s *Service) Restart(ctx context.Context, options LifecycleOptions) (Result
 }
 
 func (s *Service) LocalLogs(ctx context.Context, options LocalLogsOptions) (Result, error) {
-	record, diagnostics, err := s.lifecycleTarget(ctx, options.CheckOptions)
+	record, diagnostics, err := s.lifecycleTarget(options.LocalTargetOptions)
 	if err != nil {
 		return Result{}, err
 	}
@@ -339,7 +339,7 @@ func (s *Service) LocalLogs(ctx context.Context, options LocalLogsOptions) (Resu
 }
 
 func (s *Service) FollowLocalLogs(ctx context.Context, options LocalLogsOptions) error {
-	record, diagnostics, err := s.lifecycleTarget(ctx, options.CheckOptions)
+	record, diagnostics, err := s.lifecycleTarget(options.LocalTargetOptions)
 	if err != nil {
 		return err
 	}
@@ -396,7 +396,7 @@ func (s *Service) FollowLocalLogs(ctx context.Context, options LocalLogsOptions)
 }
 
 func (s *Service) runLifecycle(ctx context.Context, action string, options LifecycleOptions) (Result, error) {
-	record, diagnostics, err := s.lifecycleTarget(ctx, options.CheckOptions)
+	record, diagnostics, err := s.lifecycleTarget(options.LocalTargetOptions)
 	if err != nil {
 		return Result{}, err
 	}
@@ -456,33 +456,19 @@ func (s *Service) runLifecycle(ctx context.Context, action string, options Lifec
 	return response, normalizeLocalMutationError(err)
 }
 
-func (s *Service) lifecycleTarget(ctx context.Context, options CheckOptions) (deploy.Record, deploy.Diagnostics, error) {
-	resolved, discoveryErr := s.discoverActiveEnvironment(ctx, options, false)
-	if discoveryErr != nil && result.AsError(discoveryErr).Kind != "network" {
-		return deploy.Record{}, deploy.Diagnostics{}, discoveryErr
+func (s *Service) lifecycleTarget(options LocalTargetOptions) (deploy.Record, deploy.Diagnostics, error) {
+	diagnostics, err := s.localDiagnostics(options.Dir)
+	if err != nil {
+		return deploy.Record{}, deploy.Diagnostics{}, err
 	}
-	if resolved.Environment.Identity.Status == "mismatch" || resolved.Environment.Connection.Authentication == "failed" {
-		if discoveryErr != nil {
-			return deploy.Record{}, deploy.Diagnostics{}, discoveryErr
-		}
-		return deploy.Record{}, deploy.Diagnostics{}, result.New("precondition", "当前 context 身份或 Workspace 绑定未通过")
+	record, err := diagnostics.Store.Read()
+	if err != nil {
+		return deploy.Record{}, deploy.Diagnostics{}, mapLocalError(localRecordError(err))
 	}
-	if !resolved.LocalMatch || resolved.Diagnostics == nil {
-		return deploy.Record{}, deploy.Diagnostics{}, result.New("precondition", "当前 Active Environment 未绑定本机受管部署")
-	}
-	if resolved.Environment.Type == "cloud" || !sameLocalEndpoint(resolved.Record.Endpoint, resolved.Connection.Endpoint) {
-		return deploy.Record{}, deploy.Diagnostics{}, result.New("precondition", "当前 Active Environment 与本机部署 endpoint 不一致")
-	}
-	if resolved.Record.Driver != deploy.DriverDockerCompose {
+	if record.Driver != deploy.DriverDockerCompose {
 		return deploy.Record{}, deploy.Diagnostics{}, result.New("incompatible", "当前本机部署不支持 Docker Compose 生命周期操作")
 	}
-	return resolved.Record, *resolved.Diagnostics, nil
-}
-
-func sameLocalEndpoint(left, right string) bool {
-	first, firstErr := endpointutil.Normalize(left)
-	second, secondErr := endpointutil.Normalize(right)
-	return firstErr == nil && secondErr == nil && first == second
+	return record, diagnostics, nil
 }
 
 func (s *Service) rejectOtherManagedDeployment(dir string) error {

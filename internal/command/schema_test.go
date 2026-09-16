@@ -88,22 +88,17 @@ func TestSchemaIsOfflineStableAndDescribesCommands(t *testing.T) {
 			t.Fatalf("%s must declare a connection requirement", name)
 		}
 	}
-	if !commands["status"].RequiresConnection || !commands["doctor"].RequiresConnection {
-		t.Fatalf("status/doctor must resolve an Active Environment: status=%#v doctor=%#v", commands["status"], commands["doctor"])
-	}
 	for _, name := range []string{"status", "doctor"} {
-		for _, operation := range []string{"system.info", "system.context", "system.capabilities"} {
-			if !hasOperationID(commands[name].Operations, operation) {
-				t.Fatalf("%s is missing discovery operation %s: %#v", name, operation, commands[name].Operations)
-			}
+		if commands[name].RequiresConnection || len(commands[name].Operations) != 0 {
+			t.Fatalf("%s must be local-only: %#v", name, commands[name])
 		}
 		flags := indexSchemaFlags(commands[name].Flags)
-		if flags["timeout"].Applicability != nil {
-			t.Fatalf("%s must accept the global timeout: %#v", name, flags["timeout"])
+		if flags["timeout"].Applicability != nil || !hasFlag(commands[name].Flags, "dir", "local", false) {
+			t.Fatalf("%s local selector is incomplete: %#v", name, commands[name].Flags)
 		}
-		for _, flag := range []string{"config", "context", "endpoint", "api-key-stdin"} {
-			if flags[flag].Applicability != nil {
-				t.Fatalf("%s must accept Active Environment selector %s: %#v", name, flag, flags[flag])
+		for _, flag := range []string{"context", "endpoint", "api-key-stdin"} {
+			if flags[flag].Applicability == nil || flags[flag].Applicability.Status != "rejected" {
+				t.Fatalf("%s must reject remote selector %s: %#v", name, flag, flags[flag])
 			}
 		}
 	}
@@ -117,6 +112,11 @@ func TestSchemaIsOfflineStableAndDescribesCommands(t *testing.T) {
 	adopt := commands["adopt"]
 	if !adopt.Mutating || !adopt.RequiresConnection || !hasFlag(adopt.Flags, "endpoint", "inherited", true) || !hasFlag(adopt.Flags, "file", "local", true) || !hasFlag(adopt.Flags, "project", "local", true) || !isRejected(adopt.Flags, "context") {
 		t.Fatalf("adopt lifecycle contract is inaccurate: %#v", adopt)
+	}
+	for _, name := range []string{"start", "stop", "restart", "logs", "upgrade", "uninstall"} {
+		if !hasFlag(commands[name].Flags, "dir", "local", false) || !isRejected(commands[name].Flags, "context") || !isRejected(commands[name].Flags, "endpoint") || !isRejected(commands[name].Flags, "api-key-stdin") {
+			t.Fatalf("%s local target contract is inaccurate: %#v", name, commands[name])
+		}
 	}
 	for _, name := range []string{"start", "stop", "restart"} {
 		if !commands[name].Mutating || commands[name].RequiresYes {

@@ -130,7 +130,7 @@ func TestInstallAndLifecycleCommands(t *testing.T) {
 	if data, _ := os.ReadFile(record.ComposeFile); strings.Contains(string(data), ":latest") {
 		t.Fatal("compose 不应该使用 latest")
 	}
-	options := LifecycleOptions{CheckOptions: CheckOptions{Endpoint: record.Endpoint, EndpointSet: true}}
+	options := LifecycleOptions{}
 	stopped, err := service.Stop(context.Background(), options)
 	if err != nil || actionStatus(stopped) != "stopped" {
 		t.Fatalf("Stop() = %#v, %v", stopped.Data, err)
@@ -143,7 +143,7 @@ func TestInstallAndLifecycleCommands(t *testing.T) {
 	if err != nil || actionStatus(restarted) != "running" {
 		t.Fatalf("Restart() = %#v, %v", restarted.Data, err)
 	}
-	logs, err := service.LocalLogs(context.Background(), LocalLogsOptions{CheckOptions: options.CheckOptions, Tail: 20})
+	logs, err := service.LocalLogs(context.Background(), LocalLogsOptions{Tail: 20})
 	if err != nil || logs.Data.(map[string]any)["count"] != 2 {
 		t.Fatalf("LocalLogs() = %#v, %v", logs.Data, err)
 	}
@@ -169,7 +169,7 @@ func TestInstallDryRunDoesNotWriteOrPull(t *testing.T) {
 	}
 }
 
-func TestLifecycleRejectsCloudWithoutDockerMutation(t *testing.T) {
+func TestLifecycleDoesNotUseCloudServiceDiscovery(t *testing.T) {
 	root := t.TempDir()
 	dir := filepath.Join(root, "deployment")
 	runner := &lifecycleTestRunner{state: "running"}
@@ -184,16 +184,13 @@ func TestLifecycleRejectsCloudWithoutDockerMutation(t *testing.T) {
 		LocalDir: dir, LocalRunner: runner, Transport: lifecycleTransport{runner: runner, edition: "cloud"},
 		DefaultConfigPath: func() (string, error) { return filepath.Join(root, "config.yaml"), nil },
 	})
-	_, err := service.Stop(context.Background(), LifecycleOptions{CheckOptions: CheckOptions{Endpoint: record.Endpoint, EndpointSet: true}})
-	if result.AsError(err).Kind != "precondition" {
-		t.Fatalf("Stop(cloud) error = %v", err)
-	}
-	if len(runner.calls) != 0 {
-		t.Fatalf("cloud context 不应调用 Docker: %v", runner.calls)
+	value, err := service.Stop(context.Background(), LifecycleOptions{})
+	if err != nil || actionStatus(value) != "stopped" {
+		t.Fatalf("Stop() = %#v, %v", value.Data, err)
 	}
 }
 
-func TestLifecycleRejectsFailedServiceDiscoveryBeforeDockerMutation(t *testing.T) {
+func TestLifecycleDoesNotCallServiceDiscoveryBeforeDockerMutation(t *testing.T) {
 	root := t.TempDir()
 	dir := filepath.Join(root, "deployment")
 	runner := &lifecycleTestRunner{state: "running"}
@@ -204,13 +201,15 @@ func TestLifecycleRejectsFailedServiceDiscoveryBeforeDockerMutation(t *testing.T
 	if err := (deploy.Store{Dir: dir}).Write(context.Background(), record); err != nil {
 		t.Fatal(err)
 	}
+	requests := 0
 	transport := taskRoundTripFunc(func(*http.Request) (*http.Response, error) {
+		requests++
 		return &http.Response{StatusCode: http.StatusInternalServerError, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"code":500,"msg":"failed"}`))}, nil
 	})
 	service := New(Dependencies{LocalDir: dir, LocalRunner: runner, Transport: transport, DefaultConfigPath: func() (string, error) { return filepath.Join(root, "config.yaml"), nil }})
-	_, err := service.Stop(context.Background(), LifecycleOptions{CheckOptions: CheckOptions{Endpoint: record.Endpoint, EndpointSet: true}})
-	if result.AsError(err).Kind != "server" || len(runner.calls) != 0 {
-		t.Fatalf("Stop() should reject failed discovery before Docker: error=%v calls=%v", err, runner.calls)
+	value, err := service.Stop(context.Background(), LifecycleOptions{})
+	if err != nil || requests != 0 || actionStatus(value) != "stopped" {
+		t.Fatalf("Stop() used HTTP discovery: error=%v requests=%d calls=%v", err, requests, runner.calls)
 	}
 }
 
@@ -230,7 +229,7 @@ func TestRestartStoppedDeploymentDoesNotStart(t *testing.T) {
 		LocalHTTP:         &http.Client{Transport: lifecycleTransport{runner: runner}},
 		DefaultConfigPath: func() (string, error) { return filepath.Join(root, "config.yaml"), nil },
 	})
-	_, err := service.Restart(context.Background(), LifecycleOptions{CheckOptions: CheckOptions{Endpoint: record.Endpoint, EndpointSet: true}})
+	_, err := service.Restart(context.Background(), LifecycleOptions{})
 	if result.AsError(err).Kind != "precondition" || runner.isRunning() {
 		t.Fatalf("Restart(stopped) error = %v, running = %v", err, runner.isRunning())
 	}
@@ -276,7 +275,7 @@ func TestFollowLogsUsesJSONLines(t *testing.T) {
 	}
 	var out bytes.Buffer
 	service := New(Dependencies{LocalDir: dir, LocalRunner: runner, Transport: lifecycleTransport{runner: runner}, LocalLogOut: &out, DefaultConfigPath: func() (string, error) { return filepath.Join(root, "config.yaml"), nil }})
-	err := service.FollowLocalLogs(context.Background(), LocalLogsOptions{CheckOptions: CheckOptions{Endpoint: record.Endpoint, EndpointSet: true}, Tail: 20, Follow: true, Format: "json"})
+	err := service.FollowLocalLogs(context.Background(), LocalLogsOptions{Tail: 20, Follow: true, Format: "json"})
 	if err != nil || strings.Count(strings.TrimSpace(out.String()), "\n") != 1 || !strings.Contains(out.String(), `"line":"first"`) {
 		t.Fatalf("FollowLocalLogs() output = %q, err = %v", out.String(), err)
 	}

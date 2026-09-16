@@ -113,9 +113,9 @@ func upgradeServiceFixture(t *testing.T, failUp bool) (*Service, *upgradeRunner,
 }
 
 func TestUpgradeDryRunDoesNotStopOrPull(t *testing.T) {
-	service, runner, record, dir := upgradeServiceFixture(t, false)
+	service, runner, _, dir := upgradeServiceFixture(t, false)
 	response, err := service.Upgrade(context.Background(), UpgradeOptions{
-		CheckOptions: CheckOptions{Endpoint: record.Endpoint, EndpointSet: true}, Version: "v4.10.10", DryRun: true,
+		Version: "v4.10.10", DryRun: true,
 	})
 	if err != nil || response.Data.(map[string]any)["dry_run"] != true {
 		t.Fatalf("Upgrade(dry-run) = %+v, %v", response.Data, err)
@@ -131,9 +131,9 @@ func TestUpgradeDryRunDoesNotStopOrPull(t *testing.T) {
 }
 
 func TestUpgradeCompletesAfterBackupAndVersionReadback(t *testing.T) {
-	service, runner, record, dir := upgradeServiceFixture(t, false)
+	service, runner, _, dir := upgradeServiceFixture(t, false)
 	response, err := service.Upgrade(context.Background(), UpgradeOptions{
-		CheckOptions: CheckOptions{Endpoint: record.Endpoint, EndpointSet: true}, Version: "v4.10.10", Yes: true,
+		Version: "v4.10.10", Yes: true,
 	})
 	if err != nil || response.Data.(map[string]any)["completed"] != true {
 		t.Fatalf("Upgrade() = %+v, %v", response.Data, err)
@@ -155,9 +155,9 @@ func TestUpgradeCompletesAfterBackupAndVersionReadback(t *testing.T) {
 }
 
 func TestUpgradeFailurePreservesBackupAndBlocksRestart(t *testing.T) {
-	service, runner, record, dir := upgradeServiceFixture(t, true)
+	service, runner, _, dir := upgradeServiceFixture(t, true)
 	_, err := service.Upgrade(context.Background(), UpgradeOptions{
-		CheckOptions: CheckOptions{Endpoint: record.Endpoint, EndpointSet: true}, Version: "v4.10.10", Yes: true,
+		Version: "v4.10.10", Yes: true,
 	})
 	if result.AsError(err).Kind != "recovery_required" {
 		t.Fatalf("failure error = %v", err)
@@ -173,7 +173,7 @@ func TestUpgradeFailurePreservesBackupAndBlocksRestart(t *testing.T) {
 	if err != nil || current.CoreVersion != "v4.10.9" {
 		t.Fatalf("失败后不得宣布升级成功: %+v, %v", current, err)
 	}
-	if _, err := service.Start(context.Background(), LifecycleOptions{CheckOptions: CheckOptions{Endpoint: record.Endpoint, EndpointSet: true}}); result.AsError(err).Kind != "recovery_required" {
+	if _, err := service.Start(context.Background(), LifecycleOptions{}); result.AsError(err).Kind != "recovery_required" {
 		t.Fatalf("未恢复现场仍允许 start: %v", err)
 	}
 	if runner.running {
