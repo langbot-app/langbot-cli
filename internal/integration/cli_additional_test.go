@@ -144,7 +144,7 @@ func TestOutputFormatsAndBusinessErrorExit(t *testing.T) {
 	defer server.Close()
 	requireSuccess(t, run(t, path, nil, "", "context", "update", "demo", "--endpoint", server.URL))
 	requireSuccess(t, run(t, path, nil, "", "context", "use", "demo"))
-	failed := run(t, path, nil, "", "status")
+	failed := run(t, path, nil, "", "context", "check")
 	if failed.code != 10 || failed.data["ok"] != false {
 		t.Fatalf("business error did not produce server exit code: %s", failed.out)
 	}
@@ -177,13 +177,12 @@ func TestHTTPAuthFailuresRemainReachableDiagnostics(t *testing.T) {
 			defer server.Close()
 			requireSuccess(t, run(t, path, nil, "", "context", "add", "demo", "--endpoint", server.URL))
 			requireSuccess(t, run(t, path, nil, "", "context", "use", "demo"))
-			result := run(t, path, nil, "", "status")
+			result := run(t, path, nil, "", "context", "check")
 			if result.code == 0 {
 				t.Fatalf("HTTP %d unexpectedly succeeded: %s", status, result.out)
 			}
 			data := result.data["data"].(map[string]any)
-			connection := data["connection"].(map[string]any)
-			if connection["reachable"] != true || data["discovery"] != "failed" {
+			if data["reachable"] != true || data["diagnostic_ok"] != false {
 				t.Fatalf("HTTP %d was classified as unreachable instead of an auth diagnostic: %s", status, result.out)
 			}
 		})
@@ -192,13 +191,12 @@ func TestHTTPAuthFailuresRemainReachableDiagnostics(t *testing.T) {
 
 func TestConnectionFailureIsUnreachableDiagnostic(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
-	result := run(t, path, nil, "", "--endpoint", "http://127.0.0.1:1", "--timeout", "100ms", "status")
+	result := run(t, path, nil, "", "--endpoint", "http://127.0.0.1:1", "--timeout", "100ms", "context", "check")
 	if result.code != 7 {
 		t.Fatalf("connection failure exit code = %d, want 7: %s", result.code, result.out)
 	}
 	data := result.data["data"].(map[string]any)
-	connection := data["connection"].(map[string]any)
-	if connection["reachable"] != false || data["discovery"] != "failed" {
+	if data["reachable"] != false || data["diagnostic_ok"] != false {
 		t.Fatalf("connection failure was classified as reachable: %s", result.out)
 	}
 }
@@ -258,7 +256,7 @@ func TestCanceledStdinCredentialExitsWithoutHTTP(t *testing.T) {
 	go func() {
 		code, out, _, _ := invokeRawLookupContext(ctx, path, nil, func(string) (string, bool) {
 			return "", false
-		}, reader, "--api-key-stdin", "--endpoint", server.URL, "status")
+		}, reader, "--api-key-stdin", "--endpoint", server.URL, "context", "check")
 		done <- struct {
 			code int
 			out  string

@@ -161,7 +161,7 @@ func TestContextSnapshotAndCredentialIsolation(t *testing.T) {
 	hold.Store(true)
 	done := make(chan execution, 1)
 	go func() {
-		code, out, _, err := invoke(path, keys, strings.NewReader(""), "status")
+		code, out, _, err := invoke(path, keys, strings.NewReader(""), "context", "check")
 		if err != nil {
 			done <- execution{code: -1, out: err.Error()}
 			return
@@ -190,16 +190,16 @@ func TestContextSnapshotAndCredentialIsolation(t *testing.T) {
 	if crossed.Load() {
 		t.Fatal("request target or credential crossed contexts")
 	}
-	if !strings.Contains(first.out, `"version": "alpha"`) {
+	if !strings.Contains(first.out, `"server_version": "alpha"`) {
 		t.Fatalf("in-flight command lost its snapshot: %s", first.out)
 	}
-	requireSuccess(t, run(t, path, keys, "", "status"))
+	requireSuccess(t, run(t, path, keys, "", "context", "check"))
 	before := countB.Load()
-	blocked := run(t, path, keys, "", "--context", "alpha", "--endpoint", b.URL+"/prefix", "status")
-	if blocked.code == 0 || countB.Load() <= before || crossed.Load() {
-		t.Fatal("endpoint override should probe anonymously without reusing the previous target's key")
+	blocked := run(t, path, keys, "", "--context", "alpha", "--endpoint", b.URL+"/prefix", "context", "check")
+	if blocked.code != 3 || countB.Load() != before || crossed.Load() || !strings.Contains(blocked.out, "必须显式提供新的 API Key") {
+		t.Fatalf("endpoint override should require a new credential before sending a request: code=%d before=%d after=%d crossed=%t output=%s", blocked.code, before, countB.Load(), crossed.Load(), blocked.out)
 	}
-	requireSuccess(t, run(t, path, keys, keys["BETA_KEY"]+"\n", "--context", "alpha", "--endpoint", b.URL+"/prefix", "--api-key-stdin", "status"))
+	requireSuccess(t, run(t, path, keys, keys["BETA_KEY"]+"\n", "--context", "alpha", "--endpoint", b.URL+"/prefix", "--api-key-stdin", "context", "check"))
 	show := run(t, path, nil, "", "context", "show", "alpha")
 	requireSuccess(t, show)
 	if !strings.Contains(show.out, "env:ALPHA_KEY") {
@@ -258,7 +258,7 @@ func TestLiveCore(t *testing.T) {
 	if endpoint == "" {
 		t.Skip("set LBCTL_TEST_ENDPOINT to run the read-only real Core check")
 	}
-	r := run(t, filepath.Join(t.TempDir(), "config.yaml"), nil, "", "--endpoint", endpoint, "status")
+	r := run(t, filepath.Join(t.TempDir(), "config.yaml"), nil, "", "--endpoint", endpoint, "context", "check")
 	requireSuccess(t, r)
 	data := r.data["data"].(map[string]any)
 	if data["identity"] != "unknown" || data["capabilities"] != "unknown" || data["server_version"] == "" {
