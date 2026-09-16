@@ -107,6 +107,15 @@ type TaskListFilters struct {
 }
 
 var capabilityOperationIDs = []string{
+	"monitoring.messages",
+	"monitoring.llm_calls",
+	"monitoring.tool_calls",
+	"monitoring.embedding_calls",
+	"monitoring.sessions",
+	"monitoring.errors",
+	"monitoring.message_details",
+	"monitoring.session_analysis",
+
 	"bot.list",
 	"bot.get",
 	"bot.create",
