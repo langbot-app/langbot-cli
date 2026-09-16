@@ -408,6 +408,7 @@ func newPipelineCommand(service *app.Service, deps Dependencies, flags *globalFl
 	command.AddCommand(newPipelineApplyCommand(service, deps, flags))
 	command.AddCommand(newPipelineCopyCommand(service, deps, flags))
 	command.AddCommand(newPipelineDeleteCommand(service, deps, flags))
+	addPipelineExtensions(command, service, deps, flags)
 	return command
 }
 

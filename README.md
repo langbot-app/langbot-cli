@@ -249,3 +249,29 @@ LBCTL_TEST_ENDPOINT=http://localhost:5300 \
 ```
 
 `make cross-build` 生成 macOS、Linux、Windows 的 amd64/arm64 二进制及 `dist/checksums.txt`。交叉构建成功不代表已经在对应系统完成实机验收。
+
+## Pipeline 扩展绑定
+
+```sh
+lbctl pipeline extensions get PIPELINE_UUID -o json
+```
+
+`pipeline extensions update PIPELINE_UUID --file extensions.yaml` **完整替换**绑定，以下八个字段全部必填；缺少字段会拒绝写入。先用 `extensions get` 查看当前绑定与可选资源，在请求中保留所有仍需使用的项。更新成功后自动回读核对，`--dry-run` 只检查参数与前置条件。
+
+以下示例会清空四类显式绑定并关闭全部启用开关。
+
+```yaml
+bound_plugins: []
+bound_mcp_servers: []
+bound_skills: []
+bound_mcp_resources: []
+enable_all_plugins: false
+enable_all_mcp_servers: false
+enable_all_skills: false
+mcp_resource_agent_read_enabled: false
+```
+
+空数组配合 `enable_all_*: false` 表示不绑定该类扩展；设为 `true` 则启用该类全部可用扩展。插件项使用 `{author: author, name: plugin}`，MCP Server 填 `available_mcp_servers` 中的 `uuid`，Skill 填 `available_skills` 中的 `name`。MCP Resource 项例如 `{server_uuid: SERVER_UUID, uri: "docs://guide"}`。`mcp_resource_agent_read_enabled` 控制 Agent 列举、读取 MCP 资源及将绑定资源放入上下文。
+
+
+更新要求已保存且绑定 Workspace 的 context、`resource.manage` 和 `resource.view` 权限，以及 Core 对应 capability。

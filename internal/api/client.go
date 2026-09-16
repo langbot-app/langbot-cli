@@ -107,6 +107,9 @@ type TaskListFilters struct {
 }
 
 var capabilityOperationIDs = []string{
+	"pipeline.extensions.get",
+	"pipeline.extensions.update",
+
 	"bot.list",
 	"bot.get",
 	"bot.create",
@@ -1402,6 +1405,9 @@ func knownWritePath(method, path string) bool {
 		if method != http.MethodDelete || !safeNestedPath(path, pluginsPath, "", 2) || len(query) != 1 || len(query["delete_data"]) != 1 || query.Get("delete_data") != "true" {
 			return false
 		}
+	}
+	if method == http.MethodPut && nestedPath(path, pipelinesPath, 1, "extensions") {
+		return true
 	}
 	if method == http.MethodPost && path == documentUploadPath {
 		return true
