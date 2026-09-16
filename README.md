@@ -249,3 +249,16 @@ LBCTL_TEST_ENDPOINT=http://localhost:5300 \
 ```
 
 `make cross-build` 生成 macOS、Linux、Windows 的 amd64/arm64 二进制及 `dist/checksums.txt`。交叉构建成功不代表已经在对应系统完成实机验收。
+
+## RAG 配置发现
+
+这些命令需要 Core 声明对应 capability，并要求 `resource.view` 权限；可用 `-o json` 或 `-o yaml` 输出。
+
+```sh
+lbctl knowledge-engine list
+lbctl knowledge-engine creation-schema author/engine -o yaml
+lbctl knowledge-engine retrieval-schema author/engine -o json
+lbctl knowledge-parser list --mime-type application/pdf
+```
+
+从引擎列表选择 `plugin_id`；creation schema 定义创建知识库的参数，retrieval schema 定义检索参数。随后使用已有 `knowledge-base create`、`ingest`、`retrieve` 命令完成入库和检索。引擎不存在、权限不足或服务端未声明 capability 时返回非零退出码。
