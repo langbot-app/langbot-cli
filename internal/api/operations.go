@@ -57,6 +57,9 @@ func validOperationQuery(operation string, query url.Values) bool {
 	case "skill.files.list":
 		allowed = map[string]bool{"path": true, "include_hidden": true}
 	default:
+		if strings.HasPrefix(operation, "monitoring.") {
+			return validMonitoringQuery(operation, query)
+		}
 		return len(query) == 0
 	}
 	for key, values := range query {
@@ -82,6 +85,9 @@ func validOperationQuery(operation string, query url.Values) bool {
 }
 
 func resolveGetOperation(path string) (Operation, bool) {
+	if op, ok := resolveMonitoringOperation(path); ok {
+		return op, true
+	}
 	switch path {
 	case tasksPath:
 		return Operation{ID: "task.list", Method: http.MethodGet, Path: path, ReadOnly: true, Permission: "resource.view"}, true

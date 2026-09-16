@@ -249,3 +249,21 @@ LBCTL_TEST_ENDPOINT=http://localhost:5300 \
 ```
 
 `make cross-build` 生成 macOS、Linux、Windows 的 amd64/arm64 二进制及 `dist/checksums.txt`。交叉构建成功不代表已经在对应系统完成实机验收。
+
+## 应用运行记录诊断
+
+通过当前 API Key 所属 Workspace 查询运行记录、失败消息详情及调用错误，需要 Core 对应 capability。
+
+```sh
+lbctl monitoring errors --pipeline PIPELINE_UUID --limit 20
+lbctl monitoring messages --pipeline PIPELINE_UUID --start-time 2026-09-16T10:00:00+08:00 --end-time 2026-09-16T10:05:00+08:00
+lbctl monitoring messages --session SESSION_ID --limit 20
+lbctl monitoring message MESSAGE_ID
+lbctl monitoring session SESSION_ID
+lbctl monitoring llm-calls --pipeline PIPELINE_UUID
+lbctl monitoring tool-calls --session SESSION_ID
+lbctl monitoring embedding-calls --knowledge-base KB_UUID
+lbctl monitoring sessions --active true
+```
+
+运行记录查询要求 `resource.view`。列表支持 `--limit 1..500` 和 `--offset`，Core 可进一步限制；`--start-time`、`--end-time` 使用 ISO 8601 时间。可用筛选条件见各命令 `--help`。
