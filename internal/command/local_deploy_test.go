@@ -3,6 +3,7 @@ package command
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -65,7 +66,11 @@ func TestStatusIgnoresSelectedRemoteContext(t *testing.T) {
 	if code != 0 || remoteRequests != 0 || runner.calls == 0 {
 		t.Fatalf("status used remote context: code=%d requests=%d calls=%d output=%s", code, remoteRequests, runner.calls, out.String())
 	}
-	for _, expected := range []string{`"status": "running"`, `"deployment_id": "local-langbot"`, `"dir": "` + localDir + `"`} {
+	data := commandData(t, out.String())
+	if data["dir"] != localDir || data["status"] != "running" {
+		t.Fatalf("local status target mismatch: %#v", data)
+	}
+	for _, expected := range []string{`"status": "running"`, `"deployment_id": "local-langbot"`} {
 		if !strings.Contains(out.String(), expected) {
 			t.Fatalf("local status omitted %s: %s", expected, out.String())
 		}
@@ -102,7 +107,8 @@ func TestStatusUsesDirOverride(t *testing.T) {
 	code := Execute(context.Background(), []string{"--output", "json", "status", "--dir", overrideDir}, Dependencies{
 		Out: &out, LocalRunner: runner, LocalHTTP: localHTTP, LocalDir: defaultDir,
 	})
-	if code != 0 || !strings.Contains(out.String(), `"status": "stopped"`) || !strings.Contains(out.String(), `"dir": "`+overrideDir+`"`) {
+	data := commandData(t, out.String())
+	if code != 0 || data["status"] != "stopped" || data["dir"] != overrideDir {
 		t.Fatalf("status did not use --dir: code=%d output=%s", code, out.String())
 	}
 }
@@ -151,7 +157,10 @@ func TestDoctorIgnoresSelectedRemoteContext(t *testing.T) {
 	if code != 0 || remoteRequests != 0 || runner.calls == 0 {
 		t.Fatalf("doctor used remote context: code=%d requests=%d calls=%d output=%s", code, remoteRequests, runner.calls, out.String())
 	}
-	for _, expected := range []string{`"dir": "` + localDir + `"`, `"name": "docker_cli"`, `"name": "deployment_record"`} {
+	if data := commandData(t, out.String()); data["dir"] != localDir {
+		t.Fatalf("doctor target mismatch: %#v", data)
+	}
+	for _, expected := range []string{`"name": "docker_cli"`, `"name": "deployment_record"`} {
 		if !strings.Contains(out.String(), expected) {
 			t.Fatalf("doctor omitted %s: %s", expected, out.String())
 		}
@@ -223,6 +232,17 @@ func writeDeploymentRecord(t *testing.T, record deploy.Record) string {
 		}
 	}
 	return dir
+}
+
+func commandData(t *testing.T, output string) map[string]any {
+	t.Helper()
+	var envelope struct {
+		Data map[string]any `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(output), &envelope); err != nil {
+		t.Fatalf("invalid JSON output: %v; output=%s", err, output)
+	}
+	return envelope.Data
 }
 
 func environmentLookup(name string) (string, bool) {
