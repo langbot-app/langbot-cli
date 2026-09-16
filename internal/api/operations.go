@@ -82,6 +82,9 @@ func validOperationQuery(operation string, query url.Values) bool {
 }
 
 func resolveGetOperation(path string) (Operation, bool) {
+	if op, ok := resolveSandboxOperation(path); ok {
+		return op, true
+	}
 	switch path {
 	case tasksPath:
 		return Operation{ID: "task.list", Method: http.MethodGet, Path: path, ReadOnly: true, Permission: "resource.view"}, true

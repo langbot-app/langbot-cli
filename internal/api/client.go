@@ -107,6 +107,10 @@ type TaskListFilters struct {
 }
 
 var capabilityOperationIDs = []string{
+	"sandbox.status",
+	"sandbox.sessions",
+	"sandbox.errors",
+
 	"bot.list",
 	"bot.get",
 	"bot.create",
@@ -1374,6 +1378,14 @@ func (c Client) doWithContentType(ctx context.Context, target Target, method, pa
 		return response{}, businessError(parsed.Code, requestID, resp.StatusCode, target.APIKey)
 	}
 	data, ok := parseDataObject(parsed.Data)
+	if !ok && (path == "/api/v1/box/sessions" || path == "/api/v1/box/errors") {
+		var items []any
+		decoder := json.NewDecoder(bytes.NewReader(parsed.Data))
+		decoder.UseNumber()
+		if decoder.Decode(&items) == nil && items != nil {
+			data, ok = map[string]any{strings.TrimPrefix(path, "/api/v1/box/"): items}, true
+		}
+	}
 	if !ok && allowNilData && string(parsed.Data) == "null" {
 		data = nil
 		ok = true
@@ -2115,6 +2127,9 @@ func httpError(status int, code json.RawMessage, requestID, secret string) *resu
 	err := result.New(kind, httpStatusMessage(status))
 	err.HTTPStatus = status
 	err.ServerCode = safeServerCode(code, secret)
+	if err.ServerCode == "managed_sandbox_unavailable" {
+		err.Message = "托管 sandbox 不可用；请检查 Workspace 的 sandbox 授权和服务状态"
+	}
 	err.RequestID = requestID
 	return err
 }

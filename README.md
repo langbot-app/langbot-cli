@@ -249,3 +249,15 @@ LBCTL_TEST_ENDPOINT=http://localhost:5300 \
 ```
 
 `make cross-build` 生成 macOS、Linux、Windows 的 amd64/arm64 二进制及 `dist/checksums.txt`。交叉构建成功不代表已经在对应系统完成实机验收。
+
+## Sandbox 只读诊断
+
+```sh
+lbctl sandbox status
+lbctl sandbox sessions
+lbctl sandbox errors
+```
+
+Sandbox 查询只读当前 Workspace：状态要求 `resource.view`，会话和错误要求 `audit.view`。托管 sandbox 仍受服务端准入限制；状态保留 `enabled`、`available` 和服务端不可用原因，查询不会创建执行会话。
+
+需要 Core 声明对应 capability；支持 `-o json` 和 `-o yaml`。`enabled: false` 表示未启用，`enabled: true` 且 `available: false` 表示不可用。

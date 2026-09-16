@@ -148,6 +148,7 @@ func newRoot(deps Dependencies, flags *globalFlags, service *app.Service) *cobra
 	root.AddCommand(newModelCommand(service, deps, flags))
 	root.AddCommand(newTaskCommand(service, deps, flags))
 	root.AddCommand(newKnowledgeBaseCommand(service, deps, flags))
+	root.AddCommand(newSandboxCommand(service, deps, flags))
 	root.AddCommand(newPluginCommand(service, deps, flags))
 	root.AddCommand(newSkillCommand(service, deps, flags))
 	root.AddCommand(newMCPServerCommand(service, deps, flags))
