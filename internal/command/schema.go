@@ -132,6 +132,7 @@ var schemaMetaByName = map[string]schemaCommandMeta{
 	"knowledge-parser.list":             readMeta(operationIDs("knowledge_parser.list")...),
 	"pipeline.extensions.get":           readMeta(operationIDs("pipeline.extensions.get")...),
 	"pipeline.extensions.update":        writeMeta(operationIDs("pipeline.extensions.update"), schemaWriteOptions{SupportsDryRun: true, RequiredFlags: []string{"file"}, Readbacks: []schemaOperation{readbackID("pipeline.extensions.get")}}),
+	"pipeline.run":                      writeMeta(operationIDs("pipeline.run"), schemaWriteOptions{SupportsDryRun: true, RequiredFlags: []string{"message"}, Preconditions: []schemaOperation{preconditionID("pipeline.get")}}),
 
 	"schema":                {},
 	"completion":            {},

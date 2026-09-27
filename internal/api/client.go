@@ -113,6 +113,7 @@ var capabilityOperationIDs = []string{
 	"knowledge_parser.list",
 	"pipeline.extensions.get",
 	"pipeline.extensions.update",
+	"pipeline.run",
 
 	"bot.list",
 	"bot.get",
@@ -1411,6 +1412,9 @@ func knownWritePath(method, path string) bool {
 		}
 	}
 	if method == http.MethodPut && nestedPath(path, pipelinesPath, 1, "extensions") {
+		return true
+	}
+	if method == http.MethodPost && nestedPath(path, pipelinesPath, 1, "run") {
 		return true
 	}
 	if method == http.MethodPost && path == documentUploadPath {

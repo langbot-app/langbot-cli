@@ -290,3 +290,15 @@ mcp_resource_agent_read_enabled: false
 
 
 更新要求已保存且绑定 Workspace 的 context、`resource.manage` 和 `resource.view` 权限，以及 Core 对应 capability。
+
+## Pipeline 单轮试运行
+
+```sh
+lbctl pipeline run PIPELINE_UUID --message '请根据知识库回答这个问题' --timeout 2m -o json
+```
+
+试运行要求已保存且绑定 Workspace 的 context，以及 `runtime.operate` 和 `resource.view` 权限；会实际调用模型和配置的工具。每次新建会话，不复用之前的历史。返回回复、会话 ID、查询 ID 和可用的消息 ID；执行失败返回非零退出码。
+
+Core 最多等待 60 秒，CLI 的 `--timeout` 控制单次 HTTP 请求等待时间。超时是**执行状态未知**，不代表执行已取消；不要自动重发，可在 LangBot Web 管理界面的监控页（`/home/monitoring`）用返回的消息或会话标识查询运行记录。若客户端先超时而未收到标识，在该监控页按 Pipeline 和时间查近期记录。
+
+服务端需要声明 `pipeline.run` capability；可用 `--dry-run` 检查前置条件。
