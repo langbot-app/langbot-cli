@@ -20,13 +20,14 @@ const managementCapabilities = `{"schema_version":1,"operations":{
 "skill.list":{"supported":true},"skill.get":{"supported":true},"skill.create":{"supported":true},"skill.update":{"supported":true},"skill.delete":{"supported":true},"skill.files.list":{"supported":true},"skill.files.read":{"supported":true},"skill.files.write":{"supported":true}}}`
 
 type managementServer struct {
-	pluginPresent atomic.Bool
-	pluginConfig  atomic.Value
-	skillPresent  atomic.Bool
-	skillContent  atomic.Value
-	skillDesc     atomic.Value
-	deleteData    atomic.Bool
-	deleteCalls   atomic.Int32
+	pluginPresent     atomic.Bool
+	pluginConfig      atomic.Value
+	configMissingOnce atomic.Bool
+	skillPresent      atomic.Bool
+	skillContent      atomic.Value
+	skillDesc         atomic.Value
+	deleteData        atomic.Bool
+	deleteCalls       atomic.Int32
 }
 
 func newManagementService(t *testing.T, state *managementServer) (*Service, func()) {
@@ -63,6 +64,11 @@ func newManagementService(t *testing.T, state *managementServer) (*Service, func
 			fmt.Fprint(w, `{"code":0,"data":{"plugin":{"manifest":{"manifest":{"metadata":{"author":"author","name":"plugin"}}}}}}`)
 		case "/api/v1/plugins/author/plugin/config":
 			if r.Method == http.MethodGet {
+				if state.configMissingOnce.Swap(false) {
+					w.WriteHeader(http.StatusNotFound)
+					fmt.Fprint(w, `{"code":404,"msg":"plugin restarting"}`)
+					return
+				}
 				config := state.pluginConfig.Load().(map[string]any)
 				payload, _ := json.Marshal(config)
 				fmt.Fprintf(w, `{"code":0,"data":{"config":%s}}`, payload)
@@ -165,6 +171,17 @@ func TestPluginConfigUpdateDryRunAndReadbackMasksPlaceholder(t *testing.T) {
 	data := actual.Data.(map[string]any)
 	if data["verified"] != true || strings.Contains(fmt.Sprint(data), "connection-secret") {
 		t.Fatalf("unsafe update result = %#v", data)
+	}
+}
+
+func TestPluginConfigUpdateWaitsForRestartReadback(t *testing.T) {
+	state := &managementServer{}
+	service, closeServer := newManagementService(t, state)
+	defer closeServer()
+	state.configMissingOnce.Store(true)
+	result, err := service.PluginConfigUpdate(context.Background(), "author", "plugin", map[string]any{"mode": "updated"}, false, CheckOptions{ContextSet: true, Context: "managed"})
+	if err != nil || result.Data.(map[string]any)["verified"] != true {
+		t.Fatalf("plugin config update after restart: result=%#v err=%v", result, err)
 	}
 }
 

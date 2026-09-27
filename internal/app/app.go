@@ -1333,21 +1333,35 @@ func (s *Service) PluginConfigUpdate(ctx context.Context, author, name string, b
 	if err := client.PluginConfigUpdate(ctx, target, author, name, body); err != nil {
 		return Result{Meta: preflight.Meta()}, err
 	}
-	config, err := client.PluginConfig(ctx, target, author, name)
 	data := writeResultData("plugin.config.update", "")
 	delete(data, "uuid")
 	data["author"] = author
 	data["plugin_name"] = name
-	if err != nil {
-		return Result{Data: data, Meta: preflight.Meta()}, readbackError(err)
+	readbackCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		config, err := client.PluginConfig(readbackCtx, target, author, name)
+		if err == nil {
+			actual, ok := pluginConfigValue(config)
+			if ok && observableConfigEqual(body, actual) {
+				data["verified"] = true
+				data["config"] = actual
+				return Result{Data: data, Meta: preflight.Meta()}, nil
+			}
+		} else if result.AsError(err).HTTPStatus != http.StatusNotFound {
+			return Result{Data: data, Meta: preflight.Meta()}, readbackError(err)
+		}
+		select {
+		case <-readbackCtx.Done():
+			if err != nil {
+				return Result{Data: data, Meta: preflight.Meta()}, readbackError(err)
+			}
+			return Result{Data: data, Meta: preflight.Meta()}, verificationError("更新后回读到的 Plugin 配置不一致")
+		case <-ticker.C:
+		}
 	}
-	actual, ok := pluginConfigValue(config)
-	if !ok || !observableConfigEqual(body, actual) {
-		return Result{Data: data, Meta: preflight.Meta()}, verificationError("更新后回读到的 Plugin 配置不一致")
-	}
-	data["verified"] = true
-	data["config"] = actual
-	return Result{Data: data, Meta: preflight.Meta()}, nil
 }
 
 func (s *Service) PluginDelete(ctx context.Context, author, name string, deleteData, confirmed, dryRun, wait bool, waitOptions WaitOptions, options CheckOptions) (Result, error) {
