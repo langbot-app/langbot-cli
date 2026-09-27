@@ -15,16 +15,18 @@ LangBot 的独立命令行工具，二进制名为 `lbctl`。它通过 HTTP 管�
 macOS、Linux 或 Windows Git Bash：
 
 ```sh
-curl -fsSL https://github.com/langbot-app/langbot-cli/releases/latest/download/install.sh | sh
+curl -fsSL https://download.langbot.app/install.sh | sh
 ```
 
 Windows PowerShell：
 
 ```powershell
-irm https://github.com/langbot-app/langbot-cli/releases/latest/download/install.ps1 | iex
+irm https://download.langbot.app/install.ps1 | iex
 ```
 
 安装脚本会自动选择当前平台的二进制并校验 SHA-256。Shell 脚本默认安装到 `~/.local/bin`；PowerShell 脚本默认安装到 `%LOCALAPPDATA%\Programs\lbctl` 并加入用户 `PATH`。
+
+下载域名由 Cloudflare Workers 分发，安装脚本、二进制和校验文件均从镜像获取。发行包同步自 [GitHub Releases](https://github.com/langbot-app/langbot-cli/releases)，也可以在那里直接下载原始文件。设置 `LBCTL_VERSION` 可安装指定的已发布版本。
 
 ## 源码构建
 
