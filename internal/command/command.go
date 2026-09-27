@@ -148,6 +148,7 @@ func newRoot(deps Dependencies, flags *globalFlags, service *app.Service) *cobra
 	root.AddCommand(newModelCommand(service, deps, flags))
 	root.AddCommand(newTaskCommand(service, deps, flags))
 	root.AddCommand(newKnowledgeBaseCommand(service, deps, flags))
+	root.AddCommand(newKnowledgeEngineCommand(service, deps, flags), newKnowledgeParserCommand(service, deps, flags))
 	root.AddCommand(newMonitoringCommand(service, deps, flags))
 	root.AddCommand(newPluginCommand(service, deps, flags))
 	root.AddCommand(newSkillCommand(service, deps, flags))
@@ -409,6 +410,8 @@ func newPipelineCommand(service *app.Service, deps Dependencies, flags *globalFl
 	command.AddCommand(newPipelineApplyCommand(service, deps, flags))
 	command.AddCommand(newPipelineCopyCommand(service, deps, flags))
 	command.AddCommand(newPipelineDeleteCommand(service, deps, flags))
+	addPipelineExtensions(command, service, deps, flags)
+	addPipelineRun(command, service, deps, flags)
 	return command
 }
 
