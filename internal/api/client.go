@@ -107,6 +107,10 @@ type TaskListFilters struct {
 }
 
 var capabilityOperationIDs = []string{
+	"knowledge_engine.list",
+	"knowledge_engine.creation_schema",
+	"knowledge_engine.retrieval_schema",
+	"knowledge_parser.list",
 	"pipeline.extensions.get",
 	"pipeline.extensions.update",
 

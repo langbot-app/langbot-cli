@@ -126,8 +126,12 @@ type schemaFlag struct {
 var placeholderPattern = regexp.MustCompile(`(<[^>]+>|\[[^]]+\])`)
 
 var schemaMetaByName = map[string]schemaCommandMeta{
-	"pipeline.extensions.get":    readMeta(operationIDs("pipeline.extensions.get")...),
-	"pipeline.extensions.update": writeMeta(operationIDs("pipeline.extensions.update"), schemaWriteOptions{SupportsDryRun: true, RequiredFlags: []string{"file"}, Readbacks: []schemaOperation{readbackID("pipeline.extensions.get")}}),
+	"knowledge-engine.list":             readMeta(operationIDs("knowledge_engine.list")...),
+	"knowledge-engine.creation-schema":  readMeta(operationIDs("knowledge_engine.creation_schema")...),
+	"knowledge-engine.retrieval-schema": readMeta(operationIDs("knowledge_engine.retrieval_schema")...),
+	"knowledge-parser.list":             readMeta(operationIDs("knowledge_parser.list")...),
+	"pipeline.extensions.get":           readMeta(operationIDs("pipeline.extensions.get")...),
+	"pipeline.extensions.update":        writeMeta(operationIDs("pipeline.extensions.update"), schemaWriteOptions{SupportsDryRun: true, RequiredFlags: []string{"file"}, Readbacks: []schemaOperation{readbackID("pipeline.extensions.get")}}),
 
 	"schema":                {},
 	"completion":            {},
