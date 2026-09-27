@@ -126,9 +126,24 @@ type schemaFlag struct {
 var placeholderPattern = regexp.MustCompile(`(<[^>]+>|\[[^]]+\])`)
 
 var schemaMetaByName = map[string]schemaCommandMeta{
-	"sandbox.status":   readMeta(operationIDs("sandbox.status")...),
-	"sandbox.sessions": readMeta(operationIDs("sandbox.sessions")...),
-	"sandbox.errors":   readMeta(operationIDs("sandbox.errors")...),
+	"knowledge-engine.list":             readMeta(operationIDs("knowledge_engine.list")...),
+	"knowledge-engine.creation-schema":  readMeta(operationIDs("knowledge_engine.creation_schema")...),
+	"knowledge-engine.retrieval-schema": readMeta(operationIDs("knowledge_engine.retrieval_schema")...),
+	"knowledge-parser.list":             readMeta(operationIDs("knowledge_parser.list")...),
+	"pipeline.extensions.get":           readMeta(operationIDs("pipeline.extensions.get")...),
+	"pipeline.extensions.update":        writeMeta(operationIDs("pipeline.extensions.update"), schemaWriteOptions{SupportsDryRun: true, RequiredFlags: []string{"file"}, Readbacks: []schemaOperation{readbackID("pipeline.extensions.get")}}),
+	"pipeline.run":                      writeMeta(operationIDs("pipeline.run"), schemaWriteOptions{SupportsDryRun: true, RequiredFlags: []string{"message"}, Preconditions: []schemaOperation{preconditionID("pipeline.get")}}),
+	"monitoring.messages":               readMeta(operationIDs("monitoring.messages")...),
+	"monitoring.llm-calls":              readMeta(operationIDs("monitoring.llm_calls")...),
+	"monitoring.tool-calls":             readMeta(operationIDs("monitoring.tool_calls")...),
+	"monitoring.embedding-calls":        readMeta(operationIDs("monitoring.embedding_calls")...),
+	"monitoring.sessions":               readMeta(operationIDs("monitoring.sessions")...),
+	"monitoring.errors":                 readMeta(operationIDs("monitoring.errors")...),
+	"monitoring.message":                readMeta(operationIDs("monitoring.message_details")...),
+	"monitoring.session":                readMeta(operationIDs("monitoring.session_analysis")...),
+	"sandbox.status":                    readMeta(operationIDs("sandbox.status")...),
+	"sandbox.sessions":                  readMeta(operationIDs("sandbox.sessions")...),
+	"sandbox.errors":                    readMeta(operationIDs("sandbox.errors")...),
 
 	"schema":                {},
 	"completion":            {},
