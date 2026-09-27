@@ -302,3 +302,21 @@ lbctl pipeline run PIPELINE_UUID --message '请根据知识库回答这个问题
 Core 最多等待 60 秒，CLI 的 `--timeout` 控制单次 HTTP 请求等待时间。超时是**执行状态未知**，不代表执行已取消；不要自动重发，可在 LangBot Web 管理界面的监控页（`/home/monitoring`）用返回的消息或会话标识查询运行记录。若客户端先超时而未收到标识，在该监控页按 Pipeline 和时间查近期记录。
 
 服务端需要声明 `pipeline.run` capability；可用 `--dry-run` 检查前置条件。
+
+## 应用运行记录诊断
+
+通过当前 API Key 所属 Workspace 查询运行记录、失败消息详情及调用错误，需要 Core 对应 capability。
+
+```sh
+lbctl monitoring errors --pipeline PIPELINE_UUID --limit 20
+lbctl monitoring messages --pipeline PIPELINE_UUID --start-time 2026-09-16T10:00:00+08:00 --end-time 2026-09-16T10:05:00+08:00
+lbctl monitoring messages --session SESSION_ID --limit 20
+lbctl monitoring message MESSAGE_ID
+lbctl monitoring session SESSION_ID
+lbctl monitoring llm-calls --pipeline PIPELINE_UUID
+lbctl monitoring tool-calls --session SESSION_ID
+lbctl monitoring embedding-calls --knowledge-base KB_UUID
+lbctl monitoring sessions --active true
+```
+
+运行记录查询要求 `resource.view`。列表支持 `--limit 1..500` 和 `--offset`，Core 可进一步限制；`--start-time`、`--end-time` 使用 ISO 8601 时间。可用筛选条件见各命令 `--help`。
