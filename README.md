@@ -15,16 +15,18 @@ LangBot 的独立命令行工具，二进制名为 `lbctl`。它通过 HTTP 管�
 macOS、Linux 或 Windows Git Bash：
 
 ```sh
-curl -fsSL https://github.com/langbot-app/langbot-cli/releases/latest/download/install.sh | sh
+curl -fsSL https://download.langbot.app/install.sh | sh
 ```
 
 Windows PowerShell：
 
 ```powershell
-irm https://github.com/langbot-app/langbot-cli/releases/latest/download/install.ps1 | iex
+irm https://download.langbot.app/install.ps1 | iex
 ```
 
 安装脚本会自动选择当前平台的二进制并校验 SHA-256。Shell 脚本默认安装到 `~/.local/bin`；PowerShell 脚本默认安装到 `%LOCALAPPDATA%\Programs\lbctl` 并加入用户 `PATH`。
+
+下载域名由 Cloudflare Workers 分发，安装脚本、二进制和校验文件均从镜像获取。发行包同步自 [GitHub Releases](https://github.com/langbot-app/langbot-cli/releases)，也可以在那里直接下载原始文件。设置 `LBCTL_VERSION` 可安装指定的已发布版本。
 
 ## 源码构建
 
@@ -249,6 +251,45 @@ LBCTL_TEST_ENDPOINT=http://localhost:5300 \
 ```
 
 `make cross-build` 生成 macOS、Linux、Windows 的 amd64/arm64 二进制及 `dist/checksums.txt`。交叉构建成功不代表已经在对应系统完成实机验收。
+
+## RAG 配置发现
+
+这些命令需要 Core 声明对应 capability，并要求 `resource.view` 权限；可用 `-o json` 或 `-o yaml` 输出。
+
+```sh
+lbctl knowledge-engine list
+lbctl knowledge-engine creation-schema author/engine -o yaml
+lbctl knowledge-engine retrieval-schema author/engine -o json
+lbctl knowledge-parser list --mime-type application/pdf
+```
+
+从引擎列表选择 `plugin_id`；creation schema 定义创建知识库的参数，retrieval schema 定义检索参数。随后使用已有 `knowledge-base create`、`ingest`、`retrieve` 命令完成入库和检索。引擎不存在、权限不足或服务端未声明 capability 时返回非零退出码。
+
+## Pipeline 扩展绑定
+
+```sh
+lbctl pipeline extensions get PIPELINE_UUID -o json
+```
+
+`pipeline extensions update PIPELINE_UUID --file extensions.yaml` **完整替换**绑定，以下八个字段全部必填；缺少字段会拒绝写入。先用 `extensions get` 查看当前绑定与可选资源，在请求中保留所有仍需使用的项。更新成功后自动回读核对，`--dry-run` 只检查参数与前置条件。
+
+以下示例会清空四类显式绑定并关闭全部启用开关。
+
+```yaml
+bound_plugins: []
+bound_mcp_servers: []
+bound_skills: []
+bound_mcp_resources: []
+enable_all_plugins: false
+enable_all_mcp_servers: false
+enable_all_skills: false
+mcp_resource_agent_read_enabled: false
+```
+
+空数组配合 `enable_all_*: false` 表示不绑定该类扩展；设为 `true` 则启用该类全部可用扩展。插件项使用 `{author: author, name: plugin}`，MCP Server 填 `available_mcp_servers` 中的 `uuid`，Skill 填 `available_skills` 中的 `name`。MCP Resource 项例如 `{server_uuid: SERVER_UUID, uri: "docs://guide"}`。`mcp_resource_agent_read_enabled` 控制 Agent 列举、读取 MCP 资源及将绑定资源放入上下文。
+
+
+更新要求已保存且绑定 Workspace 的 context、`resource.manage` 和 `resource.view` 权限，以及 Core 对应 capability。
 
 ## Pipeline 单轮试运行
 

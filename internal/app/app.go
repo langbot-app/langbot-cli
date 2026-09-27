@@ -2448,6 +2448,8 @@ func readbackCapability(operation string) string {
 	switch {
 	case strings.HasPrefix(operation, "bot."):
 		return "bot.get"
+	case operation == "pipeline.extensions.update":
+		return "pipeline.extensions.get"
 	case strings.HasPrefix(operation, "pipeline."):
 		return "pipeline.get"
 	case operation == "knowledge_base.file.delete":
