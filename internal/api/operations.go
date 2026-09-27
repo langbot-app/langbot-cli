@@ -19,8 +19,11 @@ type Operation struct {
 // ResolveOperation 只接受已登记的路径，避免 api 子命令退化为任意 HTTP 代理。
 func ResolveOperation(method, requestPath string) (Operation, bool) {
 	parsed, err := url.Parse(requestPath)
+	if err != nil {
+		return Operation{}, false
+	}
 	escapedPath := strings.ToLower(parsed.EscapedPath())
-	if err != nil || parsed.IsAbs() || parsed.Host != "" || parsed.Fragment != "" ||
+	if parsed.IsAbs() || parsed.Host != "" || parsed.Fragment != "" ||
 		strings.Contains(escapedPath, "%2f") || strings.Contains(escapedPath, "%5c") {
 		return Operation{}, false
 	}
@@ -50,6 +53,8 @@ func ResolveOperation(method, requestPath string) (Operation, bool) {
 func validOperationQuery(operation string, query url.Values) bool {
 	allowed := map[string]bool{}
 	switch operation {
+	case "knowledge_parser.list":
+		allowed = map[string]bool{"mime_type": true}
 	case "task.list":
 		allowed = map[string]bool{"type": true, "kind": true}
 	case "plugin.logs", "mcp_server.logs":
@@ -82,6 +87,9 @@ func validOperationQuery(operation string, query url.Values) bool {
 }
 
 func resolveGetOperation(path string) (Operation, bool) {
+	if op, ok := resolveRAGOperation(path); ok {
+		return op, true
+	}
 	switch path {
 	case tasksPath:
 		return Operation{ID: "task.list", Method: http.MethodGet, Path: path, ReadOnly: true, Permission: "resource.view"}, true
