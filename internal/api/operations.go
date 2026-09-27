@@ -99,6 +99,9 @@ func resolveGetOperation(path string) (Operation, bool) {
 	if op, ok := resolveMonitoringOperation(path); ok {
 		return op, true
 	}
+	if op, ok := resolveSandboxOperation(path); ok {
+		return op, true
+	}
 	switch path {
 	case tasksPath:
 		return Operation{ID: "task.list", Method: http.MethodGet, Path: path, ReadOnly: true, Permission: "resource.view"}, true

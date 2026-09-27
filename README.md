@@ -320,3 +320,15 @@ lbctl monitoring sessions --active true
 ```
 
 运行记录查询要求 `resource.view`。列表支持 `--limit 1..500` 和 `--offset`，Core 可进一步限制；`--start-time`、`--end-time` 使用 ISO 8601 时间。可用筛选条件见各命令 `--help`。
+
+## Sandbox 只读诊断
+
+```sh
+lbctl sandbox status
+lbctl sandbox sessions
+lbctl sandbox errors
+```
+
+Sandbox 查询只读当前 Workspace：状态要求 `resource.view`，会话和错误要求 `audit.view`。托管 sandbox 仍受服务端准入限制；状态保留 `enabled`、`available` 和服务端不可用原因，查询不会创建执行会话。
+
+需要 Core 声明对应 capability；支持 `-o json` 和 `-o yaml`。`enabled: false` 表示未启用，`enabled: true` 且 `available: false` 表示不可用。

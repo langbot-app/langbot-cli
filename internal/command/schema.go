@@ -141,6 +141,9 @@ var schemaMetaByName = map[string]schemaCommandMeta{
 	"monitoring.errors":                 readMeta(operationIDs("monitoring.errors")...),
 	"monitoring.message":                readMeta(operationIDs("monitoring.message_details")...),
 	"monitoring.session":                readMeta(operationIDs("monitoring.session_analysis")...),
+	"sandbox.status":                    readMeta(operationIDs("sandbox.status")...),
+	"sandbox.sessions":                  readMeta(operationIDs("sandbox.sessions")...),
+	"sandbox.errors":                    readMeta(operationIDs("sandbox.errors")...),
 
 	"schema":                {},
 	"completion":            {},
