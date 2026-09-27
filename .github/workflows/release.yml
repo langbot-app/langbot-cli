@@ -63,11 +63,3 @@ jobs:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
           gh release upload "$RELEASE_TAG" ./dist/release/*
-
-  mirror:
-    needs: release
-    permissions:
-      contents: read
-    uses: langbot-app/langbot-landing-page/.github/workflows/cli-downloads.yml@main
-    secrets:
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
