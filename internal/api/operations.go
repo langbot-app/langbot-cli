@@ -90,6 +90,9 @@ func resolveGetOperation(path string) (Operation, bool) {
 	if op, ok := resolveRAGOperation(path); ok {
 		return op, true
 	}
+	if op, ok := resolvePipelineExtensionOperation(path); ok {
+		return op, true
+	}
 	switch path {
 	case tasksPath:
 		return Operation{ID: "task.list", Method: http.MethodGet, Path: path, ReadOnly: true, Permission: "resource.view"}, true
