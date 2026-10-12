@@ -92,6 +92,10 @@ func renderDefaultError(w io.Writer, value any) error {
 			return err
 		}
 	}
+	if message == "服务端未明确支持该操作" || message == "服务端明确不支持该操作" {
+		_, err := fmt.Fprintln(w, "建议：对同一目标运行 lbctl capabilities，确认 Core 是否声明了所需能力。")
+		return err
+	}
 	return nil
 }
 
@@ -134,7 +138,11 @@ func renderDefaultData(w io.Writer, value any, command string) error {
 		}
 		return nil
 	case "status":
-		return renderActiveEnvironment(w, data)
+		if err := renderActiveEnvironment(w, data); err != nil {
+			return err
+		}
+		_, err := fmt.Fprintln(w, "完整信息：在当前命令后加 -o json 或 -o yaml")
+		return err
 	case "context.check":
 		if checks, ok := data["checks"].([]any); ok {
 			return renderChecks(w, checks)
@@ -143,19 +151,19 @@ func renderDefaultData(w io.Writer, value any, command string) error {
 			return err
 		}
 		if identity, ok := data["identity"].(map[string]any); ok {
-			if _, err := fmt.Fprintln(w, "Identity:"); err != nil {
+			if _, err := fmt.Fprintln(w, "身份:"); err != nil {
 				return err
 			}
 			if err := renderFields(w, identity, []string{"instance_uuid", "workspace_uuid", "api_key_id"}); err != nil {
 				return err
 			}
 		} else if identity, exists := data["identity"]; exists {
-			if err := renderValue(w, identity, "Identity"); err != nil {
+			if err := renderValue(w, identity, "身份"); err != nil {
 				return err
 			}
 		}
 		if item, exists := data["error"]; exists {
-			return renderValue(w, item, "Error")
+			return renderValue(w, item, "错误")
 		}
 		return nil
 	case "doctor":
@@ -165,7 +173,11 @@ func renderDefaultData(w io.Writer, value any, command string) error {
 			}
 		}
 		if checks, ok := data["checks"].([]any); ok {
-			return renderDoctorChecks(w, checks)
+			if err := renderDoctorChecks(w, checks); err != nil {
+				return err
+			}
+			_, err := fmt.Fprintln(w, "完整信息：在当前命令后加 -o json 或 -o yaml")
+			return err
 		}
 		return renderValue(w, data, "")
 	case "logs":
@@ -334,126 +346,133 @@ func renderActiveEnvironment(w io.Writer, environment map[string]any) error {
 		_, err := fmt.Fprintf(w, "%s: %s\n", label, displayCell(value))
 		return err
 	}
-	if err := line("Active Environment", environment["name"]); err != nil {
-		return err
+	name := formatCell(environment["name"])
+	if environment["discovery"] == "unconfigured" {
+		name = "未配置"
 	}
-	if err := line("Type", environmentTypeLabel(formatCell(environment["type"]))); err != nil {
+	if err := line("当前环境", name+"（"+environmentTypeLabel(formatCell(environment["type"]))+"）"); err != nil {
 		return err
 	}
 	connection, _ := environment["connection"].(map[string]any)
-	if err := line("Endpoint", connection["endpoint"]); err != nil {
+	if err := line("地址", connection["endpoint"]); err != nil {
 		return err
 	}
-	connectionLabel := "Unreachable"
+	connectionLabel := "不可达"
 	if formatCell(environment["discovery"]) == "unconfigured" {
-		connectionLabel = "Not configured"
+		connectionLabel = "未配置"
 	} else if connection["reachable"] == true {
-		connectionLabel = "Connected"
+		connectionLabel = "已连接"
 	}
-	if err := line("Connection", connectionLabel); err != nil {
+	if err := line("连接", connectionLabel); err != nil {
 		return err
 	}
-	if err := line("Authentication", discoveryStateLabel(formatCell(connection["authentication"]))); err != nil {
+	if err := line("认证", discoveryStateLabel(formatCell(connection["authentication"]))); err != nil {
 		return err
 	}
 	service, _ := environment["service"].(map[string]any)
 	core := formatCell(service["version"])
-	if edition := formatCell(service["edition"]); core != "" && edition != "" {
+	if edition := formatCell(service["edition"]); core != "" && edition != "" && environment["type"] == "unknown" {
 		core += " (" + edition + ")"
 	}
 	if err := line("Core", core); err != nil {
 		return err
 	}
 	identity, _ := environment["identity"].(map[string]any)
-	if err := line("Workspace", identity["workspace_uuid"]); err != nil {
-		return err
-	}
-	if err := line("Instance", identity["instance_uuid"]); err != nil {
-		return err
+	if state := formatCell(identity["status"]); state == "mismatch" || state == "failed" {
+		if err := line("Workspace 身份", discoveryStateLabel(state)); err != nil {
+			return err
+		}
+		if err := line("实际 Workspace", identity["workspace_uuid"]); err != nil {
+			return err
+		}
 	}
 	capabilities, _ := environment["capabilities"].(map[string]any)
-	if err := line("Capabilities", discoveryStateLabel(formatCell(capabilities["status"]))); err != nil {
+	capabilityState := discoveryStateLabel(formatCell(capabilities["status"]))
+	if capabilities["status"] == "verified" {
+		capabilityState = "已获取（支持情况见 lbctl capabilities）"
+	}
+	if err := line("能力清单", capabilityState); err != nil {
 		return err
 	}
 	runtimeInfo, _ := environment["runtime"].(map[string]any)
-	if err := line("Lifecycle", lifecycleLabel(runtimeInfo)); err != nil {
+	if err := line("部署", lifecycleLabel(runtimeInfo)); err != nil {
 		return err
 	}
 	if details, ok := runtimeInfo["details"].(map[string]any); ok {
 		if upgrade, ok := details["upgrade"].(map[string]any); ok && upgrade["phase"] != "completed" {
-			label := "Interrupted (" + formatCell(upgrade["phase"]) + ")"
+			label := "已中断（" + formatCell(upgrade["phase"]) + "）"
 			if upgrade["phase"] == "recovery_required" {
-				label = "Recovery required"
+				label = "需要恢复"
 				if step := formatCell(upgrade["failure_step"]); step != "" && step != "-" {
 					label += " (" + step + ")"
 				}
 			}
-			if err := line("Upgrade", label); err != nil {
+			if err := line("升级", label); err != nil {
 				return err
 			}
 		}
 	}
-	if binding := formatCell(runtimeInfo["binding"]); binding != "" && binding != "none" && binding != "verified" && binding != "missing" {
-		if err := line("Binding", discoveryStateLabel(binding)); err != nil {
+	if binding := formatCell(runtimeInfo["binding"]); runtimeInfo["management"] != "cloud_managed" && binding != "" && binding != "none" && binding != "verified" && binding != "missing" {
+		if err := line("部署绑定", discoveryStateLabel(binding)); err != nil {
 			return err
 		}
 	}
-	return line("Directory", runtimeInfo["dir"])
+	return nil
 }
 
 func environmentTypeLabel(value string) string {
 	switch value {
 	case "cloud":
-		return "LangBot Cloud"
+		return "LangBot 云端"
 	case "self_hosted":
-		return "Self-hosted"
+		return "自部署"
 	default:
-		return "Unknown"
+		return "类型未知"
 	}
 }
 
 func discoveryStateLabel(value string) string {
 	switch value {
 	case "verified", "complete":
-		return "Verified"
+		return "已验证"
 	case "partial":
-		return "Partial"
+		return "部分完成"
 	case "not_checked":
-		return "Not checked"
+		return "未检查"
 	case "failed":
-		return "Failed"
+		return "失败"
 	case "mismatch":
-		return "Mismatch"
+		return "不一致"
 	case "corrupt":
-		return "Corrupt"
+		return "已损坏"
 	case "unreadable":
-		return "Unreadable"
+		return "无法读取"
 	case "unavailable":
-		return "Unavailable"
+		return "不可用"
 	default:
-		return "Unknown"
+		return "未知"
 	}
 }
 
 func lifecycleLabel(info map[string]any) string {
 	switch formatCell(info["management"]) {
 	case "cloud_managed":
-		return "Managed by LangBot Cloud"
+		return "LangBot 云端托管"
 	case "local_managed":
 		driver := formatCell(info["driver"])
 		if driver == "docker_compose" {
 			driver = "Docker Compose"
 		} else if driver == "native_process" {
-			driver = "Native process"
+			driver = "本机进程"
 		}
 		if status := formatCell(info["status"]); status != "" {
 			return driver + " · " + localStatusLabel(status)
 		}
-		return driver + " · Managed"
+		return driver + " · 已接管"
 	case "unbound":
-		return "Not bound"
+		return "未绑定本机部署"
 	default:
-		return "Unavailable"
+		return "不可用"
 	}
 }
 
@@ -627,7 +646,7 @@ func renderResourceList(w io.Writer, key string, items []any) error {
 	}
 	cells := make([][]string, 1, len(items)+1)
 	for _, field := range fields {
-		cells[0] = append(cells[0], strings.ToUpper(fieldLabel(field)))
+		cells[0] = append(cells[0], fieldLabel(field))
 	}
 	for _, item := range items {
 		row, ok := item.(map[string]any)
@@ -780,52 +799,25 @@ func displayCell(value any) string {
 func localStatusLabel(value string) string {
 	switch value {
 	case "not_installed":
-		return "Not installed"
+		return "未安装"
 	case "stopped":
-		return "Stopped"
+		return "已停止"
 	case "starting":
-		return "Starting"
+		return "启动中"
 	case "running":
-		return "Running"
+		return "运行中"
 	case "degraded":
-		return "Degraded"
+		return "异常"
 	case "unknown":
-		return "Unknown"
+		return "未知"
 	default:
 		return value
 	}
 }
 
 func fieldLabel(field string) string {
-	switch field {
-	case "uuid", "id":
-		return "ID"
-	case "context":
-		return "Context"
-	case "workspace_uuid":
-		return "Workspace"
-	case "expected_workspace_uuid":
-		return "Expected Workspace"
-	case "instance_uuid":
-		return "Instance"
-	case "api_key_id":
-		return "API Key ID"
-	case "credential_source":
-		return "Credential Source"
-	case "dir":
-		return "Directory"
-	case "server_version":
-		return "Server Version"
-	case "server_edition":
-		return "Edition"
-	case "http_status":
-		return "HTTP 状态"
-	case "server_code":
-		return "服务端错误码"
-	case "request_id":
-		return "请求 ID"
-	case "enable", "enabled":
-		return "Enabled"
+	if label, exists := humanFieldLabels[field]; exists {
+		return label
 	}
 	words := strings.Split(formatCell(field), "_")
 	for i, word := range words {

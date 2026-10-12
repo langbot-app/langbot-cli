@@ -67,7 +67,7 @@ func TestRenderDefaultVersionAndDetail(t *testing.T) {
 	if err := RenderCommand(&out, version, FormatDefault, "version"); err != nil {
 		t.Fatal(err)
 	}
-	if got := out.String(); !strings.Contains(got, "CLI: v1.0.0") || !strings.Contains(got, "Server Version: v4.10.10") || !strings.Contains(got, "Edition: community") {
+	if got := out.String(); !strings.Contains(got, "CLI: v1.0.0") || !strings.Contains(got, "Core 版本: v4.10.10") || !strings.Contains(got, "版本类型: community") {
 		t.Fatalf("unexpected version output: %q", got)
 	}
 
@@ -235,7 +235,7 @@ func TestRenderDefaultKeepsOverallErrorSeparateFromRows(t *testing.T) {
 			t.Fatalf("overall error was attached to a successful row: %s", line)
 		}
 	}
-	for _, want := range []string{"错误：检查失败", "Checks:", "alpha", "beta"} {
+	for _, want := range []string{"错误：检查失败", "检查结果:", "alpha", "beta"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("default output omitted %q: %s", want, out.String())
 		}
@@ -300,7 +300,7 @@ func TestRenderDefaultSummarizesSingleContextCheck(t *testing.T) {
 	if err := RenderCommand(&out, value, FormatDefault, "context.check"); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"Reachable: true", "Server Version: v4.10.10", "Instance: instance-a", "Workspace: workspace-a", "API Key ID: key-a"} {
+	for _, want := range []string{"连接可达: true", "Core 版本: v4.10.10", "实例 ID: instance-a", "Workspace ID: workspace-a", "API Key ID: key-a"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("single check output omitted %q: %s", want, out.String())
 		}
@@ -327,7 +327,7 @@ func TestRenderDefaultSupportsResourceLists(t *testing.T) {
 	if err := RenderCommand(&out, value, FormatDefault, "bot.list"); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), "Bots:") || !strings.Contains(out.String(), "bot-a") {
+	if !strings.Contains(out.String(), "Bot 列表:") || !strings.Contains(out.String(), "bot-a") {
 		t.Fatalf("resource default output omitted list rows: %s", out.String())
 	}
 	if strings.Contains(out.String(), "bot-secret") {

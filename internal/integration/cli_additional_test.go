@@ -178,7 +178,7 @@ func TestOutputFormatsAndBusinessErrorExit(t *testing.T) {
 		}
 	}
 	code, out := runText(t, path, nil, strings.NewReader(""), "context", "list")
-	if code != 0 || !strings.Contains(out, "Contexts:") || !strings.Contains(out, "demo") {
+	if code != 0 || !strings.Contains(out, "环境列表:") || !strings.Contains(out, "demo") {
 		t.Fatalf("default output is not concise context list: code=%d output=%q", code, out)
 	}
 	if code, out := runText(t, path, nil, strings.NewReader(""), "--output", "table", "context", "list"); code != 2 || !strings.Contains(out, "输出格式无效") {

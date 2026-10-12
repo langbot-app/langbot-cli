@@ -281,6 +281,8 @@ Usa comandos específicos para gestión de Provider/Model, instalación, pruebas
 
 La salida predeterminada es concisa y legible. Usa `-o json` o `-o yaml` para automatización con resultados estructurados completos. Resultados y errores van a stdout; el diagnóstico, a stderr.
 
+`status` resume el entorno activo y conserva las advertencias de identidad y recuperación. Añade `-o json` o `-o yaml` al mismo comando para ver los ID completos de instancia/Workspace y las rutas de despliegue. Obtener la lista de capacidades no implica que todas las operaciones estén disponibles; consulta sus estados con `capabilities`.
+
 | Código de salida | Significado |
 |---|---|
 | 0 | Éxito |

@@ -281,6 +281,8 @@ Utilisez les commandes dédiées pour la gestion Provider/Model, l'installation,
 
 La sortie par défaut est concise et lisible. Pour l'automatisation, `-o json` ou `-o yaml` produit des résultats structurés complets. Résultats et erreurs vont sur stdout, diagnostics sur stderr.
 
+`status` résume l'environnement actif et conserve les avertissements d'identité et de récupération. Ajoutez `-o json` ou `-o yaml` à la même commande pour obtenir les identifiants complets d'instance/Workspace et les chemins de déploiement. Une liste de capacités obtenue ne signifie pas que toutes les opérations sont prises en charge ; vérifiez leurs états avec `capabilities`.
+
 | Code de sortie | Signification |
 |---|---|
 | 0 | Succès |

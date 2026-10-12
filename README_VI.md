@@ -281,6 +281,8 @@ Dùng lệnh chuyên biệt cho Provider/Model, cài đặt, kiểm thử và th
 
 Đầu ra mặc định ngắn gọn, dễ đọc. Tự động hóa dùng `-o json` hoặc `-o yaml` để lấy kết quả có cấu trúc đầy đủ. Kết quả thành công và lỗi ghi vào stdout, chẩn đoán vào stderr.
 
+`status` tóm tắt môi trường hiện tại và vẫn hiển thị cảnh báo sai danh tính hoặc cần khôi phục nâng cấp. Thêm `-o json` hoặc `-o yaml` vào cùng lệnh để xem đầy đủ ID instance/Workspace và đường dẫn triển khai. Lấy được danh sách khả năng không có nghĩa mọi thao tác đều được hỗ trợ; kiểm tra trạng thái từng thao tác bằng `capabilities`.
+
 | Mã thoát | Ý nghĩa |
 |---|---|
 | 0 | Thành công |

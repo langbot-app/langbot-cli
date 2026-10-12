@@ -75,7 +75,7 @@ func Execute(ctx context.Context, args []string, deps Dependencies) int {
 		selectOutput(executed, flags)
 		var typed *result.Error
 		if !errors.As(err, &typed) {
-			err = result.New("input", "参数无效；请运行 lbctl --help 查看用法")
+			err = commandInputError(executed)
 		}
 		return emit(deps, flags, app.Result{}, err)
 	}
@@ -117,9 +117,7 @@ func newRoot(deps Dependencies, flags *globalFlags, service *app.Service) *cobra
 	}
 	root.SetOut(deps.Out)
 	root.SetErr(deps.Err)
-	root.SetFlagErrorFunc(func(*cobra.Command, error) error {
-		return result.New("input", "参数无效；请运行 lbctl --help 查看用法")
-	})
+	root.SetFlagErrorFunc(commandFlagError)
 	persistent := root.PersistentFlags()
 	persistent.StringVar(&flags.config, "config", "", "配置文件路径")
 	persistent.StringVar(&flags.context, "context", "", "使用指定 context")
@@ -172,6 +170,7 @@ func newRoot(deps Dependencies, flags *globalFlags, service *app.Service) *cobra
 	root.AddCommand(newPluginCommand(service, deps, flags))
 	root.AddCommand(newSkillCommand(service, deps, flags))
 	root.AddCommand(newMCPServerCommand(service, deps, flags))
+	configureHumanHelp(root)
 	return root
 }
 
@@ -1013,6 +1012,9 @@ func validateWaitFlags(dryRun, wait bool, pollInterval, waitTimeout time.Duratio
 }
 
 func loadRequestBody(ctx context.Context, file string, apiKeyStdin bool, stdin io.Reader) (map[string]any, error) {
+	if strings.TrimSpace(file) == "" {
+		return nil, result.New("input", "缺少必需选项 --file；使用 --file <文件> 或 --file -，通过 --help 查看用法")
+	}
 	if err := requestbody.ValidateSources(file, apiKeyStdin); err != nil {
 		return nil, err
 	}
@@ -1184,7 +1186,7 @@ func newContextCheck(service *app.Service, deps Dependencies, flags *globalFlags
 
 func newStatusCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
 	return &cobra.Command{
-		Use: "status", Short: "查看 Active Environment 状态", Args: cobra.NoArgs,
+		Use: "status", Short: "查看当前环境状态", Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return emitCall(deps, flags, func() (app.Result, error) {
 				return service.Status(cmd.Context(), app.CheckOptions{
@@ -1199,7 +1201,7 @@ func newStatusCommand(service *app.Service, deps Dependencies, flags *globalFlag
 
 func newDoctorCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
 	return &cobra.Command{
-		Use: "doctor", Short: "诊断 Active Environment", Args: cobra.NoArgs,
+		Use: "doctor", Short: "诊断当前环境", Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return emitCall(deps, flags, func() (app.Result, error) {
 				return service.Doctor(cmd.Context(), app.CheckOptions{
