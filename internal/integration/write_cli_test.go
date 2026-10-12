@@ -16,6 +16,7 @@ func TestBotWriteCommandsDryRunConfirmAndReadBack(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "config.yaml")
 	const key = "bot-write-key"
 	botExists := false
+	var botBody map[string]any
 	var writes []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("X-API-Key") != key {
@@ -29,6 +30,10 @@ func TestBotWriteCommandsDryRunConfirmAndReadBack(t *testing.T) {
 		case "/api/v1/system/capabilities":
 			fmt.Fprint(w, `{"code":0,"data":{"schema_version":1,"operations":{"bot.get":{"supported":true},"bot.create":{"supported":true},"bot.update":{"supported":true},"bot.delete":{"supported":true}}}}`)
 		case "/api/v1/platform/bots":
+			if err := json.NewDecoder(r.Body).Decode(&botBody); err != nil {
+				t.Error(err)
+			}
+			botBody["uuid"] = "bot-a"
 			writes = append(writes, r.Method+" "+r.URL.Path)
 			botExists = true
 			fmt.Fprint(w, `{"code":0,"data":{"uuid":"bot-a"}}`)
@@ -40,8 +45,15 @@ func TestBotWriteCommandsDryRunConfirmAndReadBack(t *testing.T) {
 					fmt.Fprint(w, `{"code":-1,"data":null}`)
 					return
 				}
-				fmt.Fprint(w, `{"code":0,"data":{"bot":{"uuid":"bot-a","name":"Bot A","adapter":"http_bot","adapter_config":{"token":"bot-secret"}}}}`)
+				json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": map[string]any{"bot": botBody}})
 			case http.MethodPut:
+				var body map[string]any
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Error(err)
+				}
+				for field, value := range body {
+					botBody[field] = value
+				}
 				writes = append(writes, r.Method+" "+r.URL.Path)
 				fmt.Fprint(w, `{"code":0,"data":null}`)
 			case http.MethodDelete:
@@ -69,7 +81,7 @@ func TestBotWriteCommandsDryRunConfirmAndReadBack(t *testing.T) {
 	}
 	created := run(t, configPath, env, "", "bot", "create", "--file", bodyPath)
 	requireSuccess(t, created)
-	if data := created.data["data"].(map[string]any); data["uuid"] != "bot-a" || data["verified"] != true {
+	if data := created.data["data"].(map[string]any); data["uuid"] != "bot-a" || data["verified"] != false || data["verification"].(map[string]any)["observable_fields_match"] != true {
 		t.Fatalf("create did not read back: %s", created.out)
 	}
 	if strings.Contains(created.out, "bot-secret") {
@@ -93,6 +105,7 @@ func TestPipelineApplyCreateUpdateAndPartialResult(t *testing.T) {
 	const key = "pipeline-write-key"
 	var writes []string
 	failNextUpdate := false
+	var pipelineBody map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/v1/system/context":
@@ -100,21 +113,32 @@ func TestPipelineApplyCreateUpdateAndPartialResult(t *testing.T) {
 		case "/api/v1/system/capabilities":
 			fmt.Fprint(w, `{"code":0,"data":{"schema_version":1,"operations":{"pipeline.get":{"supported":true},"pipeline.create":{"supported":true},"pipeline.update":{"supported":true}}}}`)
 		case "/api/v1/pipelines":
-			writes = append(writes, r.Method+" "+r.URL.Path+" "+readJSONName(t, r))
+			if err := json.NewDecoder(r.Body).Decode(&pipelineBody); err != nil {
+				t.Error(err)
+			}
+			writes = append(writes, r.Method+" "+r.URL.Path+" "+pipelineBody["name"].(string))
+			pipelineBody["uuid"] = "pipeline-a"
 			fmt.Fprint(w, `{"code":0,"data":{"uuid":"pipeline-a"}}`)
 		case "/api/v1/pipelines/pipeline-a":
 			if r.Method == http.MethodPut {
-				writes = append(writes, r.Method+" "+r.URL.Path+" "+readJSONName(t, r))
+				var body map[string]any
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Error(err)
+				}
+				writes = append(writes, r.Method+" "+r.URL.Path+" "+body["name"].(string))
 				if failNextUpdate {
 					failNextUpdate = false
 					w.WriteHeader(http.StatusBadRequest)
 					fmt.Fprint(w, `{"code":-1,"data":null}`)
 					return
 				}
+				for field, value := range body {
+					pipelineBody[field] = value
+				}
 				fmt.Fprint(w, `{"code":0,"data":null}`)
 				return
 			}
-			fmt.Fprint(w, `{"code":0,"data":{"pipeline":{"uuid":"pipeline-a","name":"Pipeline A","config":{"token":"pipeline-secret"}}}}`)
+			json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": map[string]any{"pipeline": pipelineBody}})
 		default:
 			w.WriteHeader(http.StatusNotFound)
 			fmt.Fprint(w, `{"code":-1,"data":null}`)
@@ -159,6 +183,89 @@ func TestWriteBodyAndAPIKeyCannotShareStdin(t *testing.T) {
 	result := run(t, configPath, nil, "secret", "--api-key-stdin", "pipeline", "apply", "--file", "-")
 	if result.code != 2 || result.data["error"].(map[string]any)["type"] != "input" {
 		t.Fatalf("shared stdin was not rejected: %s", result.out)
+	}
+}
+
+func TestBotAndPipelineWritesRejectIgnoredPayload(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		args []string
+		body string
+	}{
+		{"bot create", []string{"bot", "create", "--file", "-"}, `{"name":"new","adapter":"http_bot","adapter_config":{"port":5300,"token":"never-log-this"},"enable":false}`},
+		{"bot update", []string{"bot", "update", "resource-a", "--file", "-"}, `{"adapter_config":{"port":5300,"token":"never-log-this"},"enable":false}`},
+		{"pipeline create", []string{"pipeline", "apply", "--file", "-"}, `{"name":"new","config":{"temperature":0.5,"token":"never-log-this"}}`},
+		{"pipeline update", []string{"pipeline", "apply", "--file", "-"}, `{"uuid":"resource-a","config":{"temperature":0.5,"token":"never-log-this"}}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/v1/system/context":
+					fmt.Fprint(w, `{"code":0,"data":{"instance_uuid":"instance-a","workspace_uuid":"workspace-a","api_key_id":"key-a","permissions":["resource.manage","resource.view"]}}`)
+				case "/api/v1/system/capabilities":
+					fmt.Fprint(w, `{"code":0,"data":{"schema_version":1,"operations":{"bot.get":{"supported":true},"bot.create":{"supported":true},"bot.update":{"supported":true},"pipeline.get":{"supported":true},"pipeline.create":{"supported":true},"pipeline.update":{"supported":true}}}}`)
+				default:
+					if r.Method == http.MethodGet {
+						fmt.Fprint(w, `{"code":0,"data":{"bot":{"uuid":"resource-a","name":"old","adapter":"http_bot","enable":true,"adapter_config":{"port":5000,"token":"never-log-this"}},"pipeline":{"uuid":"resource-a","name":"old","config":{"temperature":0.7,"token":"never-log-this"}}}}`)
+					} else {
+						fmt.Fprint(w, `{"code":0,"data":{"uuid":"resource-a"}}`)
+					}
+				}
+			}))
+			defer server.Close()
+			configPath := filepath.Join(t.TempDir(), "config.yaml")
+			configureWriteContext(t, configPath, server.URL, "WRITE_KEY")
+			got := run(t, configPath, map[string]string{"WRITE_KEY": "test-key"}, test.body, test.args...)
+			if got.code == 0 || got.data["error"].(map[string]any)["type"] != "verification_failed" || got.data["data"].(map[string]any)["verified"] != false {
+				t.Fatalf("ignored write accepted: %s", got.out)
+			}
+			if strings.Contains(got.out, "never-log-this") {
+				t.Fatal("verification leaked a credential")
+			}
+		})
+	}
+}
+
+func TestPipelineCopyVerifiesCopiedSettings(t *testing.T) {
+	for _, mode := range []string{"matched", "ignored config", "same identity"} {
+		t.Run(mode, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/v1/system/context":
+					fmt.Fprint(w, `{"code":0,"data":{"instance_uuid":"instance-a","workspace_uuid":"workspace-a","api_key_id":"key-a","permissions":["resource.manage","resource.view"]}}`)
+				case "/api/v1/system/capabilities":
+					fmt.Fprint(w, `{"code":0,"data":{"schema_version":1,"operations":{"pipeline.get":{"supported":true},"pipeline.copy":{"supported":true}}}}`)
+				case "/api/v1/pipelines/source/copy":
+					id := "copied"
+					if mode == "same identity" {
+						id = "source"
+					}
+					fmt.Fprintf(w, `{"code":0,"data":{"uuid":%q}}`, id)
+				default:
+					id, limit := "source", 2
+					if r.URL.Path == "/api/v1/pipelines/copied" {
+						id = "copied"
+						if mode == "ignored config" {
+							limit = 3
+						}
+					}
+					fmt.Fprintf(w, `{"code":0,"data":{"pipeline":{"uuid":%q,"description":"source description","config":{"limit":%d}}}}`, id, limit)
+				}
+			}))
+			defer server.Close()
+			configPath := filepath.Join(t.TempDir(), "config.yaml")
+			configureWriteContext(t, configPath, server.URL, "COPY_KEY")
+			got := run(t, configPath, map[string]string{"COPY_KEY": "test-key"}, "", "pipeline", "copy", "source")
+			if mode == "matched" {
+				requireSuccess(t, got)
+				data := got.data["data"].(map[string]any)
+				if data["verified"] != true || data["verification"].(map[string]any)["scope"] != "copied_fields" {
+					t.Fatalf("copy scope missing: %s", got.out)
+				}
+			} else if got.code == 0 || got.data["error"].(map[string]any)["type"] != "verification_failed" {
+				t.Fatalf("bad copy accepted: %s", got.out)
+			}
+		})
 	}
 }
 

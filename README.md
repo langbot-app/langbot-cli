@@ -253,6 +253,8 @@ Writes verify the saved context, Workspace binding, actual identity, permissions
 - Uncertain request outcomes return `result_unknown` for inspection before deciding the next step.
 - Multi-step operations retain created resources or `task_id` values for progress tracking.
 
+Bot/Pipeline reads retain ordinary configuration and mask credentials with `***`. Creates, updates, and Pipeline copies compare observable fields on readback; mismatches return `verification_failed`. `verification.observable_fields_match` describes the comparison, while `unverified_fields` lists masked fields. `verified` is true only when every checked field is verifiable and matches. Bot updates preserve existing credentials for exact `***` placeholders; placeholders that cannot be safely restored are rejected before updating.
+
 Query asynchronous tasks independently:
 
 ```sh

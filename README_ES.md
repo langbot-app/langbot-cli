@@ -253,6 +253,8 @@ Las escrituras verifican el contexto guardado, Workspace, identidad, permisos, c
 - Un resultado incierto devuelve `result_unknown` para inspeccionarlo antes de decidir el siguiente paso.
 - Las operaciones de varios pasos conservan recursos creados o `task_id` para seguir su progreso.
 
+Las lecturas de Bot/Pipeline conservan la configuración normal y ocultan credenciales con `***`. Las creaciones, actualizaciones y copias de Pipeline comparan campos observables al releer; las diferencias devuelven `verification_failed`. `verification.observable_fields_match` indica el resultado y `unverified_fields` enumera campos ocultos. `verified` solo es true si todos los campos comprobados son verificables y coinciden. Las actualizaciones de Bot conservan las credenciales existentes para marcadores exactos `***`; los marcadores que no puedan restaurarse con seguridad se rechazan antes de actualizar.
+
 Consulta tareas asíncronas de forma independiente:
 
 ```sh

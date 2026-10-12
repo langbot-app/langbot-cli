@@ -660,8 +660,8 @@ func TestResourceReadsKeepPrefixAndProjectSensitiveFields(t *testing.T) {
 	if err != nil || len(bots) != 1 || bots[0]["uuid"] != "bot-a" {
 		t.Fatalf("Bots() = %#v, err=%v", bots, err)
 	}
-	if _, ok := bots[0]["adapter_config"]; ok {
-		t.Fatal("Bot projection exposed adapter_config")
+	if config, ok := bots[0]["adapter_config"].(map[string]any); !ok || config["token"] != "***" {
+		t.Fatal("Bot projection lost masked adapter_config")
 	}
 	if _, ok := bots[0]["name"]; ok {
 		t.Fatal("Bot projection exposed a safe field containing the API Key")
@@ -677,10 +677,10 @@ func TestResourceReadsKeepPrefixAndProjectSensitiveFields(t *testing.T) {
 	if err != nil || len(pipelines) != 1 || pipelines[0]["uuid"] != "pipeline-a" {
 		t.Fatalf("Pipelines() = %#v, err=%v", pipelines, err)
 	}
-	if _, ok := pipelines[0]["config"]; ok {
-		t.Fatal("Pipeline projection exposed config")
+	if _, ok := pipelines[0]["config"]; !ok {
+		t.Fatal("Pipeline projection lost config")
 	}
-	for _, secret := range []string{"provider-secret", "provider-token", "provider-key", "https://provider.example/key"} {
+	for _, secret := range []string{"provider-secret", "provider-token", "provider-key"} {
 		if strings.Contains(fmt.Sprint(pipelines), secret) {
 			t.Fatalf("Pipeline projection exposed %q", secret)
 		}
@@ -689,10 +689,10 @@ func TestResourceReadsKeepPrefixAndProjectSensitiveFields(t *testing.T) {
 	if err != nil || pipeline["uuid"] != "pipeline-a" {
 		t.Fatalf("Pipeline() = %#v, err=%v", pipeline, err)
 	}
-	if _, ok := pipeline["config"]; ok {
-		t.Fatal("Pipeline projection exposed config")
+	if _, ok := pipeline["config"]; !ok {
+		t.Fatal("Pipeline projection lost config")
 	}
-	for _, secret := range []string{"pipeline-secret", "pipeline-token", "pipeline-key", "https://pipeline.example/key"} {
+	for _, secret := range []string{"pipeline-secret", "pipeline-token", "pipeline-key"} {
 		if strings.Contains(fmt.Sprint(pipeline), secret) {
 			t.Fatalf("Pipeline projection exposed %q", secret)
 		}
