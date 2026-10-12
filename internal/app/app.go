@@ -1349,46 +1349,33 @@ func (s *Service) PluginConfigUpdate(ctx context.Context, author, name string, b
 	if err := client.PluginConfigUpdate(ctx, target, author, name, body); err != nil {
 		return Result{Meta: preflight.Meta()}, err
 	}
-	config, err := waitForPluginConfig(ctx, client, target, author, name, body)
 	data := writeResultData("plugin.config.update", "")
 	delete(data, "uuid")
 	data["author"] = author
 	data["plugin_name"] = name
-	if err != nil {
-		return Result{Data: data, Meta: preflight.Meta()}, readbackError(err)
-	}
-	actual, ok := pluginConfigValue(config)
-	if !ok || !observableConfigEqual(body, actual) {
-		return Result{Data: data, Meta: preflight.Meta()}, verificationError("更新后回读到的 Plugin 配置不一致")
-	}
-	data["verified"] = true
-	data["config"] = actual
-	return Result{Data: data, Meta: preflight.Meta()}, nil
-}
-
-// A config write restarts the worker; only read-only verification is retried.
-func waitForPluginConfig(ctx context.Context, client api.Client, target api.Target, author, name string, expected map[string]any) (any, error) {
-	verifyCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	readbackCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
 	for {
-		config, err := client.PluginConfig(verifyCtx, target, author, name)
+		config, err := client.PluginConfig(readbackCtx, target, author, name)
 		if err == nil {
 			actual, ok := pluginConfigValue(config)
-			if ok && observableConfigEqual(expected, actual) {
-				return config, nil
+			if ok && observableConfigEqual(body, actual) {
+				data["verified"] = true
+				data["config"] = actual
+				return Result{Data: data, Meta: preflight.Meta()}, nil
 			}
-		} else if result.AsError(err).Kind != "not_found" {
-			return config, err
+		} else if result.AsError(err).HTTPStatus != http.StatusNotFound {
+			return Result{Data: data, Meta: preflight.Meta()}, readbackError(err)
 		}
-		timer := time.NewTimer(200 * time.Millisecond)
 		select {
-		case <-verifyCtx.Done():
-			timer.Stop()
+		case <-readbackCtx.Done():
 			if err != nil {
-				return config, err
+				return Result{Data: data, Meta: preflight.Meta()}, readbackError(err)
 			}
-			return config, verificationError("Plugin 重载后配置未在期限内完成同步")
-		case <-timer.C:
+			return Result{Data: data, Meta: preflight.Meta()}, verificationError("更新后回读到的 Plugin 配置不一致")
+		case <-ticker.C:
 		}
 	}
 }
@@ -2495,6 +2482,8 @@ func readbackCapability(operation string) string {
 	switch {
 	case strings.HasPrefix(operation, "bot."):
 		return "bot.get"
+	case operation == "pipeline.extensions.update":
+		return "pipeline.extensions.get"
 	case strings.HasPrefix(operation, "pipeline."):
 		return "pipeline.get"
 	case operation == "knowledge_base.file.delete":

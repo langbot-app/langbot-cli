@@ -107,6 +107,25 @@ type TaskListFilters struct {
 }
 
 var capabilityOperationIDs = []string{
+	"knowledge_engine.list",
+	"knowledge_engine.creation_schema",
+	"knowledge_engine.retrieval_schema",
+	"knowledge_parser.list",
+	"pipeline.extensions.get",
+	"pipeline.extensions.update",
+	"pipeline.run",
+	"monitoring.messages",
+	"monitoring.llm_calls",
+	"monitoring.tool_calls",
+	"monitoring.embedding_calls",
+	"monitoring.sessions",
+	"monitoring.errors",
+	"monitoring.message_details",
+	"monitoring.session_analysis",
+	"sandbox.status",
+	"sandbox.sessions",
+	"sandbox.errors",
+
 	"bot.list",
 	"bot.get",
 	"bot.create",
@@ -1374,6 +1393,14 @@ func (c Client) doWithContentType(ctx context.Context, target Target, method, pa
 		return response{}, businessError(parsed.Code, requestID, resp.StatusCode, target.APIKey)
 	}
 	data, ok := parseDataObject(parsed.Data)
+	if !ok && (path == "/api/v1/box/sessions" || path == "/api/v1/box/errors") {
+		var items []any
+		decoder := json.NewDecoder(bytes.NewReader(parsed.Data))
+		decoder.UseNumber()
+		if decoder.Decode(&items) == nil && items != nil {
+			data, ok = map[string]any{strings.TrimPrefix(path, "/api/v1/box/"): items}, true
+		}
+	}
 	if !ok && allowNilData && string(parsed.Data) == "null" {
 		data = nil
 		ok = true
@@ -1402,6 +1429,12 @@ func knownWritePath(method, path string) bool {
 		if method != http.MethodDelete || !safeNestedPath(path, pluginsPath, "", 2) || len(query) != 1 || len(query["delete_data"]) != 1 || query.Get("delete_data") != "true" {
 			return false
 		}
+	}
+	if method == http.MethodPut && nestedPath(path, pipelinesPath, 1, "extensions") {
+		return true
+	}
+	if method == http.MethodPost && nestedPath(path, pipelinesPath, 1, "run") {
+		return true
 	}
 	if method == http.MethodPost && path == documentUploadPath {
 		return true
@@ -2115,6 +2148,9 @@ func httpError(status int, code json.RawMessage, requestID, secret string) *resu
 	err := result.New(kind, httpStatusMessage(status))
 	err.HTTPStatus = status
 	err.ServerCode = safeServerCode(code, secret)
+	if err.ServerCode == "managed_sandbox_unavailable" {
+		err.Message = "托管 sandbox 不可用；请检查 Workspace 的 sandbox 授权和服务状态"
+	}
 	err.RequestID = requestID
 	return err
 }

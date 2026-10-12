@@ -22,6 +22,7 @@ const managementCapabilities = `{"schema_version":1,"operations":{
 type managementServer struct {
 	pluginPresent     atomic.Bool
 	pluginConfig      atomic.Value
+	configMissingOnce atomic.Bool
 	skillPresent      atomic.Bool
 	skillContent      atomic.Value
 	skillDesc         atomic.Value
@@ -69,6 +70,11 @@ func newManagementService(t *testing.T, state *managementServer) (*Service, func
 					state.configUnavailable.Add(-1)
 					w.WriteHeader(http.StatusNotFound)
 					fmt.Fprint(w, `{"code":404,"msg":"reloading"}`)
+					return
+				}
+				if state.configMissingOnce.Swap(false) {
+					w.WriteHeader(http.StatusNotFound)
+					fmt.Fprint(w, `{"code":404,"msg":"plugin restarting"}`)
 					return
 				}
 				config := state.pluginConfig.Load().(map[string]any)
@@ -174,6 +180,17 @@ func TestPluginConfigUpdateDryRunAndReadbackMasksPlaceholder(t *testing.T) {
 	data := actual.Data.(map[string]any)
 	if data["verified"] != true || strings.Contains(fmt.Sprint(data), "connection-secret") {
 		t.Fatalf("unsafe update result = %#v", data)
+	}
+}
+
+func TestPluginConfigUpdateWaitsForRestartReadback(t *testing.T) {
+	state := &managementServer{}
+	service, closeServer := newManagementService(t, state)
+	defer closeServer()
+	state.configMissingOnce.Store(true)
+	result, err := service.PluginConfigUpdate(context.Background(), "author", "plugin", map[string]any{"mode": "updated"}, false, CheckOptions{ContextSet: true, Context: "managed"})
+	if err != nil || result.Data.(map[string]any)["verified"] != true {
+		t.Fatalf("plugin config update after restart: result=%#v err=%v", result, err)
 	}
 }
 
