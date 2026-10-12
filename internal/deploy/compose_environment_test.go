@@ -32,6 +32,8 @@ type composeProcessResult struct {
 }
 
 func TestComposeCommandRunsInDeploymentDirectory(t *testing.T) {
+	// Exercise the same Docker-free environment as the macOS CI runner.
+	t.Setenv("PATH", t.TempDir())
 	t.Setenv("PWD", filepath.Join(t.TempDir(), "unrelated-caller"))
 	deploymentDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(deploymentDir, "relative.txt"), []byte("compose-root"), 0o600); err != nil {
@@ -39,6 +41,9 @@ func TestComposeCommandRunsInDeploymentDirectory(t *testing.T) {
 	}
 	record := Record{ComposeFile: filepath.Join(deploymentDir, "compose.yaml"), ComposeProject: "test"}
 	command := (DockerRunner{}).composeCommand(context.Background(), "desktop-linux", record, "up", "-d")
+	if command.Err == nil {
+		t.Fatal("expected Docker lookup to fail in the isolated PATH")
+	}
 	if !strings.Contains(strings.Join(command.Args, "\n"), "--project-directory\n"+deploymentDir) {
 		t.Fatal("Compose project directory was not set")
 	}
@@ -49,6 +54,8 @@ func TestComposeCommandRunsInDeploymentDirectory(t *testing.T) {
 	}
 	command.Path = executable
 	command.Args = []string{executable, "-test.run=^TestComposeEnvironmentChildProcess$"}
+	// The test replaces Docker with itself, including the cached lookup error.
+	command.Err = nil
 	command.Env = append(command.Env, "LBCTL_COMPOSE_ENVIRONMENT_CHILD=1")
 	output, err := command.Output()
 	if err != nil {
