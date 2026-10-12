@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/langbot-app/langbot-cli/internal/redact"
+
 	"go.yaml.in/yaml/v3"
 )
 
@@ -80,57 +82,7 @@ func prepare(value any) (any, error) {
 	if err := decoder.Decode(&decoded); err != nil {
 		return nil, err
 	}
-	return redactValue(decoded, ""), nil
-}
-
-func redactValue(value any, field string) any {
-	if isSecretField(field) {
-		if isMaskedSecretValue(value) {
-			return value
-		}
-		return "[REDACTED]"
-	}
-	switch typed := value.(type) {
-	case map[string]any:
-		result := make(map[string]any, len(typed))
-		for key, item := range typed {
-			result[key] = redactValue(item, key)
-		}
-		return result
-	case []any:
-		result := make([]any, len(typed))
-		for i, item := range typed {
-			result[i] = redactValue(item, "")
-		}
-		return result
-	default:
-		return value
-	}
-}
-
-func isMaskedSecretValue(value any) bool {
-	switch typed := value.(type) {
-	case nil:
-		return true
-	case string:
-		return typed == "" || typed == "***"
-	case map[string]any:
-		for _, item := range typed {
-			if !isMaskedSecretValue(item) {
-				return false
-			}
-		}
-		return true
-	case []any:
-		for _, item := range typed {
-			if !isMaskedSecretValue(item) {
-				return false
-			}
-		}
-		return true
-	default:
-		return false
-	}
+	return redact.Value(decoded, ""), nil
 }
 
 func yamlValue(value any) any {
@@ -190,18 +142,4 @@ func formatCell(value any) string {
 		return "[unprintable]"
 	}
 	return formatCell(string(data))
-}
-
-func isSecretField(name string) bool {
-	name = strings.ToLower(name)
-	switch name {
-	case "api_key_id", "token_count", "input_tokens", "output_tokens", "total_tokens", "max_tokens":
-		return false
-	}
-	for _, part := range []string{"apikey", "api_key", "token", "password", "secret", "authorization"} {
-		if strings.Contains(name, part) {
-			return true
-		}
-	}
-	return false
 }

@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/langbot-app/langbot-cli/internal/endpoint"
+	"github.com/langbot-app/langbot-cli/internal/redact"
 	"github.com/langbot-app/langbot-cli/internal/result"
 )
 
@@ -989,7 +990,7 @@ func (c Client) MCPServerTest(ctx context.Context, target Target, name string, b
 	return c.taskWrite(ctx, target, http.MethodPost, path+"/test", body)
 }
 
-// Bots 返回 Bot 的安全字段投影，不输出 adapter_config 等配置内容。
+// Bots 返回 Bot 的安全字段投影，保留已脱敏配置。
 func (c Client) Bots(ctx context.Context, target Target) ([]map[string]any, error) {
 	resp, err := c.fetch(ctx, target, http.MethodGet, botsPath)
 	if err != nil {
@@ -1018,7 +1019,7 @@ func (c Client) Bot(ctx context.Context, target Target, uuid string) (map[string
 	return bot, nil
 }
 
-// Pipelines 返回 Pipeline 的安全字段投影，不输出 config 等配置内容。
+// Pipelines 返回 Pipeline 的安全字段投影，保留已脱敏配置。
 func (c Client) Pipelines(ctx context.Context, target Target) ([]map[string]any, error) {
 	resp, err := c.fetch(ctx, target, http.MethodGet, pipelinesPath)
 	if err != nil {
@@ -1049,11 +1050,40 @@ func (c Client) Pipeline(ctx context.Context, target Target, uuid string) (map[s
 
 // BotCreate 创建 Bot，并返回服务端分配的 UUID。
 func (c Client) BotCreate(ctx context.Context, target Target, body map[string]any) (WriteResult, error) {
+	if hasConfigPlaceholder(body["adapter_config"]) {
+		return WriteResult{}, result.New("input", "创建 Bot 不能使用脱敏配置占位符，请通过请求体提供实际凭据")
+	}
 	return c.createResource(ctx, target, http.MethodPost, botsPath, body)
 }
 
 // BotUpdate 更新 Bot。调用者可用 uuid 回读确认最终状态。
 func (c Client) BotUpdate(ctx context.Context, target Target, uuid string, body map[string]any) (WriteResult, error) {
+	// Core's Bot PUT does not restore masked leaves. Resolve them privately before
+	// submitting a read/modify/write payload; never return these values to output.
+	if hasConfigPlaceholder(body["adapter_config"]) {
+		path, err := resourcePath(botsPath, uuid)
+		if err != nil {
+			return WriteResult{}, err
+		}
+		resp, err := c.fetch(ctx, target, http.MethodGet, path)
+		if err != nil {
+			return WriteResult{}, err
+		}
+		current, ok := resp.Data["bot"].(map[string]any)
+		if !ok || current["uuid"] != uuid {
+			return WriteResult{}, result.New("precondition", "无法读取 Bot 原始配置，拒绝写入脱敏占位符")
+		}
+		restored, err := restoreConfigPlaceholders(body["adapter_config"], current["adapter_config"])
+		if err != nil {
+			return WriteResult{}, err
+		}
+		copy := make(map[string]any, len(body))
+		for key, value := range body {
+			copy[key] = value
+		}
+		copy["adapter_config"] = restored
+		body = copy
+	}
 	return c.updateResource(ctx, target, http.MethodPut, botsPath, uuid, body)
 }
 
@@ -1910,15 +1940,27 @@ func stringValue(value any) (string, bool) {
 }
 
 func projectBot(value map[string]any, secret string) map[string]any {
-	return projectScalarFields(value, []string{
+	projected := projectScalarFields(value, []string{
 		"uuid", "name", "description", "adapter", "enable", "use_pipeline_name", "use_pipeline_uuid", "created_at", "updated_at",
 	}, secret)
+	projectConfigFields(projected, value, secret, "adapter_config", "pipeline_routing_rules")
+	return projected
 }
 
 func projectPipeline(value map[string]any, secret string) map[string]any {
-	return projectScalarFields(value, []string{
+	projected := projectScalarFields(value, []string{
 		"uuid", "name", "description", "emoji", "for_version", "is_default", "created_at", "updated_at",
 	}, secret)
+	projectConfigFields(projected, value, secret, "config", "stages", "extensions_preferences")
+	return projected
+}
+
+func projectConfigFields(projected, value map[string]any, secret string, fields ...string) {
+	for _, field := range fields {
+		if item, exists := value[field]; exists {
+			projected[field] = redact.Configuration(redactConnectionSecret(item, secret), field)
+		}
+	}
 }
 
 func projectMCPServer(value map[string]any, secret string) map[string]any {

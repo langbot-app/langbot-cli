@@ -253,6 +253,8 @@ lbctl mcp-server delete <name> --yes
 - 결과가 불확실하면 `result_unknown`을 반환하여 확인 후 다음 작업을 결정할 수 있습니다.
 - 다단계 작업은 생성한 리소스 또는 `task_id`를 유지하여 진행 상황을 추적합니다.
 
+Bot/Pipeline 조회는 일반 설정을 유지하고 인증 정보는 `***`로 가립니다. 생성, 수정, Pipeline 복사 후 다시 조회하여 확인 가능한 필드를 비교하며, 불일치는 `verification_failed`를 반환합니다. `verification.observable_fields_match`는 비교 결과를, `unverified_fields`는 가려진 필드를 나타냅니다. 모든 비교 대상 필드를 검증할 수 있고 값이 일치할 때만 `verified`가 true입니다. Bot 수정은 값 전체가 `***`인 자리표시자의 기존 인증 정보를 유지하며, 안전하게 복원할 수 없으면 수정 전에 거부합니다.
+
 비동기 작업을 별도로 조회합니다:
 
 ```sh

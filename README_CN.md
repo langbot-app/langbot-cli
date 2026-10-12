@@ -253,6 +253,8 @@ lbctl mcp-server delete <name> --yes
 - 请求结果无法确认时返回 `result_unknown`，便于核查后决定下一步。
 - 多步操作保留已经产生的资源或 `task_id`，便于跟踪执行进度。
 
+Bot/Pipeline 读取保留普通配置，凭据使用 `***` 脱敏。创建、更新和 Pipeline 复制会回读核对可观察字段，不一致时返回 `verification_failed`。`verification.observable_fields_match` 表示核对结果，`unverified_fields` 列出被隐藏的字段；只有所有核对字段都可验证且一致时，`verified` 才为 true。Bot 更新会为完整的 `***` 占位符保留原凭据，无法安全恢复的占位符会在更新前被拒绝。
+
 异步任务也可以单独查询：
 
 ```sh

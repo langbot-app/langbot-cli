@@ -253,6 +253,8 @@ lbctl mcp-server delete <name> --yes
 - 結果不確定時回傳 `result_unknown`，便於核查後決定下一步。
 - 多步操作保留已建立的資源或 `task_id`，便於追蹤進度。
 
+Bot/Pipeline 讀取保留一般設定，憑證以 `***` 遮蔽。建立、更新與 Pipeline 複製會重新讀取並核對可觀察欄位，不一致時回傳 `verification_failed`。`verification.observable_fields_match` 表示核對結果，`unverified_fields` 列出隱藏欄位；僅在所有核對欄位都可驗證且一致時，`verified` 才為 true。Bot 更新會為完整的 `***` 佔位符保留原憑證，無法安全還原的佔位符會在更新前遭拒絕。
+
 非同步任務也可獨立查詢：
 
 ```sh

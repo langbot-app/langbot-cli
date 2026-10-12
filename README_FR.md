@@ -253,6 +253,8 @@ Les écritures vérifient le contexte enregistré, le lien Workspace, l'identit�
 - Un résultat incertain renvoie `result_unknown` pour examen avant la prochaine décision.
 - Les opérations en plusieurs étapes conservent les ressources créées ou les `task_id` pour le suivi.
 
+Les lectures de Bot/Pipeline conservent la configuration ordinaire et masquent les identifiants avec `***`. Les créations, mises à jour et copies de Pipeline comparent les champs observables après relecture ; les différences renvoient `verification_failed`. `verification.observable_fields_match` indique le résultat et `unverified_fields` liste les champs masqués. `verified` vaut true uniquement si tous les champs contrôlés sont vérifiables et identiques. Les mises à jour de Bot préservent les identifiants existants pour les valeurs exactement égales à `***` ; les valeurs impossibles à restaurer en toute sécurité sont refusées avant la mise à jour.
+
 Consultez les tâches asynchrones indépendamment :
 
 ```sh

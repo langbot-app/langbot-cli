@@ -253,6 +253,8 @@ lbctl mcp-server delete <name> --yes
 - 結果が不明な場合は `result_unknown` を返し、確認してから次の操作を判断できます。
 - 複数段階の操作は作成済みリソースや `task_id` を保持して進捗を追跡できます。
 
+Bot/Pipeline の読み取りでは通常の設定を保持し、認証情報を `***` で隠します。作成、更新、Pipeline のコピー後に取得可能なフィールドを照合し、不一致は `verification_failed` を返します。`verification.observable_fields_match` は照合結果、`unverified_fields` は隠されたフィールドを示します。すべての照合対象が検証可能で一致した場合のみ `verified` が true になります。Bot 更新では値全体が `***` の場合に既存の認証情報を保持し、安全に復元できない場合は更新前に拒否します。
+
 非同期タスクを個別に照会できます：
 
 ```sh

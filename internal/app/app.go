@@ -2070,9 +2070,8 @@ func (s *Service) BotCreate(ctx context.Context, body map[string]any, dryRun boo
 	if err != nil {
 		return Result{Data: data, Meta: preflight.Meta()}, readbackError(err)
 	}
-	data["verified"] = true
 	data["bot"] = bot
-	return Result{Data: data, Meta: preflight.Meta()}, nil
+	return verifyResourceWrite(preflight, data, body, bot)
 }
 
 func (s *Service) BotUpdate(ctx context.Context, uuid string, body map[string]any, dryRun bool, options CheckOptions) (Result, error) {
@@ -2098,9 +2097,8 @@ func (s *Service) BotUpdate(ctx context.Context, uuid string, body map[string]an
 	if err != nil {
 		return Result{Data: data, Meta: preflight.Meta()}, readbackError(err)
 	}
-	data["verified"] = true
 	data["bot"] = bot
-	return Result{Data: data, Meta: preflight.Meta()}, nil
+	return verifyResourceWrite(preflight, data, withoutUUID(body), bot)
 }
 
 func (s *Service) BotDelete(ctx context.Context, uuid string, confirmed, dryRun bool, options CheckOptions) (Result, error) {
@@ -2180,9 +2178,8 @@ func (s *Service) PipelineApply(ctx context.Context, body map[string]any, dryRun
 	if err != nil {
 		return Result{Data: data, Meta: preflight.Meta()}, readbackError(err)
 	}
-	data["verified"] = true
 	data["pipeline"] = pipeline
-	return Result{Data: data, Meta: preflight.Meta()}, nil
+	return verifyResourceWrite(preflight, data, payload, pipeline)
 }
 
 func (s *Service) PipelineCopy(ctx context.Context, uuid string, dryRun bool, options CheckOptions) (Result, error) {
@@ -2197,18 +2194,32 @@ func (s *Service) PipelineCopy(ctx context.Context, uuid string, dryRun bool, op
 		return writePlan(preflight, "pipeline.copy", uuid), nil
 	}
 	client, target := s.writeClient(preflight)
+	source, err := client.Pipeline(ctx, target, uuid)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
 	written, err := client.PipelineCopy(ctx, target, uuid)
 	if err != nil {
 		return Result{Meta: preflight.Meta()}, err
 	}
-	pipeline, err := client.Pipeline(ctx, target, written.UUID)
 	data := writeResultData("pipeline.copy", written.UUID)
+	if written.UUID == uuid {
+		return Result{Data: data, Meta: preflight.Meta()}, verificationError("复制响应未返回新的 Pipeline UUID")
+	}
+	pipeline, err := client.Pipeline(ctx, target, written.UUID)
 	if err != nil {
 		return Result{Data: data, Meta: preflight.Meta()}, readbackError(err)
 	}
-	data["verified"] = true
 	data["pipeline"] = pipeline
-	return Result{Data: data, Meta: preflight.Meta()}, nil
+	expected := map[string]any{}
+	for _, field := range []string{"description", "config", "extensions_preferences"} {
+		if value, exists := source[field]; exists {
+			expected[field] = value
+		}
+	}
+	finished, verifyErr := verifyResourceWrite(preflight, data, expected, pipeline)
+	data["verification"].(map[string]any)["scope"] = "copied_fields"
+	return finished, verifyErr
 }
 
 func (s *Service) PipelineDelete(ctx context.Context, uuid string, confirmed, dryRun bool, options CheckOptions) (Result, error) {

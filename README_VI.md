@@ -253,6 +253,8 @@ Thao tác ghi kiểm tra context đã lưu, liên kết Workspace, danh tính th
 - Kết quả chưa chắc chắn trả về `result_unknown` để kiểm tra trước khi quyết định bước tiếp theo.
 - Thao tác nhiều bước giữ tài nguyên đã tạo hoặc `task_id` để theo dõi tiến độ.
 
+Khi đọc Bot/Pipeline, cấu hình thông thường được giữ lại và thông tin xác thực được che bằng `***`. Sau khi tạo, cập nhật hoặc sao chép Pipeline, CLI đọc lại để so sánh các trường quan sát được; nếu không khớp, trả về `verification_failed`. `verification.observable_fields_match` cho biết kết quả, còn `unverified_fields` liệt kê các trường bị che. `verified` chỉ là true khi mọi trường được kiểm tra đều có thể xác minh và khớp. Khi cập nhật Bot, giá trị chính xác `***` giữ nguyên thông tin xác thực hiện có; nếu không thể khôi phục an toàn, CLI từ chối trước khi cập nhật.
+
 Có thể truy vấn tác vụ bất đồng bộ riêng:
 
 ```sh
