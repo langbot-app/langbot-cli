@@ -260,6 +260,27 @@ func TestAdoptRequiresLocalEndpointAndMatchingPublishedPort(t *testing.T) {
 	if err != nil || record.Endpoint != endpoint {
 		t.Fatalf("record = %+v, err = %v", record, err)
 	}
+	if returned := adopted.Data.(map[string]any)["record"].(deploy.Record); returned != record {
+		t.Fatalf("adopt response differs from persisted record: %+v != %+v", returned, record)
+	}
+	unchanged, err := service.Adopt(context.Background(), AdoptOptions{ComposeFile: composeFile, ComposeProject: "langbot", Endpoint: endpoint})
+	if err != nil || unchanged.Data.(map[string]any)["changed"] != false {
+		t.Fatalf("unchanged adopt = %+v, %v", unchanged.Data, err)
+	}
+	if err := os.WriteFile(composeFile, []byte("services: {}\n# explicitly confirmed edit\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	refreshed, err := service.Adopt(context.Background(), AdoptOptions{ComposeFile: composeFile, ComposeProject: "langbot", Endpoint: endpoint})
+	if err != nil || refreshed.Data.(map[string]any)["changed"] != true {
+		t.Fatalf("refresh adopt = %+v, %v", refreshed.Data, err)
+	}
+	updated, err := (deploy.Store{Dir: filepath.Join(root, "record")}).Read()
+	if err != nil || updated.Asset.Digest == record.Asset.Digest || updated.DeploymentID != record.DeploymentID {
+		t.Fatalf("adopt did not refresh the asset while preserving identity: %+v, %v", updated, err)
+	}
+	if returned := refreshed.Data.(map[string]any)["record"].(deploy.Record); returned != updated {
+		t.Fatalf("refreshed adopt response differs from persisted record: %+v != %+v", returned, updated)
+	}
 }
 
 func TestFollowLogsUsesJSONLines(t *testing.T) {

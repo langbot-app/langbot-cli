@@ -116,7 +116,10 @@ func (r DockerRunner) Compose(ctx context.Context, record Record, args ...string
 		return result, err
 	}
 	base := r.composeArgs(contextName, record)
-	return r.exec(ctx, append(base, args...)...)
+	if r.Exec != nil {
+		return r.exec(ctx, append(base, args...)...)
+	}
+	return captureDockerCommand(r.composeCommand(ctx, contextName, record, args...))
 }
 
 func (r DockerRunner) ComposeStream(ctx context.Context, record Record, stdout, stderr io.Writer, args ...string) error {
@@ -133,9 +136,7 @@ func (r DockerRunner) ComposeStream(ctx context.Context, record Record, stdout, 
 	if err != nil {
 		return err
 	}
-	base := r.composeArgs(contextName, record)
-	command := exec.CommandContext(ctx, base[0], append(base[1:], args...)...)
-	command.Env = localDockerEnvironment()
+	command := r.composeCommand(ctx, contextName, record, args...)
 	command.Stdout = stdout
 	command.Stderr = stderr
 	return command.Run()
@@ -150,12 +151,47 @@ func (r DockerRunner) composeArgs(contextName string, record Record) []string {
 		base = append(base, "--project-name", record.ComposeProject)
 	}
 	if record.ComposeFile != "" {
+		base = append(base, "--project-directory", filepath.Dir(record.ComposeFile))
 		base = append(base, "--file", record.ComposeFile)
 	}
 	if strings.EqualFold(record.Profile, "all") || strings.EqualFold(record.Profile, "box") {
 		base = append(base, "--profile", "all")
 	}
 	return base
+}
+
+// Compose paths must not depend on the directory from which lbctl was invoked.
+func (r DockerRunner) composeCommand(ctx context.Context, contextName string, record Record, args ...string) *exec.Cmd {
+	base := r.composeArgs(contextName, record)
+	command := exec.CommandContext(ctx, base[0], append(base[1:], args...)...)
+	command.Env = localDockerEnvironment()
+	configureCommandCancellation(command)
+	if record.ComposeFile == "" {
+		return command
+	}
+	command.Dir = filepath.Dir(record.ComposeFile)
+	environment := make([]string, 0, len(command.Env)+1)
+	for _, item := range command.Env {
+		name, _, _ := strings.Cut(item, "=")
+		if !strings.EqualFold(name, "PWD") {
+			environment = append(environment, item)
+		}
+	}
+	command.Env = append(environment, "PWD="+composeWorkingPath(command.Dir, runtime.GOOS))
+	return command
+}
+
+// Docker Desktop Linux bind targets cannot contain a Windows drive colon.
+func composeWorkingPath(dir, platform string) string {
+	if platform != "windows" {
+		return dir
+	}
+	path := strings.ReplaceAll(dir, "\\", "/")
+	if len(path) >= 3 && path[1] == ':' && path[2] == '/' &&
+		((path[0] >= 'A' && path[0] <= 'Z') || (path[0] >= 'a' && path[0] <= 'z')) {
+		return "/" + strings.ToLower(path[:1]) + path[2:]
+	}
+	return path
 }
 
 func (r DockerRunner) localContext(ctx context.Context) (string, CommandResult, error) {
@@ -193,6 +229,30 @@ func (r DockerRunner) exec(ctx context.Context, args ...string) (CommandResult, 
 	}
 	command := exec.CommandContext(ctx, args[0], args[1:]...)
 	command.Env = localDockerEnvironment()
+	configureCommandCancellation(command)
+	return captureDockerCommand(command)
+}
+
+// Docker on Windows launches Compose as a child that can retain output pipes.
+func configureCommandCancellation(command *exec.Cmd) {
+	command.WaitDelay = 2 * time.Second
+	if runtime.GOOS != "windows" {
+		return
+	}
+	command.Cancel = func() error {
+		if command.Process == nil {
+			return os.ErrProcessDone
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := exec.CommandContext(ctx, "taskkill.exe", "/PID", fmt.Sprint(command.Process.Pid), "/T", "/F").Run(); err != nil {
+			return command.Process.Kill()
+		}
+		return nil
+	}
+}
+
+func captureDockerCommand(command *exec.Cmd) (CommandResult, error) {
 	var stdout, stderr strings.Builder
 	command.Stdout, command.Stderr = &stdout, &stderr
 	err := command.Run()

@@ -261,7 +261,12 @@ func TestLiveCore(t *testing.T) {
 	r := run(t, filepath.Join(t.TempDir(), "config.yaml"), nil, "", "--endpoint", endpoint, "status")
 	requireSuccess(t, r)
 	data := r.data["data"].(map[string]any)
-	if data["identity"] != "unknown" || data["capabilities"] != "unknown" || data["server_version"] == "" {
+	service, serviceOK := data["service"].(map[string]any)
+	identity, identityOK := data["identity"].(map[string]any)
+	capabilities, capabilitiesOK := data["capabilities"].(map[string]any)
+	version, versionOK := service["version"].(string)
+	if !serviceOK || !identityOK || !capabilitiesOK || !versionOK || strings.TrimSpace(version) == "" ||
+		identity["status"] != "unknown" || capabilities["status"] != "unknown" {
 		t.Fatalf("unexpected real Core discovery boundary: %s", r.out)
 	}
 }

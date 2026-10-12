@@ -76,15 +76,40 @@ func CompareReleaseVersions(current, target string) (int, error) {
 }
 
 func ComposeForUpgrade(record Record, dir, version string) ([]byte, string, error) {
-	if err := ValidateOwnedLayout(record, dir); err != nil {
+	if err := validateUpgradeLayout(record, dir); err != nil {
 		return nil, "", err
 	}
 	if !releaseVersionPattern.MatchString(version) {
 		return nil, "", errors.New("版本必须为 vX.Y.Z 形式的稳定 Release tag")
 	}
-	image := DefaultImageRepository + ":" + version
-	updated := []byte(renderCompose(image, record.Port, filepath.Join(dir, "data", "box")))
+	content, err := os.ReadFile(record.ComposeFile)
+	if err != nil {
+		return nil, "", err
+	}
+	updated, err := replaceComposeImages(content, DefaultImageRepository+":"+version)
+	if err != nil {
+		return nil, "", err
+	}
 	return updated, fileDigest(updated), nil
+}
+
+func IsAdoptedLayout(record Record) bool {
+	return record.Asset.Name == filepath.Base(record.ComposeFile)
+}
+
+func validateUpgradeLayout(record Record, dir string) error {
+	if !IsAdoptedLayout(record) {
+		return ValidateOwnedLayout(record, dir)
+	}
+	if record.Driver != DriverDockerCompose || !filepath.IsAbs(record.ComposeFile) ||
+		!regularFile(record.ComposeFile) || record.DataDir != filepath.Join(filepath.Dir(record.ComposeFile), "data") ||
+		!releaseVersionPattern.MatchString(record.CoreVersion) || (record.Profile != "basic" && record.Profile != "all") {
+		return errors.New("接管部署的 Compose 或数据目录不在支持的升级范围内")
+	}
+	if fileDigestPath(record.ComposeFile) != record.Asset.Digest {
+		return errors.New("接管后的 Compose 资产已变更，请重新 adopt 确认后升级")
+	}
+	return nil
 }
 
 func ValidateOwnedLayout(record Record, dir string) error {
@@ -206,7 +231,7 @@ func WriteUpgradeCompose(record Record, content []byte) error {
 	return writeAtomic(record.ComposeFile, content, 0o600)
 }
 
-func CreateUpgradeBackup(ctx context.Context, record Record, state UpgradeState) (string, error) {
+func CreateUpgradeBackup(ctx context.Context, record Record, state UpgradeState, recordDir string) (string, error) {
 	root := filepath.Join(filepath.Dir(record.DataDir), "backups")
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		return "", err
@@ -223,7 +248,20 @@ func CreateUpgradeBackup(ctx context.Context, record Record, state UpgradeState)
 		return "", err
 	}
 	manifest := BackupManifest{SourceVersion: state.SourceVersion, ComposeDigest: state.SourceCompose, Files: []BackupFile{}}
-	for _, source := range []struct{ path, dest string }{{record.DataDir, "data"}, {record.ComposeFile, "compose.yaml"}, {record.EnvFile, ".env"}, {filepath.Join(filepath.Dir(record.DataDir), recordFileName), recordFileName}} {
+	sources := []struct{ path, dest string }{{record.DataDir, "data"}, {record.ComposeFile, "compose.yaml"}, {filepath.Join(recordDir, recordFileName), recordFileName}}
+	envFile := record.EnvFile
+	if envFile == "" {
+		candidate := filepath.Join(filepath.Dir(record.ComposeFile), ".env")
+		if _, err := os.Lstat(candidate); err == nil {
+			envFile = candidate
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return "", err
+		}
+	}
+	if envFile != "" {
+		sources = append(sources, struct{ path, dest string }{envFile, ".env"})
+	}
+	for _, source := range sources {
 		err := filepath.WalkDir(source.path, func(path string, entry fs.DirEntry, walkErr error) error {
 			if err := ctx.Err(); err != nil {
 				return err

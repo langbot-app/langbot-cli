@@ -1,6 +1,6 @@
 # langbot-cli
 
-LangBot 的独立命令行工具，二进制名为 `lbctl`。它通过 HTTP 管理已运行实例中的 Workspace 资源，支持多 context、身份与能力发现、资源管理及异步任务等待。本机部署的安装、启停和升级不在当前范围内。
+LangBot 的独立命令行工具，二进制名为 `lbctl`。它通过 HTTP 管理已运行实例中的 Workspace 资源，支持多 context、身份与能力发现、资源管理及异步任务等待，也支持本机 Docker Compose 部署的安装、接管、启停和升级。
 
 当前源码需配套包含以下能力的 LangBot Core：
 
@@ -88,6 +88,32 @@ lbctl context remove dev --yes
 | 超时 | `--timeout` → `LANGBOT_TIMEOUT` → context 配置 → 30s |
 
 `--api-key-stdin` 用于单次调用，不能与 `--file -` 同时使用。临时 endpoint 只允许受控读取；资源写入必须使用已保存且绑定 Workspace 的 context。
+
+## 本机部署与升级
+
+`adopt` 将已有 Compose 部署登记为本机受管部署，不改变它的服务配置：
+
+```sh
+lbctl --endpoint http://127.0.0.1:5300 adopt \
+  --file /absolute/path/docker-compose.yaml --project langbot --profile all
+lbctl status
+lbctl doctor
+lbctl stop
+lbctl start
+```
+
+`lbctl upgrade` 升级 LangBot 服务镜像，而不是 CLI 程序。CLI 安装和接管的部署都可使用相同命令：
+
+```sh
+lbctl upgrade --version <newer-vX.Y.Z> --dry-run -o json
+lbctl upgrade --version <newer-vX.Y.Z> --yes -o json
+```
+
+接管部署升级仅替换 `langbot`、`langbot_plugin_runtime` 和已有 `langbot_box` 的镜像；保留 Compose 的其他内容，包括端口、挂载、环境配置、注释和其他服务。升级先拉取并验证目标镜像，再停服，备份数据、Compose、存在的项目 `.env` 和实际部署记录，最后启动并验证版本。失败后的备份和升级现场会保留，可通过 `status`、`doctor` 检查。
+
+自动升级支持直接声明 `rockchin/langbot:<tag>` 的服务，数据完整位于 Compose 目录的 `data` 绑定目录，且使用本地 SQLite、Chroma 和 local storage。外部/命名数据卷、服务级 `env_file`、镜像变量/别名、build/extends/include 等无法确认备份或改写范围的配置会在停服前拒绝。目标版本必须高于当前版本；`--dry-run` 不验证目标镜像是否已发布。接管后手动改变 Compose，需要再次执行相同目标的 `adopt`，明确确认新的资产摘要。
+
+本机生命周期作用于部署实例；Bot、Pipeline、Skill 等资源仍通过下面同一套命令管理 context 对应的 Workspace。
 
 ## 管理资源
 
@@ -177,6 +203,17 @@ lbctl skill delete <name> --yes
 ```
 
 Skill 安装的 `--dry-run` 调用服务端预览，不产生安装。Plugin 安装、升级和删除可用 `--wait` 跟踪异步任务。
+
+GitHub 插件安装请求包含 `owner`、`repo`、`release_tag`，以及 `release_id`/`asset_id` 或 `asset_url`。链接输入会由 CLI 查询 GitHub release 并转换成与 WebUI 一致的 ID 请求；此查询不发送 Workspace API Key，dry-run 不访问 GitHub。示例：
+
+```yaml
+owner: langbot-app
+repo: langbot-plugins
+release_tag: 0.0.1.alpha.1
+asset_url: https://github.com/langbot-app/langbot-plugins/releases/download/0.0.1.alpha.1/langbot-team-GoogleSearch-0.1.2.lbpkg
+```
+
+插件配置更新会在受限时间内等待重载后的回读，不重复提交写入。删除命令也可清理未成功启动的安装，不要求插件先出现在实时运行列表中。
 
 ### MCP Server
 

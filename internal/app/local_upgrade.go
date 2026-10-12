@@ -66,6 +66,15 @@ func (s *Service) Upgrade(ctx context.Context, options UpgradeOptions) (Result, 
 		if composeErr != nil {
 			return result.New("precondition", composeErr.Error())
 		}
+		if deploy.IsAdoptedLayout(current) {
+			resolved, err := diagnostics.Runner.Compose(operationCtx, current, "config", "--format", "json")
+			if err != nil {
+				return result.New("precondition", "无法解析接管部署的 Compose 配置")
+			}
+			if err := deploy.ValidateAdoptedUpgradeConfig(current, resolved.Stdout); err != nil {
+				return result.New("precondition", err.Error())
+			}
+		}
 		before, statusErr := diagnostics.Status(operationCtx)
 		if statusErr != nil || (before.Status != "running" && before.Status != "stopped") {
 			return result.New("precondition", "无法确认本机部署处于正常运行或停止状态")
@@ -86,10 +95,17 @@ func (s *Service) Upgrade(ctx context.Context, options UpgradeOptions) (Result, 
 		if readErr != nil {
 			return result.New("precondition", "无法读取当前 Compose 资产")
 		}
+		sourceImage, err := deploy.ComposeSourceImage(oldCompose)
+		if err != nil {
+			return result.New("precondition", err.Error())
+		}
+		if deploy.IsAdoptedLayout(current) && composeDigest(oldCompose) != current.Asset.Digest {
+			return result.New("precondition", "接管后的 Compose 资产已变更，请重新 adopt 确认后升级")
+		}
 		sum := sha256.Sum256(oldCompose)
 		state := deploy.UpgradeState{
 			DeploymentID: current.DeploymentID, SourceVersion: current.CoreVersion, TargetVersion: targetVersion,
-			SourceImage: current.Asset.Name, TargetImage: deploy.DefaultImageRepository + ":" + targetVersion,
+			SourceImage: sourceImage, TargetImage: deploy.DefaultImageRepository + ":" + targetVersion,
 			SourceCompose: "sha256:" + hex.EncodeToString(sum[:]), TargetCompose: targetComposeDigest,
 			Profile: current.Profile, Database: "sqlite", DataDir: current.DataDir, BeforeContainers: before.Containers,
 			DiskFreeBytes: freeBytes, DataBytes: dataBytes, BeforeStatus: before.Status,
@@ -121,6 +137,10 @@ func (s *Service) Upgrade(ctx context.Context, options UpgradeOptions) (Result, 
 		}
 		plan["image_verification"] = "verified"
 		plan["target_image_digest"] = state.TargetDigest
+		latestCompose, err := os.ReadFile(current.ComposeFile)
+		if err != nil || composeDigest(latestCompose) != state.SourceCompose {
+			return result.New("precondition", "拉取镜像期间 Compose 资产已变更，部署未修改")
+		}
 		state.Phase = "image_verified"
 		if err := deploy.WriteUpgradeState(diagnostics.Dir, state); err != nil {
 			return result.New("server", "无法记录升级现场，部署未修改")
@@ -159,7 +179,7 @@ func (s *Service) Upgrade(ctx context.Context, options UpgradeOptions) (Result, 
 		if _, _, err := deploy.InspectUpgradeData(current); err != nil {
 			return fail("backup_preflight", "停服后数据范围或空间检查失败")
 		}
-		backupDir, backupErr := deploy.CreateUpgradeBackup(operationCtx, current, state)
+		backupDir, backupErr := deploy.CreateUpgradeBackup(operationCtx, current, state, diagnostics.Dir)
 		if backupErr != nil {
 			return fail("backup", "创建或验证完整备份失败")
 		}
@@ -170,6 +190,10 @@ func (s *Service) Upgrade(ctx context.Context, options UpgradeOptions) (Result, 
 		}
 		if err := update("switching"); err != nil {
 			return err
+		}
+		latestCompose, err = os.ReadFile(current.ComposeFile)
+		if err != nil || !strings.EqualFold(state.SourceCompose, composeDigest(latestCompose)) {
+			return fail("compose_changed", "备份期间 Compose 资产已变更")
 		}
 		if err := deploy.WriteUpgradeCompose(current, compose); err != nil {
 			return fail("compose_switch", "替换 Compose 资产失败")
@@ -194,7 +218,11 @@ func (s *Service) Upgrade(ctx context.Context, options UpgradeOptions) (Result, 
 			return fail("service_health", "目标版本必需服务未全部就绪")
 		}
 		current.CoreVersion = targetVersion
-		current.Asset = deploy.AssetInfo{Name: state.TargetImage, Digest: state.TargetDigest}
+		if deploy.IsAdoptedLayout(current) {
+			current.Asset.Digest = targetComposeDigest
+		} else {
+			current.Asset = deploy.AssetInfo{Name: state.TargetImage, Digest: state.TargetDigest}
+		}
 		if err := diagnostics.Store.Write(operationCtx, current); err != nil {
 			return fail("record_write", "写入目标版本部署记录失败")
 		}
@@ -203,10 +231,19 @@ func (s *Service) Upgrade(ctx context.Context, options UpgradeOptions) (Result, 
 		}
 		plan["completed"] = true
 		plan["upgrade"] = state
+		if updated, err := diagnostics.Store.Read(); err == nil {
+			finalStatus.Record = updated
+		}
+		finalStatus.Upgrade = &state
 		plan["status"] = finalStatus
 		return nil
 	})
 	return response, normalizeLocalMutationError(err)
+}
+
+func composeDigest(content []byte) string {
+	sum := sha256.Sum256(content)
+	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
 func (s *Service) waitForLocalVersion(ctx context.Context, endpoint, version string) error {

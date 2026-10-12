@@ -71,7 +71,7 @@ func TestUpgradeBackupVerifiesDataAndPreservesEnv(t *testing.T) {
 		t.Fatalf("InspectUpgradeData() = %d, %d, %v", bytes, free, err)
 	}
 	state := UpgradeState{DeploymentID: record.DeploymentID, SourceVersion: record.CoreVersion, TargetVersion: "v4.10.10", SourceCompose: fileDigestPath(record.ComposeFile), Phase: "stopped"}
-	backup, err := CreateUpgradeBackup(context.Background(), record, state)
+	backup, err := CreateUpgradeBackup(context.Background(), record, state, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,10 +124,10 @@ func TestUpgradeRejectsExternalPersistenceAndInterruptedState(t *testing.T) {
 }
 
 func TestUpgradeBackupStopsOnCanceledContext(t *testing.T) {
-	record, _ := upgradeFixture(t)
+	record, dir := upgradeFixture(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err := CreateUpgradeBackup(ctx, record, UpgradeState{SourceVersion: "v4.10.9", SourceCompose: fileDigestPath(record.ComposeFile)})
+	_, err := CreateUpgradeBackup(ctx, record, UpgradeState{SourceVersion: "v4.10.9", SourceCompose: fileDigestPath(record.ComposeFile)}, dir)
 	if err == nil {
 		t.Fatal("取消后不得继续复制数据备份")
 	}

@@ -266,6 +266,18 @@ func (s *Service) Adopt(ctx context.Context, options AdoptOptions) (Result, erro
 			existing, readErr := store.Read()
 			if readErr == nil {
 				if sameDeployment(existing, record) {
+					if deploy.IsAdoptedLayout(existing) && (existing.Asset != record.Asset || existing.CoreVersion != record.CoreVersion) {
+						existing.Asset = record.Asset
+						existing.CoreVersion = record.CoreVersion
+						if err := store.Write(operationCtx, existing); err != nil {
+							return mapStoreWriteError(err)
+						}
+						existing, readErr = store.Read()
+						if readErr != nil {
+							return mapStoreWriteError(readErr)
+						}
+						changed = true
+					}
 					record = existing
 					return nil
 				}
@@ -286,6 +298,10 @@ func (s *Service) Adopt(ctx context.Context, options AdoptOptions) (Result, erro
 			record.DeploymentID = deploymentID
 			if err := store.Write(operationCtx, record); err != nil {
 				return mapStoreWriteError(err)
+			}
+			record, readErr = store.Read()
+			if readErr != nil {
+				return mapStoreWriteError(readErr)
 			}
 			changed = true
 			return nil

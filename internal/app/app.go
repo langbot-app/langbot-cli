@@ -1349,7 +1349,7 @@ func (s *Service) PluginConfigUpdate(ctx context.Context, author, name string, b
 	if err := client.PluginConfigUpdate(ctx, target, author, name, body); err != nil {
 		return Result{Meta: preflight.Meta()}, err
 	}
-	config, err := client.PluginConfig(ctx, target, author, name)
+	config, err := waitForPluginConfig(ctx, client, target, author, name, body)
 	data := writeResultData("plugin.config.update", "")
 	delete(data, "uuid")
 	data["author"] = author
@@ -1364,6 +1364,33 @@ func (s *Service) PluginConfigUpdate(ctx context.Context, author, name string, b
 	data["verified"] = true
 	data["config"] = actual
 	return Result{Data: data, Meta: preflight.Meta()}, nil
+}
+
+// A config write restarts the worker; only read-only verification is retried.
+func waitForPluginConfig(ctx context.Context, client api.Client, target api.Target, author, name string, expected map[string]any) (any, error) {
+	verifyCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	for {
+		config, err := client.PluginConfig(verifyCtx, target, author, name)
+		if err == nil {
+			actual, ok := pluginConfigValue(config)
+			if ok && observableConfigEqual(expected, actual) {
+				return config, nil
+			}
+		} else if result.AsError(err).Kind != "not_found" {
+			return config, err
+		}
+		timer := time.NewTimer(200 * time.Millisecond)
+		select {
+		case <-verifyCtx.Done():
+			timer.Stop()
+			if err != nil {
+				return config, err
+			}
+			return config, verificationError("Plugin 重载后配置未在期限内完成同步")
+		case <-timer.C:
+		}
+	}
 }
 
 func (s *Service) PluginDelete(ctx context.Context, author, name string, deleteData, confirmed, dryRun, wait bool, waitOptions WaitOptions, options CheckOptions) (Result, error) {
@@ -1389,7 +1416,7 @@ func (s *Service) PluginDelete(ctx context.Context, author, name string, deleteD
 		}
 	}
 	client, target := s.writeClient(preflight)
-	if _, err := client.PluginGet(ctx, target, author, name); err != nil {
+	if _, err := client.PluginGet(ctx, target, author, name); err != nil && result.AsError(err).Kind != "not_found" {
 		return Result{Meta: preflight.Meta()}, err
 	}
 	data := map[string]any{
@@ -1731,6 +1758,10 @@ func (s *Service) pluginInstall(ctx context.Context, operation string, body map[
 		defer file.Close()
 		taskID, err = client.PluginInstallLocal(ctx, target, filepath.Base(filename), file)
 	} else if operation == "plugin.install.github" {
+		body, err = resolveGitHubPluginAsset(ctx, s.deps.Transport, body)
+		if err != nil {
+			return Result{Data: data, Meta: preflight.Meta()}, err
+		}
 		taskID, err = client.PluginInstallGitHub(ctx, target, body)
 	} else {
 		taskID, err = client.PluginInstallMarketplace(ctx, target, body)

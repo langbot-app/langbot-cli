@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -16,9 +17,11 @@ import (
 )
 
 type upgradeRunner struct {
-	running bool
-	failUp  bool
-	calls   []string
+	running        bool
+	failUp         bool
+	failPull       bool
+	resolvedConfig string
+	calls          []string
 }
 
 func (r *upgradeRunner) Docker(_ context.Context, args ...string) (deploy.CommandResult, error) {
@@ -28,6 +31,9 @@ func (r *upgradeRunner) Docker(_ context.Context, args ...string) (deploy.Comman
 	case strings.HasPrefix(call, "info "):
 		return deploy.CommandResult{Stdout: "29"}, nil
 	case strings.HasPrefix(call, "pull "):
+		if r.failPull {
+			return deploy.CommandResult{}, errors.New("registry unavailable")
+		}
 		return deploy.CommandResult{}, nil
 	case strings.HasPrefix(call, "image inspect "):
 		return deploy.CommandResult{Stdout: "rockchin/langbot@sha256:" + strings.Repeat("a", 64)}, nil
@@ -40,6 +46,8 @@ func (r *upgradeRunner) Compose(_ context.Context, _ deploy.Record, args ...stri
 	call := strings.Join(args, " ")
 	r.calls = append(r.calls, "compose "+call)
 	switch call {
+	case "config --format json":
+		return deploy.CommandResult{Stdout: r.resolvedConfig}, nil
 	case "ps --format json":
 		state := "exited"
 		if r.running {
@@ -73,12 +81,102 @@ func (t upgradeTransport) RoundTrip(*http.Request) (*http.Response, error) {
 	if err != nil {
 		return nil, err
 	}
-	version := "v4.10.9"
-	if strings.Contains(string(data), "rockchin/langbot:v4.10.10") {
-		version = "v4.10.10"
+	image, err := deploy.ComposeSourceImage(data)
+	if err != nil {
+		return nil, err
 	}
+	version := strings.TrimPrefix(image, "rockchin/langbot:")
 	body := fmt.Sprintf(`{"code":0,"data":{"version":%q,"edition":"community"},"msg":"ok"}`, version)
 	return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
+}
+
+func adoptedUpgradeServiceFixture(t *testing.T) (*Service, *upgradeRunner, deploy.Record, string) {
+	t.Helper()
+	service, runner, record, _ := upgradeServiceFixture(t, false)
+	recordDir := filepath.Join(t.TempDir(), "adopted-record")
+	record.ComposeProject = "existing-project"
+	record.Asset.Name = filepath.Base(record.ComposeFile)
+	content, err := os.ReadFile(record.ComposeFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record.Asset.Digest = composeDigest(content)
+	record.EnvFile = ""
+	if err := (deploy.Store{Dir: recordDir}).Write(context.Background(), record); err != nil {
+		t.Fatal(err)
+	}
+	service.deps.LocalDir = recordDir
+	resolved, err := json.Marshal(map[string]any{"services": map[string]any{
+		"langbot":                map[string]any{"volumes": []map[string]string{{"type": "bind", "source": record.DataDir, "target": "/app/data"}}},
+		"langbot_plugin_runtime": map[string]any{"volumes": []map[string]string{{"type": "bind", "source": filepath.Join(record.DataDir, "plugins"), "target": "/app/data/plugins"}}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner.resolvedConfig = string(resolved)
+	return service, runner, record, recordDir
+}
+
+func TestAdoptedUpgradeCompletesAndCanUpgradeAgain(t *testing.T) {
+	service, runner, record, dir := adoptedUpgradeServiceFixture(t)
+	for _, version := range []string{"v4.10.10", "v4.10.11"} {
+		response, err := service.Upgrade(context.Background(), UpgradeOptions{CheckOptions: CheckOptions{Endpoint: record.Endpoint, EndpointSet: true}, Version: version, Yes: true})
+		if err != nil || response.Data.(map[string]any)["completed"] != true {
+			t.Fatalf("adopted upgrade %s: %+v, %v", version, response.Data, err)
+		}
+		updated, err := (deploy.Store{Dir: dir}).Read()
+		content, readErr := os.ReadFile(record.ComposeFile)
+		if err != nil || readErr != nil || updated.CoreVersion != version || updated.Asset.Name != filepath.Base(record.ComposeFile) || updated.Asset.Digest != composeDigest(content) {
+			t.Fatalf("adopted record lost Compose identity: %+v, %v, %v", updated, err, readErr)
+		}
+		state, err := deploy.ReadUpgradeState(dir)
+		if err != nil || state.Phase != "completed" {
+			t.Fatalf("state: %+v, %v", state, err)
+		}
+		if err := deploy.VerifyUpgradeBackup(state.BackupDir); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(filepath.Join(state.BackupDir, "deployment.yaml")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !runner.running {
+		t.Fatal("adopted deployment did not restart")
+	}
+}
+
+func TestAdoptedUpgradeRejectsMountMismatchBeforePullOrStop(t *testing.T) {
+	service, runner, record, _ := adoptedUpgradeServiceFixture(t)
+	runner.resolvedConfig = `{"services":{"langbot":{"volumes":[{"type":"volume","source":"unbacked","target":"/app/data"}]},"langbot_plugin_runtime":{}}}`
+	_, err := service.Upgrade(context.Background(), UpgradeOptions{CheckOptions: CheckOptions{Endpoint: record.Endpoint, EndpointSet: true}, Version: "v4.10.10", Yes: true})
+	if result.AsError(err).Kind != "precondition" {
+		t.Fatalf("wrong rejection: %v", err)
+	}
+	for _, call := range runner.calls {
+		if call == "compose stop" || strings.HasPrefix(call, "docker pull") {
+			t.Fatalf("unsafe preflight mutation: %s", call)
+		}
+	}
+}
+
+func TestAdoptedUpgradeRegistryFailureLeavesDeploymentRunning(t *testing.T) {
+	service, runner, record, dir := adoptedUpgradeServiceFixture(t)
+	runner.failPull = true
+	before, err := os.ReadFile(record.ComposeFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = service.Upgrade(context.Background(), UpgradeOptions{CheckOptions: CheckOptions{Endpoint: record.Endpoint, EndpointSet: true}, Version: "v4.10.10", Yes: true})
+	if err == nil || !runner.running {
+		t.Fatalf("registry failure stopped deployment: %v", err)
+	}
+	after, err := os.ReadFile(record.ComposeFile)
+	if err != nil || string(before) != string(after) {
+		t.Fatal("registry failure changed Compose")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "upgrade-state.yaml")); !os.IsNotExist(err) {
+		t.Fatal("registry failure left recovery state")
+	}
 }
 
 func upgradeServiceFixture(t *testing.T, failUp bool) (*Service, *upgradeRunner, deploy.Record, string) {

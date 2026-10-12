@@ -20,13 +20,15 @@ const managementCapabilities = `{"schema_version":1,"operations":{
 "skill.list":{"supported":true},"skill.get":{"supported":true},"skill.create":{"supported":true},"skill.update":{"supported":true},"skill.delete":{"supported":true},"skill.files.list":{"supported":true},"skill.files.read":{"supported":true},"skill.files.write":{"supported":true}}}`
 
 type managementServer struct {
-	pluginPresent atomic.Bool
-	pluginConfig  atomic.Value
-	skillPresent  atomic.Bool
-	skillContent  atomic.Value
-	skillDesc     atomic.Value
-	deleteData    atomic.Bool
-	deleteCalls   atomic.Int32
+	pluginPresent     atomic.Bool
+	pluginConfig      atomic.Value
+	skillPresent      atomic.Bool
+	skillContent      atomic.Value
+	skillDesc         atomic.Value
+	deleteData        atomic.Bool
+	deleteCalls       atomic.Int32
+	configUnavailable atomic.Int32
+	configWrites      atomic.Int32
 }
 
 func newManagementService(t *testing.T, state *managementServer) (*Service, func()) {
@@ -63,12 +65,19 @@ func newManagementService(t *testing.T, state *managementServer) (*Service, func
 			fmt.Fprint(w, `{"code":0,"data":{"plugin":{"manifest":{"manifest":{"metadata":{"author":"author","name":"plugin"}}}}}}`)
 		case "/api/v1/plugins/author/plugin/config":
 			if r.Method == http.MethodGet {
+				if state.configUnavailable.Load() > 0 {
+					state.configUnavailable.Add(-1)
+					w.WriteHeader(http.StatusNotFound)
+					fmt.Fprint(w, `{"code":404,"msg":"reloading"}`)
+					return
+				}
 				config := state.pluginConfig.Load().(map[string]any)
 				payload, _ := json.Marshal(config)
 				fmt.Fprintf(w, `{"code":0,"data":{"config":%s}}`, payload)
 				return
 			}
 			if r.Method == http.MethodPut {
+				state.configWrites.Add(1)
 				var body map[string]any
 				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 					t.Errorf("decode plugin config: %v", err)
@@ -186,6 +195,28 @@ func TestPluginDeleteRequiresConfirmationAndVerifiesAfterWait(t *testing.T) {
 	}
 	if value.Data.(map[string]any)["verified"] != true || state.deleteCalls.Load() != 1 || !state.deleteData.Load() {
 		t.Fatalf("delete result = %#v", value.Data)
+	}
+}
+
+func TestPluginConfigReadbackRetriesReloadWithoutRepeatingWrite(t *testing.T) {
+	state := &managementServer{}
+	service, closeServer := newManagementService(t, state)
+	defer closeServer()
+	state.configUnavailable.Store(2)
+	value, err := service.PluginConfigUpdate(context.Background(), "author", "plugin", map[string]any{"mode": "updated"}, false, CheckOptions{ContextSet: true, Context: "managed"})
+	if err != nil || value.Data.(map[string]any)["verified"] != true || state.configWrites.Load() != 1 {
+		t.Fatalf("update = %#v, error = %v, writes = %d", value, err, state.configWrites.Load())
+	}
+}
+
+func TestPluginDeleteCanRemoveFailedInstallationMissingFromLiveGet(t *testing.T) {
+	state := &managementServer{}
+	service, closeServer := newManagementService(t, state)
+	defer closeServer()
+	state.pluginPresent.Store(false)
+	value, err := service.PluginDelete(context.Background(), "author", "plugin", true, true, false, true, WaitOptions{PollInterval: time.Millisecond, WaitTimeout: time.Second}, CheckOptions{ContextSet: true, Context: "managed"})
+	if err != nil || value.Data.(map[string]any)["verified"] != true || state.deleteCalls.Load() != 1 {
+		t.Fatalf("delete = %#v, error = %v", value, err)
 	}
 }
 
