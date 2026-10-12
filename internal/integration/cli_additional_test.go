@@ -1,7 +1,9 @@
 package integration_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +13,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/langbot-app/langbot-cli/internal/command"
 )
 
 type panicReader struct{}
@@ -79,42 +83,85 @@ func TestContextRemoveCurrentRequiresConfirmationAndClearsDefault(t *testing.T) 
 	}
 }
 
+type checkAllTimeoutTransport struct {
+	active, maxActive, calls atomic.Int32
+}
+
+func (transport *checkAllTimeoutTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	transport.calls.Add(1)
+	current := transport.active.Add(1)
+	defer transport.active.Add(-1)
+	for {
+		previous := transport.maxActive.Load()
+		if current <= previous || transport.maxActive.CompareAndSwap(previous, current) {
+			break
+		}
+	}
+	<-request.Context().Done()
+	return nil, request.Context().Err()
+}
+
 func TestCheckAllUsesBoundedConcurrentIndependentTimeouts(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
-	var active, maxActive, started, calls atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls.Add(1)
-		started.Add(1)
-		current := active.Add(1)
-		for {
-			previous := maxActive.Load()
-			if current <= previous || maxActive.CompareAndSwap(previous, current) {
-				break
-			}
+	for i := 0; i < 6; i++ {
+		requireSuccess(t, run(t, path, nil, "", "context", "add", fmt.Sprintf("ctx-%d", i), "--endpoint", "http://example.test"))
+	}
+
+	// Measure client call lifetime. A remote handler can remain alive briefly
+	// after cancellation, so its lifetime is not a proxy for occupied workers.
+	transport := &checkAllTimeoutTransport{}
+	var out, diagnostic bytes.Buffer
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	code := command.Execute(ctx, []string{"-o", "json", "context", "check", "--all", "--timeout", "80ms"}, command.Dependencies{
+		In: strings.NewReader(""), Out: &out, Err: &diagnostic, Transport: transport,
+		LookupEnv:         func(string) (string, bool) { return "", false },
+		DefaultConfigPath: func() (string, error) { return path, nil },
+	})
+	if code == 0 || diagnostic.Len() != 0 || ctx.Err() != nil {
+		t.Fatalf("unexpected batch outcome: exit=%d context=%v stderr=%s output=%s", code, ctx.Err(), diagnostic.String(), out.String())
+	}
+	var envelope map[string]any
+	if err := json.Unmarshal(out.Bytes(), &envelope); err != nil {
+		t.Fatalf("invalid batch JSON: %v", err)
+	}
+	checks := envelope["data"].(map[string]any)["checks"].([]any)
+	if len(checks) != 6 || transport.calls.Load() != 6 || transport.active.Load() != 0 {
+		t.Fatalf("batch did not retain every outcome or finish calls: calls=%d active=%d result=%s", transport.calls.Load(), transport.active.Load(), out.String())
+	}
+	if transport.maxActive.Load() > 4 {
+		t.Fatalf("check-all exceeded worker bound: max active=%d", transport.maxActive.Load())
+	}
+	for index, check := range checks {
+		item := check.(map[string]any)
+		if item["context"] != fmt.Sprintf("ctx-%d", index) || item["error"] == nil {
+			t.Fatalf("independent timeout outcome missing: %#v", item)
 		}
-		<-r.Context().Done()
-		active.Add(-1)
+	}
+}
+
+func TestCheckAllRealHTTPTimeoutsRetainEveryOutcome(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {
+		<-request.Context().Done()
 	}))
 	defer server.Close()
 	for i := 0; i < 6; i++ {
 		requireSuccess(t, run(t, path, nil, "", "context", "add", fmt.Sprintf("ctx-%d", i), "--endpoint", server.URL))
 	}
-
-	begin := time.Now()
 	checked := run(t, path, nil, "", "context", "check", "--all", "--timeout", "80ms")
-	elapsed := time.Since(begin)
 	if checked.code == 0 {
 		t.Fatalf("timed out batch unexpectedly succeeded: %s", checked.out)
 	}
 	checks := checked.data["data"].(map[string]any)["checks"].([]any)
-	if len(checks) != 6 || calls.Load() != 6 || started.Load() != 6 {
-		t.Fatalf("batch did not retain every independent outcome: calls=%d started=%d result=%s", calls.Load(), started.Load(), checked.out)
+	if len(checks) != 6 {
+		t.Fatalf("HTTP batch lost outcomes: %s", checked.out)
 	}
-	if maxActive.Load() > 4 {
-		t.Fatalf("check-all exceeded worker bound: max active=%d", maxActive.Load())
-	}
-	if elapsed > 2*time.Second {
-		t.Fatalf("independent timeouts took too long: %s", elapsed)
+	for index, check := range checks {
+		item := check.(map[string]any)
+		if item["context"] != fmt.Sprintf("ctx-%d", index) || item["error"] == nil {
+			t.Fatalf("HTTP timeout outcome missing: %#v", item)
+		}
 	}
 }
 
