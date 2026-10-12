@@ -116,8 +116,8 @@ func TestStatusDefaultOutputSummarizesActiveEnvironment(t *testing.T) {
 		t.Fatalf("default status failed: code=%d output=%s", code, out.String())
 	}
 	for _, expected := range []string{
-		"Active Environment: active", "Type: LangBot Cloud", "Connection: Connected", "Authentication: Verified",
-		"Workspace: workspace-local", "Lifecycle: Managed by LangBot Cloud",
+		"当前环境: active（LangBot 云端）", "连接: 已连接", "认证: 已验证",
+		"部署: LangBot 云端托管", "能力清单: 已获取", "加 -o json 或 -o yaml",
 	} {
 		if !strings.Contains(out.String(), expected) {
 			t.Fatalf("default status omitted %q: %s", expected, out.String())

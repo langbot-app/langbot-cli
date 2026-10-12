@@ -281,6 +281,8 @@ Use dedicated commands for Provider/Model management, installation, testing, and
 
 The default output is concise and human-readable. Automation can use `-o json` or `-o yaml` for complete structured results. Success and error results go to stdout; diagnostics go to stderr.
 
+`status` summarizes the active environment and keeps identity-mismatch and recovery warnings visible. Add `-o json` or `-o yaml` to the same command for full instance/Workspace IDs and deployment paths. A fetched capability list does not mean every operation is supported; inspect `capabilities` for individual operation states.
+
 | Exit code | Meaning |
 |---|---|
 | 0 | Success |

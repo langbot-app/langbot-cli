@@ -175,7 +175,7 @@ func TestServerVersionUsesOneInfoRequest(t *testing.T) {
 	if code != 0 || diagnostic != "" || calls.Load() != 1 {
 		t.Fatalf("server version request count/result invalid: code=%d calls=%d diagnostic=%q output=%q", code, calls.Load(), diagnostic, out)
 	}
-	for _, want := range []string{"CLI: test", "Server Version: remote-v4", "Edition: cloud"} {
+	for _, want := range []string{"CLI: test", "Core 版本: remote-v4", "版本类型: cloud"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("server version output omitted %q: %q", want, out)
 		}
