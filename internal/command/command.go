@@ -2,6 +2,7 @@ package command
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -13,6 +14,7 @@ import (
 	"github.com/langbot-app/langbot-cli/internal/api"
 	"github.com/langbot-app/langbot-cli/internal/app"
 	"github.com/langbot-app/langbot-cli/internal/config"
+	"github.com/langbot-app/langbot-cli/internal/deploy"
 	"github.com/langbot-app/langbot-cli/internal/output"
 	"github.com/langbot-app/langbot-cli/internal/requestbody"
 	"github.com/langbot-app/langbot-cli/internal/result"
@@ -29,6 +31,11 @@ type Dependencies struct {
 	Version           string
 	Commit            string
 	BuildDate         string
+	LocalRunner       deploy.Runner
+	LocalHTTP         *http.Client
+	LocalDir          string
+	LocalLocatorPath  string
+	LatestRelease     func(context.Context) (string, error)
 }
 
 type globalFlags struct {
@@ -58,6 +65,8 @@ func Execute(ctx context.Context, args []string, deps Dependencies) int {
 			return deps.DefaultConfigPath()
 		},
 		Transport: deps.Transport, Version: deps.Version, Commit: deps.Commit, BuildDate: deps.BuildDate,
+		LocalRunner: deps.LocalRunner, LocalHTTP: deps.LocalHTTP, LocalDir: deps.LocalDir,
+		LocalLocatorPath: deps.LocalLocatorPath, LatestRelease: deps.LatestRelease, LocalLogOut: deps.Out, LocalLogErr: deps.Err,
 	})
 	root := newRoot(deps, flags, service)
 	root.SetArgs(args)
@@ -115,7 +124,7 @@ func newRoot(deps Dependencies, flags *globalFlags, service *app.Service) *cobra
 	persistent.StringVar(&flags.config, "config", "", "配置文件路径")
 	persistent.StringVar(&flags.context, "context", "", "使用指定 context")
 	persistent.StringVar(&flags.endpoint, "endpoint", "", "临时服务地址")
-	persistent.StringVar(&flags.timeout, "timeout", "", "请求超时时间")
+	persistent.StringVar(&flags.timeout, "timeout", "", "操作超时时间")
 	persistent.BoolVar(&flags.apiKeyStdin, "api-key-stdin", false, "从 stdin 读取本次请求的 API Key")
 	persistent.StringVarP(&flags.output, "output", "o", "", "输出格式：json 或 yaml；默认简洁模式（schema 默认 JSON）")
 	root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
@@ -136,6 +145,15 @@ func newRoot(deps Dependencies, flags *globalFlags, service *app.Service) *cobra
 	}
 	root.AddCommand(newContextCommand(service, deps, flags))
 	root.AddCommand(newStatusCommand(service, deps, flags))
+	root.AddCommand(newDoctorCommand(service, deps, flags))
+	root.AddCommand(newInstallCommand(service, deps, flags))
+	root.AddCommand(newAdoptCommand(service, deps, flags))
+	root.AddCommand(newLifecycleCommand(service, deps, flags, "start"))
+	root.AddCommand(newLifecycleCommand(service, deps, flags, "stop"))
+	root.AddCommand(newLifecycleCommand(service, deps, flags, "restart"))
+	root.AddCommand(newUpgradeCommand(service, deps, flags))
+	root.AddCommand(newUninstallCommand(service, deps, flags))
+	root.AddCommand(newLocalLogsCommand(service, deps, flags))
 	root.AddCommand(newVersionCommand(service, deps, flags))
 	root.AddCommand(newRawCommand(service, deps, flags))
 	root.AddCommand(newAPICommand(service, deps, flags))
@@ -1166,7 +1184,7 @@ func newContextCheck(service *app.Service, deps Dependencies, flags *globalFlags
 
 func newStatusCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
 	return &cobra.Command{
-		Use: "status", Short: "查看服务连接状态", Args: cobra.NoArgs,
+		Use: "status", Short: "查看 Active Environment 状态", Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return emitCall(deps, flags, func() (app.Result, error) {
 				return service.Status(cmd.Context(), app.CheckOptions{
@@ -1177,6 +1195,181 @@ func newStatusCommand(service *app.Service, deps Dependencies, flags *globalFlag
 			})
 		},
 	}
+}
+
+func newDoctorCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
+	return &cobra.Command{
+		Use: "doctor", Short: "诊断 Active Environment", Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return emitCall(deps, flags, func() (app.Result, error) {
+				return service.Doctor(cmd.Context(), app.CheckOptions{
+					Context: flags.context, Endpoint: flags.endpoint, Timeout: flags.timeout,
+					ContextSet: flags.contextSet, EndpointSet: flags.endpointSet, TimeoutSet: flags.timeoutSet,
+					APIKeyStdin: flags.apiKeyStdin,
+				})
+			})
+		},
+	}
+}
+
+func newInstallCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
+	var dir, version, profile string
+	var port int
+	var dryRun bool
+	cmd := &cobra.Command{
+		Use: "install", Short: "安装本机 LangBot", Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if flags.contextSet || flags.endpointSet || flags.apiKeyStdin {
+				return emitCommand(deps, flags, app.Result{}, result.New("input", "install 不接受 context、endpoint 或 API Key"))
+			}
+			return emitCall(deps, flags, func() (app.Result, error) {
+				return service.Install(cmd.Context(), app.InstallOptions{
+					Dir: dir, Version: version, Profile: profile, Port: port, DryRun: dryRun,
+					Timeout: flags.timeout, TimeoutSet: flags.timeoutSet,
+				})
+			})
+		},
+	}
+	cmd.Flags().StringVar(&dir, "dir", "", "本机部署目录")
+	cmd.Flags().StringVar(&version, "version", "", "LangBot 稳定 Release tag，默认最新版")
+	cmd.Flags().StringVar(&profile, "profile", "basic", "部署 profile：basic 或 all")
+	cmd.Flags().IntVar(&port, "port", 5300, "LangBot HTTP 宿主机端口")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "只执行前置检查并输出安装计划")
+	return cmd
+}
+
+func newAdoptCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
+	var dir, file, project, profile string
+	cmd := &cobra.Command{
+		Use: "adopt", Short: "接管已有本机 Compose 部署", Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if flags.contextSet {
+				return emitCommand(deps, flags, app.Result{}, result.New("input", "adopt 使用显式 endpoint，不接受 context"))
+			}
+			if !flags.endpointSet || strings.TrimSpace(file) == "" || strings.TrimSpace(project) == "" {
+				return emitCommand(deps, flags, app.Result{}, result.New("input", "adopt 需要 --endpoint、--file 和 --project"))
+			}
+			return emitCall(deps, flags, func() (app.Result, error) {
+				return service.Adopt(cmd.Context(), app.AdoptOptions{
+					Dir: dir, ComposeFile: file, ComposeProject: project, Endpoint: flags.endpoint, Profile: profile,
+					Timeout: flags.timeout, TimeoutSet: flags.timeoutSet, APIKeyStdin: flags.apiKeyStdin,
+				})
+			})
+		},
+	}
+	cmd.Flags().StringVar(&dir, "dir", "", "lbctl 部署记录目录")
+	cmd.Flags().StringVar(&file, "file", "", "Compose 文件路径")
+	cmd.Flags().StringVar(&project, "project", "", "Compose project 名称")
+	cmd.Flags().StringVar(&profile, "profile", "basic", "部署 profile：basic 或 all")
+	return cmd
+}
+
+func newLifecycleCommand(service *app.Service, deps Dependencies, flags *globalFlags, action string) *cobra.Command {
+	short := map[string]string{"start": "启动本机受管部署", "stop": "停止本机受管部署", "restart": "重启本机受管部署"}[action]
+	return &cobra.Command{
+		Use: action, Short: short, Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			options := app.LifecycleOptions{CheckOptions: connectionOptions(flags)}
+			return emitCall(deps, flags, func() (app.Result, error) {
+				switch action {
+				case "start":
+					return service.Start(cmd.Context(), options)
+				case "stop":
+					return service.Stop(cmd.Context(), options)
+				default:
+					return service.Restart(cmd.Context(), options)
+				}
+			})
+		},
+	}
+}
+
+func newUpgradeCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
+	var version string
+	var dryRun, yes bool
+	cmd := &cobra.Command{
+		Use: "upgrade", Short: "安全升级本机受管部署", Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if strings.TrimSpace(version) == "" {
+				return emitCommand(deps, flags, app.Result{}, result.New("input", "upgrade 需要 --version <tag>"))
+			}
+			if !dryRun && !yes {
+				return emitCommand(deps, flags, app.Result{}, result.New("precondition", "升级会停止并修改本机部署，请显式传入 --yes"))
+			}
+			return emitCall(deps, flags, func() (app.Result, error) {
+				return service.Upgrade(cmd.Context(), app.UpgradeOptions{
+					CheckOptions: connectionOptions(flags), Version: version, DryRun: dryRun, Yes: yes,
+				})
+			})
+		},
+	}
+	cmd.Flags().StringVar(&version, "version", "", "目标 LangBot 稳定 Release tag")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "只验证前置条件并输出升级计划")
+	cmd.Flags().BoolVar(&yes, "yes", false, "确认停服、备份和升级")
+	return cmd
+}
+
+func newUninstallCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
+	var purgeData, yes bool
+	cmd := &cobra.Command{
+		Use: "uninstall", Short: "卸载本机受管部署", Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if !yes {
+				return emitCommand(deps, flags, app.Result{}, result.New("precondition", "卸载会删除受管容器和网络，请显式传入 --yes"))
+			}
+			return emitCall(deps, flags, func() (app.Result, error) {
+				return service.Uninstall(cmd.Context(), app.UninstallOptions{
+					CheckOptions: connectionOptions(flags), PurgeData: purgeData, Yes: yes,
+				})
+			})
+		},
+	}
+	cmd.Flags().BoolVar(&purgeData, "purge-data", false, "同时清理 lbctl 受管数据目录")
+	cmd.Flags().BoolVar(&yes, "yes", false, "确认卸载")
+	return cmd
+}
+
+func newLocalLogsCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
+	var serviceName, since string
+	var tail int
+	var follow bool
+	cmd := &cobra.Command{
+		Use: "logs", Short: "读取本机受管部署日志", Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			format := output.FormatDefault
+			if flags.outputSet {
+				format, _ = output.NormalizeFormat(flags.output)
+			}
+			options := app.LocalLogsOptions{
+				CheckOptions: connectionOptions(flags), Service: serviceName, Tail: tail, Since: since, Follow: follow, Format: format,
+			}
+			if !follow {
+				return emitCall(deps, flags, func() (app.Result, error) { return service.LocalLogs(cmd.Context(), options) })
+			}
+			if format == output.FormatYAML {
+				return emitCommand(deps, flags, app.Result{}, result.New("input", "logs --follow 不支持 YAML 输出"))
+			}
+			err := service.FollowLocalLogs(cmd.Context(), options)
+			flags.exitCode = result.ExitCode(err)
+			if err == nil {
+				return nil
+			}
+			if format == output.FormatJSON {
+				envelope := result.Envelope{OK: false, Error: result.AsError(err)}
+				if encodeErr := json.NewEncoder(deps.Out).Encode(envelope); encodeErr != nil {
+					fmt.Fprintln(deps.Err, "输出失败")
+					flags.exitCode = 10
+				}
+				return nil
+			}
+			return emitCommand(deps, flags, app.Result{}, err)
+		},
+	}
+	cmd.Flags().StringVar(&serviceName, "service", "", "服务名：langbot、langbot_plugin_runtime 或 langbot_box")
+	cmd.Flags().IntVar(&tail, "tail", 200, "返回最后日志行数，上限 5000")
+	cmd.Flags().StringVar(&since, "since", "", "只读取指定时间之后的日志")
+	cmd.Flags().BoolVarP(&follow, "follow", "f", false, "持续跟踪日志")
+	return cmd
 }
 
 func newVersionCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
@@ -1294,7 +1487,7 @@ func emitCall(deps Dependencies, flags *globalFlags, call func() (app.Result, er
 }
 
 func emit(deps Dependencies, flags *globalFlags, value app.Result, callErr error) int {
-	format := output.FormatHuman
+	format := output.FormatDefault
 	if flags.outputSet {
 		if normalized, err := output.NormalizeFormat(flags.output); err == nil {
 			format = normalized

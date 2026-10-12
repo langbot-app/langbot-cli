@@ -28,6 +28,8 @@ type managementServer struct {
 	skillDesc         atomic.Value
 	deleteData        atomic.Bool
 	deleteCalls       atomic.Int32
+	configUnavailable atomic.Int32
+	configWrites      atomic.Int32
 }
 
 func newManagementService(t *testing.T, state *managementServer) (*Service, func()) {
@@ -64,6 +66,12 @@ func newManagementService(t *testing.T, state *managementServer) (*Service, func
 			fmt.Fprint(w, `{"code":0,"data":{"plugin":{"manifest":{"manifest":{"metadata":{"author":"author","name":"plugin"}}}}}}`)
 		case "/api/v1/plugins/author/plugin/config":
 			if r.Method == http.MethodGet {
+				if state.configUnavailable.Load() > 0 {
+					state.configUnavailable.Add(-1)
+					w.WriteHeader(http.StatusNotFound)
+					fmt.Fprint(w, `{"code":404,"msg":"reloading"}`)
+					return
+				}
 				if state.configMissingOnce.Swap(false) {
 					w.WriteHeader(http.StatusNotFound)
 					fmt.Fprint(w, `{"code":404,"msg":"plugin restarting"}`)
@@ -75,6 +83,7 @@ func newManagementService(t *testing.T, state *managementServer) (*Service, func
 				return
 			}
 			if r.Method == http.MethodPut {
+				state.configWrites.Add(1)
 				var body map[string]any
 				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 					t.Errorf("decode plugin config: %v", err)
@@ -203,6 +212,28 @@ func TestPluginDeleteRequiresConfirmationAndVerifiesAfterWait(t *testing.T) {
 	}
 	if value.Data.(map[string]any)["verified"] != true || state.deleteCalls.Load() != 1 || !state.deleteData.Load() {
 		t.Fatalf("delete result = %#v", value.Data)
+	}
+}
+
+func TestPluginConfigReadbackRetriesReloadWithoutRepeatingWrite(t *testing.T) {
+	state := &managementServer{}
+	service, closeServer := newManagementService(t, state)
+	defer closeServer()
+	state.configUnavailable.Store(2)
+	value, err := service.PluginConfigUpdate(context.Background(), "author", "plugin", map[string]any{"mode": "updated"}, false, CheckOptions{ContextSet: true, Context: "managed"})
+	if err != nil || value.Data.(map[string]any)["verified"] != true || state.configWrites.Load() != 1 {
+		t.Fatalf("update = %#v, error = %v, writes = %d", value, err, state.configWrites.Load())
+	}
+}
+
+func TestPluginDeleteCanRemoveFailedInstallationMissingFromLiveGet(t *testing.T) {
+	state := &managementServer{}
+	service, closeServer := newManagementService(t, state)
+	defer closeServer()
+	state.pluginPresent.Store(false)
+	value, err := service.PluginDelete(context.Background(), "author", "plugin", true, true, false, true, WaitOptions{PollInterval: time.Millisecond, WaitTimeout: time.Second}, CheckOptions{ContextSet: true, Context: "managed"})
+	if err != nil || value.Data.(map[string]any)["verified"] != true || state.deleteCalls.Load() != 1 {
+		t.Fatalf("delete = %#v, error = %v", value, err)
 	}
 }
 

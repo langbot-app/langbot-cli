@@ -47,7 +47,7 @@ func TestSchemaIsOfflineStableAndDescribesCommands(t *testing.T) {
 		}
 	}
 	create := commands["bot.create"]
-	if create.DefaultOutput != "human" || !containsString(create.MachineOutputs, "json") || !containsString(create.MachineOutputs, "yaml") {
+	if create.DefaultOutput != "default" || !containsString(create.MachineOutputs, "json") || !containsString(create.MachineOutputs, "yaml") {
 		t.Fatalf("resource output contract is inaccurate: %#v", create)
 	}
 	if !create.Mutating || !create.RequiresConnection || !create.RequiresSavedContext || !create.SupportsDryRun || create.RequiresYes {
@@ -83,13 +83,56 @@ func TestSchemaIsOfflineStableAndDescribesCommands(t *testing.T) {
 	if commands["bot.list"].Mutating || len(commands["bot.list"].Operations) != 1 {
 		t.Fatalf("bot.list must be a read operation: %#v", commands["bot.list"])
 	}
-	for _, name := range []string{"status", "context.check", "capabilities"} {
+	for _, name := range []string{"context.check", "capabilities"} {
 		if !commands[name].RequiresConnection {
 			t.Fatalf("%s must declare a connection requirement", name)
 		}
 	}
-	if !hasOperationID(commands["status"].Operations, "system.info") || len(commands["status"].Operations) != 1 {
-		t.Fatalf("status operation metadata is inaccurate: %#v", commands["status"].Operations)
+	if !commands["status"].RequiresConnection || !commands["doctor"].RequiresConnection {
+		t.Fatalf("status/doctor must resolve an Active Environment: status=%#v doctor=%#v", commands["status"], commands["doctor"])
+	}
+	for _, name := range []string{"status", "doctor"} {
+		for _, operation := range []string{"system.info", "system.context", "system.capabilities"} {
+			if !hasOperationID(commands[name].Operations, operation) {
+				t.Fatalf("%s is missing discovery operation %s: %#v", name, operation, commands[name].Operations)
+			}
+		}
+		flags := indexSchemaFlags(commands[name].Flags)
+		if flags["timeout"].Applicability != nil {
+			t.Fatalf("%s must accept the global timeout: %#v", name, flags["timeout"])
+		}
+		for _, flag := range []string{"config", "context", "endpoint", "api-key-stdin"} {
+			if flags[flag].Applicability != nil {
+				t.Fatalf("%s must accept Active Environment selector %s: %#v", name, flag, flags[flag])
+			}
+		}
+	}
+	if _, exists := commands["deployment"]; exists {
+		t.Fatal("schema exposes the removed deployment command group")
+	}
+	install := commands["install"]
+	if !install.Mutating || !install.SupportsDryRun || install.RequiresConnection || !isRejected(install.Flags, "context") || !isRejected(install.Flags, "endpoint") || !isRejected(install.Flags, "api-key-stdin") {
+		t.Fatalf("install lifecycle contract is inaccurate: %#v", install)
+	}
+	adopt := commands["adopt"]
+	if !adopt.Mutating || !adopt.RequiresConnection || !hasFlag(adopt.Flags, "endpoint", "inherited", true) || !hasFlag(adopt.Flags, "file", "local", true) || !hasFlag(adopt.Flags, "project", "local", true) || !isRejected(adopt.Flags, "context") {
+		t.Fatalf("adopt lifecycle contract is inaccurate: %#v", adopt)
+	}
+	for _, name := range []string{"start", "stop", "restart"} {
+		if !commands[name].Mutating || commands[name].RequiresYes {
+			t.Fatalf("%s lifecycle contract is inaccurate: %#v", name, commands[name])
+		}
+	}
+	uninstall := commands["uninstall"]
+	if !uninstall.Mutating || !uninstall.Destructive || !uninstall.RequiresYes || !hasFlag(uninstall.Flags, "yes", "local", false) || !hasFlag(uninstall.Flags, "purge-data", "local", false) {
+		t.Fatalf("uninstall lifecycle contract is inaccurate: %#v", uninstall)
+	}
+	logs := commands["logs"]
+	if logs.Mutating || len(logs.InputConflicts) != 1 || !hasConflictOperand(logs.InputConflicts[0].Operands, "follow", true) || !hasConflictOperand(logs.InputConflicts[0].Operands, "output", "yaml") {
+		t.Fatalf("logs lifecycle contract is inaccurate: %#v", logs)
+	}
+	if len(logs.ConditionalOutputs) != 2 || logs.ConditionalOutputs[0].Encoding != "text-lines" || logs.ConditionalOutputs[1].Encoding != "json-lines" {
+		t.Fatalf("logs follow output contract is missing: %#v", logs.ConditionalOutputs)
 	}
 	if !hasOperationID(commands["context.check"].Operations, "system.info") || !hasOperationID(commands["context.check"].Operations, "system.context") || hasOperationID(commands["context.check"].Operations, "system.capabilities") {
 		t.Fatalf("context.check operation metadata is inaccurate: %#v", commands["context.check"].Operations)
@@ -117,8 +160,8 @@ func TestSchemaIsOfflineStableAndDescribesCommands(t *testing.T) {
 		t.Fatalf("context.list applicability is inaccurate: %#v", contextList)
 	}
 	version := commands["version"]
-	if version.DefaultOutput != "human" {
-		t.Fatalf("version default output = %q, want human", version.DefaultOutput)
+	if version.DefaultOutput != "default" {
+		t.Fatalf("version default output = %q, want default", version.DefaultOutput)
 	}
 	if !isConditional(version.Flags, "endpoint", "server", true) || !isConditional(version.Flags, "api-key-stdin", "server", true) {
 		t.Fatalf("version applicability is inaccurate: %#v", version)
@@ -226,6 +269,14 @@ func hasFlag(flags []schemaFlag, name, scope string, required bool) bool {
 		}
 	}
 	return false
+}
+
+func indexSchemaFlags(flags []schemaFlag) map[string]schemaFlag {
+	indexed := make(map[string]schemaFlag, len(flags))
+	for _, flag := range flags {
+		indexed[flag.Name] = flag
+	}
+	return indexed
 }
 
 func findFlag(flags []schemaFlag, name string) (schemaFlag, bool) {

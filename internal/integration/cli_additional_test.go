@@ -132,7 +132,7 @@ func TestOutputFormatsAndBusinessErrorExit(t *testing.T) {
 	}
 	code, out := runText(t, path, nil, strings.NewReader(""), "context", "list")
 	if code != 0 || !strings.Contains(out, "Contexts:") || !strings.Contains(out, "demo") {
-		t.Fatalf("default human output is not concise context list: code=%d output=%q", code, out)
+		t.Fatalf("default output is not concise context list: code=%d output=%q", code, out)
 	}
 	if code, out := runText(t, path, nil, strings.NewReader(""), "--output", "table", "context", "list"); code != 2 || !strings.Contains(out, "输出格式无效") {
 		t.Fatalf("table output was not rejected: code=%d output=%q", code, out)
@@ -182,7 +182,8 @@ func TestHTTPAuthFailuresRemainReachableDiagnostics(t *testing.T) {
 				t.Fatalf("HTTP %d unexpectedly succeeded: %s", status, result.out)
 			}
 			data := result.data["data"].(map[string]any)
-			if data["reachable"] != true || data["diagnostic_ok"] != false {
+			connection := data["connection"].(map[string]any)
+			if connection["reachable"] != true || data["discovery"] != "failed" {
 				t.Fatalf("HTTP %d was classified as unreachable instead of an auth diagnostic: %s", status, result.out)
 			}
 		})
@@ -196,7 +197,8 @@ func TestConnectionFailureIsUnreachableDiagnostic(t *testing.T) {
 		t.Fatalf("connection failure exit code = %d, want 7: %s", result.code, result.out)
 	}
 	data := result.data["data"].(map[string]any)
-	if data["reachable"] != false || data["diagnostic_ok"] != false {
+	connection := data["connection"].(map[string]any)
+	if connection["reachable"] != false || data["discovery"] != "failed" {
 		t.Fatalf("connection failure was classified as reachable: %s", result.out)
 	}
 }

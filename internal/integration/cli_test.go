@@ -122,20 +122,32 @@ func TestContextSnapshotAndCredentialIsolation(t *testing.T) {
 	server := func(version, expected string, count *atomic.Int32, wait bool) *httptest.Server {
 		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			count.Add(1)
-			if r.URL.Path != "/prefix/api/v1/system/info" || r.Header.Get("X-API-Key") != expected {
-				crossed.Store(true)
+			if supplied := r.Header.Get("X-API-Key"); supplied != expected {
+				if supplied != "" {
+					crossed.Store(true)
+				}
 				w.WriteHeader(http.StatusForbidden)
 				return
 			}
-			if wait && hold.Load() {
-				started <- struct{}{}
-				select {
-				case <-release:
-				case <-r.Context().Done():
-					return
+			switch r.URL.Path {
+			case "/prefix/api/v1/system/info":
+				if wait && hold.Load() {
+					started <- struct{}{}
+					select {
+					case <-release:
+					case <-r.Context().Done():
+						return
+					}
 				}
+				fmt.Fprintf(w, `{"code":0,"data":{"version":%q,"edition":"community"}}`, version)
+			case "/prefix/api/v1/system/context":
+				fmt.Fprint(w, `{"code":0,"data":{"instance_uuid":"instance-`+version+`","workspace_uuid":"workspace-`+version+`","api_key_id":"key-`+version+`","permissions":[]}}`)
+			case "/prefix/api/v1/system/capabilities":
+				fmt.Fprint(w, `{"code":0,"data":{"schema_version":1,"operations":{}}}`)
+			default:
+				crossed.Store(true)
+				w.WriteHeader(http.StatusNotFound)
 			}
-			fmt.Fprintf(w, `{"code":0,"data":{"version":%q,"edition":"community"}}`, version)
 		}))
 	}
 	a := server("alpha", keys["ALPHA_KEY"], &countA, true)
@@ -178,14 +190,14 @@ func TestContextSnapshotAndCredentialIsolation(t *testing.T) {
 	if crossed.Load() {
 		t.Fatal("request target or credential crossed contexts")
 	}
-	if !strings.Contains(first.out, `"server_version": "alpha"`) {
+	if !strings.Contains(first.out, `"version": "alpha"`) {
 		t.Fatalf("in-flight command lost its snapshot: %s", first.out)
 	}
 	requireSuccess(t, run(t, path, keys, "", "status"))
 	before := countB.Load()
 	blocked := run(t, path, keys, "", "--context", "alpha", "--endpoint", b.URL+"/prefix", "status")
-	if blocked.code == 0 || countB.Load() != before {
-		t.Fatal("endpoint override reused the previous target's key")
+	if blocked.code == 0 || countB.Load() <= before || crossed.Load() {
+		t.Fatal("endpoint override should probe anonymously without reusing the previous target's key")
 	}
 	requireSuccess(t, run(t, path, keys, keys["BETA_KEY"]+"\n", "--context", "alpha", "--endpoint", b.URL+"/prefix", "--api-key-stdin", "status"))
 	show := run(t, path, nil, "", "context", "show", "alpha")
@@ -249,7 +261,12 @@ func TestLiveCore(t *testing.T) {
 	r := run(t, filepath.Join(t.TempDir(), "config.yaml"), nil, "", "--endpoint", endpoint, "status")
 	requireSuccess(t, r)
 	data := r.data["data"].(map[string]any)
-	if data["identity"] != "unknown" || data["capabilities"] != "unknown" || data["server_version"] == "" {
+	service, serviceOK := data["service"].(map[string]any)
+	identity, identityOK := data["identity"].(map[string]any)
+	capabilities, capabilitiesOK := data["capabilities"].(map[string]any)
+	version, versionOK := service["version"].(string)
+	if !serviceOK || !identityOK || !capabilitiesOK || !versionOK || strings.TrimSpace(version) == "" ||
+		identity["status"] != "unknown" || capabilities["status"] != "unknown" {
 		t.Fatalf("unexpected real Core discovery boundary: %s", r.out)
 	}
 }

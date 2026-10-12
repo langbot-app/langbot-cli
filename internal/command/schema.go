@@ -27,9 +27,16 @@ type schemaCommandMeta struct {
 	RequiredFlags        map[string]bool
 	FlagApplicability    map[string]schemaFlagApplicability
 	InputConflicts       []schemaConflict
+	ConditionalOutputs   []schemaConditionalOutput
 	ArgumentMin          *int
 	ArgumentMax          *int
 	ArgumentAllowed      []int
+}
+
+type schemaConditionalOutput struct {
+	When     *schemaCondition `json:"when"`
+	Format   string           `json:"format"`
+	Encoding string           `json:"encoding"`
 }
 
 type schemaConflict struct {
@@ -76,26 +83,27 @@ type schemaDocument struct {
 }
 
 type schemaCommand struct {
-	Name                  string            `json:"name"`
-	Path                  []string          `json:"path"`
-	Summary               string            `json:"summary"`
-	Executable            bool              `json:"executable"`
-	Aliases               []string          `json:"aliases,omitempty"`
-	Arguments             schemaArguments   `json:"arguments"`
-	Flags                 []schemaFlag      `json:"flags"`
-	Operations            []schemaOperation `json:"operations"`
-	Mutating              bool              `json:"mutating"`
-	Destructive           bool              `json:"destructive"`
-	RequiresYes           bool              `json:"requires_yes"`
-	RequiresConnection    bool              `json:"requires_connection"`
-	RequiresSavedContext  bool              `json:"requires_saved_context"`
-	RequiresWorkspaceBind bool              `json:"requires_workspace_binding"`
-	SupportsDryRun        bool              `json:"supports_dry_run"`
-	SupportsWait          bool              `json:"supports_wait"`
-	InputConflicts        []schemaConflict  `json:"input_conflicts,omitempty"`
-	DefaultOutput         string            `json:"default_output"`
-	MachineOutputs        []string          `json:"machine_outputs"`
-	OutputEnvelope        string            `json:"output_envelope,omitempty"`
+	Name                  string                    `json:"name"`
+	Path                  []string                  `json:"path"`
+	Summary               string                    `json:"summary"`
+	Executable            bool                      `json:"executable"`
+	Aliases               []string                  `json:"aliases,omitempty"`
+	Arguments             schemaArguments           `json:"arguments"`
+	Flags                 []schemaFlag              `json:"flags"`
+	Operations            []schemaOperation         `json:"operations"`
+	Mutating              bool                      `json:"mutating"`
+	Destructive           bool                      `json:"destructive"`
+	RequiresYes           bool                      `json:"requires_yes"`
+	RequiresConnection    bool                      `json:"requires_connection"`
+	RequiresSavedContext  bool                      `json:"requires_saved_context"`
+	RequiresWorkspaceBind bool                      `json:"requires_workspace_binding"`
+	SupportsDryRun        bool                      `json:"supports_dry_run"`
+	SupportsWait          bool                      `json:"supports_wait"`
+	InputConflicts        []schemaConflict          `json:"input_conflicts,omitempty"`
+	DefaultOutput         string                    `json:"default_output"`
+	MachineOutputs        []string                  `json:"machine_outputs"`
+	OutputEnvelope        string                    `json:"output_envelope,omitempty"`
+	ConditionalOutputs    []schemaConditionalOutput `json:"conditional_outputs,omitempty"`
 }
 
 type schemaArguments struct {
@@ -151,8 +159,35 @@ var schemaMetaByName = map[string]schemaCommandMeta{
 	"completion.fish":       {},
 	"completion.powershell": {},
 	"completion.zsh":        {},
-	"status":                readMeta(operationIDs("system.info")...),
-	"version":               {Operations: []schemaOperation{conditionalOperation("system.info", flagEquals("server", true))}, FlagApplicability: serverOnlyConnectionFlags()},
+	"status":                readMeta(operationIDs("system.info", "system.context", "system.capabilities")...),
+	"doctor":                readMeta(operationIDs("system.info", "system.context", "system.capabilities")...),
+	"install": {
+		Mutating: true, SupportsDryRun: true,
+		FlagApplicability: map[string]schemaFlagApplicability{
+			"context":       {Status: "rejected", Reason: "install 不使用 context"},
+			"endpoint":      {Status: "rejected", Reason: "install 自行生成本机 endpoint"},
+			"api-key-stdin": {Status: "rejected", Reason: "install 不接收 Workspace API Key"},
+		},
+	},
+	"adopt": {
+		Mutating: true, RequiresConnection: true, RequiredFlags: map[string]bool{"endpoint": true, "file": true, "project": true},
+		FlagApplicability: map[string]schemaFlagApplicability{
+			"context": {Status: "rejected", Reason: "adopt 使用显式 endpoint"},
+		},
+	},
+	"start":     {Mutating: true},
+	"stop":      {Mutating: true},
+	"restart":   {Mutating: true},
+	"upgrade":   {Mutating: true, Destructive: true, RequiresYes: true, SupportsDryRun: true, RequiredFlags: map[string]bool{"version": true}},
+	"uninstall": {Mutating: true, Destructive: true, RequiresYes: true},
+	"logs": {ConditionalOutputs: []schemaConditionalOutput{
+		{When: flagEquals("follow", true), Format: "default", Encoding: "text-lines"},
+		{When: flagEquals("follow", true), Format: "json", Encoding: "json-lines"},
+	}, InputConflicts: []schemaConflict{{
+		Operands: []schemaOperand{{Flag: "follow", Equals: true}, {Flag: "output", Equals: "yaml"}},
+		Reason:   "logs --follow 不支持 YAML 输出",
+	}}},
+	"version": {Operations: []schemaOperation{conditionalOperation("system.info", flagEquals("server", true))}, FlagApplicability: serverOnlyConnectionFlags()},
 	"raw": func() schemaCommandMeta {
 		meta := readMeta(operationIDs("system.info")...)
 		meta.ArgumentMin, meta.ArgumentMax, meta.ArgumentAllowed = intPointer(0), intPointer(2), []int{0, 2}
@@ -454,20 +489,21 @@ func buildSchema(root *cobra.Command, cliVersion, filter string) (schemaDocument
 		Commands:      commands,
 		ExitCodes: map[string]int{
 			"success": 0, "input": 2, "auth": 3, "permission": 4, "not_found": 5,
-			"precondition": 6, "network": 7, "result_unknown": 7, "incompatible": 8, "server": 10, "internal": 10,
+			"precondition": 6, "network": 7, "result_unknown": 7, "incompatible": 8, "recovery_required": 9, "server": 10, "internal": 10,
 		},
 		ExitCodeDescriptions: map[string]string{
-			"success":        "命令执行成功",
-			"input":          "输入或配置无效",
-			"auth":           "凭据无效、过期或已吊销",
-			"permission":     "当前凭据权限不足",
-			"not_found":      "目标资源不存在",
-			"precondition":   "安全前置或资源状态不满足",
-			"network":        "网络、TLS、超时或取消",
-			"incompatible":   "接口、协议或服务端能力不兼容",
-			"internal":       "CLI schema 或未分类的内部错误",
-			"server":         "服务端或未分类的服务错误",
-			"result_unknown": "请求可能已提交但结果无法确认",
+			"success":           "命令执行成功",
+			"input":             "输入或配置无效",
+			"auth":              "凭据无效、过期或已吊销",
+			"permission":        "当前凭据权限不足",
+			"not_found":         "目标资源不存在",
+			"precondition":      "安全前置或资源状态不满足",
+			"network":           "网络、TLS、超时或取消",
+			"incompatible":      "接口、协议或服务端能力不兼容",
+			"internal":          "CLI schema 或未分类的内部错误",
+			"server":            "服务端或未分类的服务错误",
+			"result_unknown":    "请求可能已提交但结果无法确认",
+			"recovery_required": "本机升级未完成，需要检查并恢复现场",
 		},
 	}, nil
 }
@@ -503,6 +539,7 @@ func collectSchemaCommands(parent *cobra.Command, prefix []string, result *[]sch
 			DefaultOutput:         defaultOutputFor(child),
 			MachineOutputs:        machineOutputsFor(child),
 			OutputEnvelope:        outputEnvelopeFor(child),
+			ConditionalOutputs:    meta.ConditionalOutputs,
 		})
 		collectSchemaCommands(child, path, result)
 	}
@@ -518,7 +555,7 @@ func defaultOutputFor(command *cobra.Command) string {
 	if commandPath(command) == "schema" {
 		return "json"
 	}
-	return "human"
+	return "default"
 }
 
 func machineOutputsFor(command *cobra.Command) []string {
