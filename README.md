@@ -1,34 +1,36 @@
 # langbot-cli
 
-LangBot 的独立命令行工具，二进制名为 `lbctl`。它通过 HTTP 管理已运行实例中的 Workspace 资源，支持多 context、身份与能力发现、资源管理及异步任务等待，也支持本机 Docker Compose 部署的安装、接管、启停和升级。
+English / [简体中文](README_CN.md) / [繁體中文](README_TW.md) / [日本語](README_JP.md) / [Español](README_ES.md) / [Français](README_FR.md) / [한국어](README_KO.md) / [Русский](README_RU.md) / [Tiếng Việt](README_VI.md)
 
-当前源码需配套包含以下能力的 LangBot Core：
+The standalone LangBot command-line tool, provided as `lbctl`. It manages Workspace resources over HTTP, with multiple contexts, identity and capability discovery, resource management, RAG configuration discovery, Pipeline extensions and test runs, runtime records and Sandbox diagnostics, asynchronous task waiting, and installation, adoption, lifecycle management, and upgrades for local Docker Compose deployments.
 
-- API Key 鉴权的 `/api/v1/system/context` 与 `/api/v1/system/capabilities`。
-- Bot、Pipeline、Knowledge Base、Provider、Model、Plugin、Skill、MCP Server 与任务查询接口。
-- Provider/Model 查询的服务端脱敏参数 `include_secret=false`。
+Use a LangBot Core that provides:
 
-服务端未声明某项 capability 时，`lbctl` 会拒绝执行该操作。
+- API Key authentication for `/api/v1/system/context` and `/api/v1/system/capabilities`.
+- Bot, Pipeline, Knowledge Base, Provider, Model, Plugin, Skill, MCP Server, and task APIs.
+- Server-side redaction through `include_secret=false` for Provider/Model queries.
 
-## 安装
+`lbctl` executes operations according to the capabilities, Workspace bindings, and permissions declared by Core.
 
-macOS、Linux 或 Windows Git Bash：
+## Installation
+
+macOS, Linux, or Windows Git Bash:
 
 ```sh
 curl -fsSL https://download.langbot.app/install.sh | sh
 ```
 
-Windows PowerShell：
+Windows PowerShell:
 
 ```powershell
 irm https://download.langbot.app/install.ps1 | iex
 ```
 
-安装脚本会自动选择当前平台的二进制并校验 SHA-256。Shell 脚本默认安装到 `~/.local/bin`；PowerShell 脚本默认安装到 `%LOCALAPPDATA%\Programs\lbctl` 并加入用户 `PATH`。
+The installer selects the binary for your platform and verifies SHA-256. The shell installer defaults to `~/.local/bin`; the PowerShell installer defaults to `%LOCALAPPDATA%\Programs\lbctl` and adds it to your user `PATH`.
 
-下载域名由 Cloudflare Workers 分发，安装脚本、二进制和校验文件均从镜像获取。发行包同步自 [GitHub Releases](https://github.com/langbot-app/langbot-cli/releases)，也可以在那里直接下载原始文件。设置 `LBCTL_VERSION` 可安装指定的已发布版本。
+Cloudflare Workers serves the download mirror for installers, binaries, and checksums. Releases are synchronized from [GitHub Releases](https://github.com/langbot-app/langbot-cli/releases), where the original files are also available. Set `LBCTL_VERSION` to install a specific published version.
 
-## 源码构建
+## Build from source
 
 ```sh
 make build
@@ -36,13 +38,13 @@ make build
 ./bin/lbctl --help
 ```
 
-Go 基线为 1.26。运行二进制无需 Python、Node、Docker 或浏览器。
+The Go baseline is 1.26. Run the compiled binary directly; local deployment management uses Docker Compose.
 
-## 配置远端实例
+## Configure remote instances
 
-API Key 由环境变量或单次 stdin 提供。配置默认保存在 `~/.config/langbot/config.yaml`，只保存环境变量名，不保存 Key 明文。
+Provide the API Key through an environment variable or one-time stdin input. Configuration defaults to `~/.config/langbot/config.yaml` and stores the environment variable name rather than the key itself.
 
-先查询 Key 对应的 Workspace：
+First discover the Workspace associated with the key:
 
 ```sh
 export LANGBOT_PRODUCTION_API_KEY='<api-key>'
@@ -51,7 +53,7 @@ LANGBOT_API_KEY="$LANGBOT_PRODUCTION_API_KEY" \
   lbctl --endpoint https://bot.example.com/langbot whoami
 ```
 
-将返回的 `workspace_uuid` 固定到 context：
+Bind the returned `workspace_uuid` to a context:
 
 ```sh
 lbctl context add production \
@@ -66,7 +68,7 @@ lbctl whoami
 lbctl capabilities
 ```
 
-管理多个目标：
+Manage multiple targets:
 
 ```sh
 lbctl context add dev --endpoint http://localhost:5300 \
@@ -80,20 +82,20 @@ lbctl context update production --timeout 30s
 lbctl context remove dev --yes
 ```
 
-连接参数的优先级如下。显式来源无效时直接报错，不回退到其他目标或凭据。
+Connection settings follow this precedence, with validation of the selected target and credentials.
 
-| 参数 | 优先级 |
+| Setting | Precedence |
 |---|---|
-| Context | `--context` → `LANGBOT_CONTEXT` → 当前 context |
-| Endpoint | `--endpoint` → `LANGBOT_ENDPOINT` → context 配置 |
-| Key | `--api-key-stdin` → `LANGBOT_API_KEY` → context 的环境变量引用 |
-| 超时 | `--timeout` → `LANGBOT_TIMEOUT` → context 配置 → 30s |
+| Context | `--context` → `LANGBOT_CONTEXT` → current context |
+| Endpoint | `--endpoint` → `LANGBOT_ENDPOINT` → context configuration |
+| Key | `--api-key-stdin` → `LANGBOT_API_KEY` → context environment variable reference |
+| Timeout | `--timeout` → `LANGBOT_TIMEOUT` → context configuration → 30s |
 
-`--api-key-stdin` 用于单次调用，不能与 `--file -` 同时使用。临时 endpoint 只允许受控读取；资源写入必须使用已保存且绑定 Workspace 的 context。
+Use `--api-key-stdin` for a single invocation and `--file -` separately for request-body input. Temporary endpoints support controlled reads; resource writes use a saved, Workspace-bound context.
 
-## 本机部署与升级
+## Local deployment and upgrades
 
-`adopt` 将已有 Compose 部署登记为本机受管部署，不改变它的服务配置：
+`adopt` registers an existing Compose deployment for local management while preserving its service configuration:
 
 ```sh
 lbctl --endpoint http://127.0.0.1:5300 adopt \
@@ -102,26 +104,35 @@ lbctl status
 lbctl doctor
 lbctl stop
 lbctl start
+lbctl restart
+lbctl logs --follow --tail 100
 ```
 
-`lbctl upgrade` 升级 LangBot 服务镜像，而不是 CLI 程序。CLI 安装和接管的部署都可使用相同命令：
+Install a new local deployment, or uninstall a deployment while retaining its data:
+
+```sh
+lbctl install --version <vX.Y.Z> --profile basic --port 5300
+lbctl uninstall --yes
+```
+
+`lbctl upgrade` upgrades the LangBot service images. CLI-installed and adopted deployments use the same commands:
 
 ```sh
 lbctl upgrade --version <newer-vX.Y.Z> --dry-run -o json
 lbctl upgrade --version <newer-vX.Y.Z> --yes -o json
 ```
 
-接管部署升级仅替换 `langbot`、`langbot_plugin_runtime` 和已有 `langbot_box` 的镜像；保留 Compose 的其他内容，包括端口、挂载、环境配置、注释和其他服务。升级先拉取并验证目标镜像，再停服，备份数据、Compose、存在的项目 `.env` 和实际部署记录，最后启动并验证版本。失败后的备份和升级现场会保留，可通过 `status`、`doctor` 检查。
+Adopted upgrades replace the images for `langbot`, `langbot_plugin_runtime`, and an existing `langbot_box`, preserving other Compose content, including ports, mounts, environment configuration, comments, and other services. An upgrade pulls and verifies the target image, stops the deployment, backs up data, Compose, the project `.env` when present, and the deployment record, then starts and verifies the target version. Backups and recovery state remain available after failures for inspection with `status` and `doctor`.
 
-自动升级支持直接声明 `rockchin/langbot:<tag>` 的服务，数据完整位于 Compose 目录的 `data` 绑定目录，且使用本地 SQLite、Chroma 和 local storage。外部/命名数据卷、服务级 `env_file`、镜像变量/别名、build/extends/include 等无法确认备份或改写范围的配置会在停服前拒绝。目标版本必须高于当前版本；`--dry-run` 不验证目标镜像是否已发布。接管后手动改变 Compose，需要再次执行相同目标的 `adopt`，明确确认新的资产摘要。
+Automatic upgrades support services declaring `rockchin/langbot:<tag>` directly, with all data under the Compose directory's `data` bind mount and local SQLite, Chroma, and local storage. Compose configuration, backup scope, and versions are checked before upgrading; the target version is newer than the current version. `--dry-run` shows the plan, and execution verifies the target image. After manually editing adopted Compose content, run `adopt` again for the same target to confirm its updated asset digest.
 
-本机生命周期作用于部署实例；Bot、Pipeline、Skill 等资源仍通过下面同一套命令管理 context 对应的 Workspace。
+Local lifecycle commands target deployment instances. Resources such as Bots, Pipelines, and Skills use the same commands below to manage the context's Workspace.
 
-## 管理资源
+## Manage resources
 
-复杂请求体使用 JSON 或 YAML 文件，具体字段与对应 LangBot HTTP 接口一致。`--file -` 表示从 stdin 读取。
+Use JSON or YAML files for complex request bodies, with fields matching the LangBot HTTP API. `--file -` reads from stdin.
 
-### Bot 与 Pipeline
+### Bot and Pipeline
 
 ```sh
 lbctl bot list
@@ -137,7 +148,7 @@ lbctl pipeline copy <uuid>
 lbctl pipeline delete <uuid> --yes
 ```
 
-`pipeline apply` 的请求体包含 `uuid` 时更新，否则创建。
+`pipeline apply` updates when the request body contains `uuid`, and creates otherwise.
 
 ### Knowledge Base
 
@@ -152,13 +163,13 @@ lbctl knowledge-base file delete <uuid> <file-id> --yes
 lbctl knowledge-base delete <uuid> --yes
 ```
 
-上传文档、提交入库并等待任务结束：
+Upload a document, submit ingestion, and wait for completion:
 
 ```sh
 lbctl knowledge-base ingest <uuid> --file ./document.pdf --wait
 ```
 
-### Provider 与 Model
+### Provider and Model
 
 ```sh
 lbctl provider list
@@ -177,9 +188,9 @@ lbctl model test <uuid> --type llm
 lbctl model delete <uuid> --type llm --yes
 ```
 
-Model 类型支持 `llm`、`embedding` 和 `rerank`。Provider/Model 普通输出强制使用服务端脱敏，并在客户端再次限制可输出字段；模型扫描不会输出服务端 debug 数据。
+Model types are `llm`, `embedding`, and `rerank`. Provider/Model output uses server-side redaction and client-side field filtering; model scanning returns structured results.
 
-### Plugin 与 Skill
+### Plugin and Skill
 
 ```sh
 lbctl plugin list
@@ -204,9 +215,9 @@ lbctl skill install upload --file skill.zip
 lbctl skill delete <name> --yes
 ```
 
-Skill 安装的 `--dry-run` 调用服务端预览，不产生安装。Plugin 安装、升级和删除可用 `--wait` 跟踪异步任务。
+Skill installation with `--dry-run` uses a server-side preview. Plugin installation, upgrade, and deletion support `--wait` to follow asynchronous tasks.
 
-GitHub 插件安装请求包含 `owner`、`repo`、`release_tag`，以及 `release_id`/`asset_id` 或 `asset_url`。链接输入会由 CLI 查询 GitHub release 并转换成与 WebUI 一致的 ID 请求；此查询不发送 Workspace API Key，dry-run 不访问 GitHub。示例：
+GitHub plugin requests include `owner`, `repo`, `release_tag`, and either `release_id`/`asset_id` or `asset_url`. For URL input, the CLI queries the GitHub release and submits the same ID-based request as WebUI. GitHub metadata requests are separate from Workspace authentication; dry-run performs preflight checks. Example:
 
 ```yaml
 owner: langbot-app
@@ -215,7 +226,7 @@ release_tag: 0.0.1.alpha.1
 asset_url: https://github.com/langbot-app/langbot-plugins/releases/download/0.0.1.alpha.1/langbot-team-GoogleSearch-0.1.2.lbpkg
 ```
 
-插件配置更新会在受限时间内等待重载后的回读，不重复提交写入。删除命令也可清理未成功启动的安装，不要求插件先出现在实时运行列表中。
+Plugin configuration updates wait for readback after reload within a bounded timeout. Deletion supports both running plugins and installations that failed to start.
 
 ### MCP Server
 
@@ -232,17 +243,17 @@ lbctl mcp-server logs <name>
 lbctl mcp-server delete <name> --yes
 ```
 
-## 写入与任务
+## Writes and tasks
 
-写操作会依次核对已保存 context、Workspace 绑定、实际身份、权限、capability 和必要的资源前提。通用规则如下：
+Writes verify the saved context, Workspace binding, actual identity, permissions, capabilities, and required resource prerequisites. General rules:
 
-- `--dry-run` 只执行前置检查，不声称服务端业务校验已经通过。
-- 删除必须显式提供 `--yes`。
-- 可验证的写入会在完成后回读资源。
-- 请求结果无法确认时返回 `result_unknown`，不会自动重试。
-- 多步操作保留已经产生的资源或 `task_id`，不会自动重复上传、安装或删除。
+- `--dry-run` performs preflight checks; Skill installation uses a server-side preview.
+- Deletion requires explicit `--yes` confirmation.
+- Verifiable writes read back the resource after completion.
+- Uncertain request outcomes return `result_unknown` for inspection before deciding the next step.
+- Multi-step operations retain created resources or `task_id` values for progress tracking.
 
-异步任务也可以单独查询：
+Query asynchronous tasks independently:
 
 ```sh
 lbctl task list
@@ -251,47 +262,56 @@ lbctl task get <task-id>
 lbctl task get <task-id> --wait --wait-timeout 10m
 ```
 
-本地等待超时或取消不会取消服务端任务。
+Local waiting and server-side task lifecycles are independent; continue checking with `task get`.
 
-## 受控 API 入口
+## Controlled API access
 
-`api get/post` 只调用内置 registry 已登记的操作，不是任意 HTTP 客户端：
+`api get/post` calls operations registered in the built-in registry:
 
 ```sh
 lbctl api get '/api/v1/system/tasks?kind=plugin'
 lbctl api post '/api/v1/knowledge/bases/<uuid>/retrieve' --file query.yaml
 ```
 
-Provider/Model 管理、安装、测试和其他敏感操作必须使用专用命令。`raw` 仅保留 `/api/v1/system/info` 的兼容读取。
+Use dedicated commands for Provider/Model management, installation, testing, and other sensitive operations. `raw` provides compatibility reads of `/api/v1/system/info`.
 
-## 输出与检查
+## Output and checks
 
-默认输出便于人工阅读的简洁视图；自动化可使用 `-o json` 或 `-o yaml` 获取完整结构化结果。成功和错误结果写入 stdout，诊断信息写入 stderr。
+The default output is concise and human-readable. Automation can use `-o json` or `-o yaml` for complete structured results. Success and error results go to stdout; diagnostics go to stderr.
 
-| 退出码 | 含义 |
+| Exit code | Meaning |
 |---|---|
-| 0 | 成功 |
-| 2 | 输入或配置错误 |
-| 3 / 4 / 5 | 凭据错误 / 权限不足 / 未找到 |
-| 6 | 前提未满足或冲突 |
-| 7 | 网络、TLS、超时或取消 |
-| 8 | 接口或协议不兼容 |
-| 10 | 未分类服务端或内部错误 |
+| 0 | Success |
+| 2 | Input or configuration error |
+| 3 / 4 / 5 | Authentication error / permission denied / not found |
+| 6 | Unmet prerequisite or conflict |
+| 7 | Network, TLS, timeout, or cancellation |
+| 8 | API or protocol incompatibility |
+| 9 | Deployment recovery required |
+| 10 | Unclassified server or internal error |
 
 ```sh
 make check
 make cross-build
 
-# 对运行中的 Core 做只读诊断；未设置变量时跳过。
+# Read-only diagnostics against a running Core.
 LBCTL_TEST_ENDPOINT=http://localhost:5300 \
   go test ./internal/integration -run TestLiveCore -v
 ```
 
-`make cross-build` 生成 macOS、Linux、Windows 的 amd64/arm64 二进制及 `dist/checksums.txt`。交叉构建成功不代表已经在对应系统完成实机验收。
+`make cross-build` generates amd64/arm64 binaries for macOS, Linux, and Windows, plus `dist/checksums.txt`.
 
-## RAG 配置发现
+Agent-friendly command discovery and shell completion:
 
-这些命令需要 Core 声明对应 capability，并要求 `resource.view` 权限；可用 `-o json` 或 `-o yaml` 输出。
+```sh
+lbctl schema
+lbctl schema --command plugin.install.github
+lbctl completion bash
+```
+
+## RAG configuration discovery
+
+These commands use Core's corresponding capabilities and require `resource.view`. Output supports `-o json` and `-o yaml`.
 
 ```sh
 lbctl knowledge-engine list
@@ -300,17 +320,17 @@ lbctl knowledge-engine retrieval-schema author/engine -o json
 lbctl knowledge-parser list --mime-type application/pdf
 ```
 
-从引擎列表选择 `plugin_id`；creation schema 定义创建知识库的参数，retrieval schema 定义检索参数。随后使用已有 `knowledge-base create`、`ingest`、`retrieve` 命令完成入库和检索。引擎不存在、权限不足或服务端未声明 capability 时返回非零退出码。
+Select a `plugin_id` from the engine list. The creation schema defines knowledge-base creation settings, and the retrieval schema defines query settings. Use `knowledge-base create`, `ingest`, and `retrieve` for ingestion and retrieval.
 
-## Pipeline 扩展绑定
+## Pipeline extension bindings
 
 ```sh
 lbctl pipeline extensions get PIPELINE_UUID -o json
 ```
 
-`pipeline extensions update PIPELINE_UUID --file extensions.yaml` **完整替换**绑定，以下八个字段全部必填；缺少字段会拒绝写入。先用 `extensions get` 查看当前绑定与可选资源，在请求中保留所有仍需使用的项。更新成功后自动回读核对，`--dry-run` 只检查参数与前置条件。
+`pipeline extensions update PIPELINE_UUID --file extensions.yaml` **replaces all bindings**. All eight fields below are required. Use `extensions get` to inspect current bindings and available resources, and retain every item you want to keep. Updates are verified by readback; `--dry-run` checks input and prerequisites.
 
-以下示例会清空四类显式绑定并关闭全部启用开关。
+This example clears all four explicit binding lists and turns off every enable switch.
 
 ```yaml
 bound_plugins: []
@@ -323,26 +343,25 @@ enable_all_skills: false
 mcp_resource_agent_read_enabled: false
 ```
 
-空数组配合 `enable_all_*: false` 表示不绑定该类扩展；设为 `true` 则启用该类全部可用扩展。插件项使用 `{author: author, name: plugin}`，MCP Server 填 `available_mcp_servers` 中的 `uuid`，Skill 填 `available_skills` 中的 `name`。MCP Resource 项例如 `{server_uuid: SERVER_UUID, uri: "docs://guide"}`。`mcp_resource_agent_read_enabled` 控制 Agent 列举、读取 MCP 资源及将绑定资源放入上下文。
+Empty arrays with `enable_all_*: false` leave that extension type unbound; `true` enables all available extensions of that type. Plugin entries use `{author: author, name: plugin}`; MCP Server entries use `uuid` from `available_mcp_servers`; Skill entries use `name` from `available_skills`. An MCP Resource entry looks like `{server_uuid: SERVER_UUID, uri: "docs://guide"}`. `mcp_resource_agent_read_enabled` controls Agent resource listing, reading, and inclusion of bound resources in context.
 
+Updates require a saved, Workspace-bound context, `resource.manage` and `resource.view` permissions, and the corresponding Core capability.
 
-更新要求已保存且绑定 Workspace 的 context、`resource.manage` 和 `resource.view` 权限，以及 Core 对应 capability。
-
-## Pipeline 单轮试运行
+## Single-turn Pipeline test runs
 
 ```sh
-lbctl pipeline run PIPELINE_UUID --message '请根据知识库回答这个问题' --timeout 2m -o json
+lbctl pipeline run PIPELINE_UUID --message 'Answer this question using the knowledge base' --timeout 2m -o json
 ```
 
-试运行要求已保存且绑定 Workspace 的 context，以及 `runtime.operate` 和 `resource.view` 权限；会实际调用模型和配置的工具。每次新建会话，不复用之前的历史。返回回复、会话 ID、查询 ID 和可用的消息 ID；执行失败返回非零退出码。
+Test runs use a saved, Workspace-bound context and require `runtime.operate` and `resource.view`. They call the configured models and tools. Each run creates a fresh session. Results include the reply, session ID, query ID, and available message IDs; failures return a nonzero exit code.
 
-Core 最多等待 60 秒，CLI 的 `--timeout` 控制单次 HTTP 请求等待时间。超时是**执行状态未知**，不代表执行已取消；不要自动重发，可在 LangBot Web 管理界面的监控页（`/home/monitoring`）用返回的消息或会话标识查询运行记录。若客户端先超时而未收到标识，在该监控页按 Pipeline 和时间查近期记录。
+Core waits up to 60 seconds; CLI `--timeout` controls the HTTP request wait. A timeout means **execution status is unknown**. Inspect runtime records using returned message/session identifiers on the LangBot WebUI monitoring page (`/home/monitoring`). After a client timeout, you can also search recent records by Pipeline and time.
 
-服务端需要声明 `pipeline.run` capability；可用 `--dry-run` 检查前置条件。
+Core declares the `pipeline.run` capability; use `--dry-run` to check prerequisites.
 
-## 应用运行记录诊断
+## Application runtime diagnostics
 
-通过当前 API Key 所属 Workspace 查询运行记录、失败消息详情及调用错误，需要 Core 对应 capability。
+Query runtime records, failed message details, and call errors in the current API Key's Workspace using the corresponding Core capabilities.
 
 ```sh
 lbctl monitoring errors --pipeline PIPELINE_UUID --limit 20
@@ -356,9 +375,9 @@ lbctl monitoring embedding-calls --knowledge-base KB_UUID
 lbctl monitoring sessions --active true
 ```
 
-运行记录查询要求 `resource.view`。列表支持 `--limit 1..500` 和 `--offset`，Core 可进一步限制；`--start-time`、`--end-time` 使用 ISO 8601 时间。可用筛选条件见各命令 `--help`。
+Runtime-record queries require `resource.view`. Lists support `--limit 1..500` and `--offset`, subject to Core's limits. `--start-time` and `--end-time` use ISO 8601. See each command's `--help` for filters.
 
-## Sandbox 只读诊断
+## Read-only Sandbox diagnostics
 
 ```sh
 lbctl sandbox status
@@ -366,6 +385,6 @@ lbctl sandbox sessions
 lbctl sandbox errors
 ```
 
-Sandbox 查询只读当前 Workspace：状态要求 `resource.view`，会话和错误要求 `audit.view`。托管 sandbox 仍受服务端准入限制；状态保留 `enabled`、`available` 和服务端不可用原因，查询不会创建执行会话。
+Sandbox queries read the current Workspace: status requires `resource.view`; sessions and errors require `audit.view`. Managed sandboxes use server-side admission checks. Status includes `enabled`, `available`, and server-provided explanations.
 
-需要 Core 声明对应 capability；支持 `-o json` 和 `-o yaml`。`enabled: false` 表示未启用，`enabled: true` 且 `available: false` 表示不可用。
+Core declares the corresponding capabilities; output supports `-o json` and `-o yaml`. `enabled: false` means disabled; `enabled: true` with `available: false` means unavailable.
