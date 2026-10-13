@@ -95,6 +95,8 @@ Les paramètres suivent cet ordre de priorité ; la destination et les identifia
 
 Utilisez `--api-key-stdin` pour un appel unique et `--file -` séparément pour le corps de requête. Les endpoints temporaires permettent des lectures contrôlées ; les écritures utilisent un contexte enregistré et lié au Workspace.
 
+Fermez stdin après avoir fourni la clé. L'attente utilise le délai résolu de `--timeout` / `LANGBOT_TIMEOUT` / contexte (30s par défaut), indépendamment de chaque requête HTTP. Une expiration retourne `network`, `reason: stdin_timeout` et le code de sortie 7 sans envoyer de requête authentifiée.
+
 ## Déploiement local et mises à niveau
 
 `adopt` enregistre un déploiement Compose existant pour la gestion locale, en préservant sa configuration :

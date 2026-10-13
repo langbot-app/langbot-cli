@@ -123,7 +123,7 @@ func newRoot(deps Dependencies, flags *globalFlags, service *app.Service) *cobra
 	persistent.StringVar(&flags.context, "context", "", "使用指定 context")
 	persistent.StringVar(&flags.endpoint, "endpoint", "", "临时服务地址")
 	persistent.StringVar(&flags.timeout, "timeout", "", "操作超时时间")
-	persistent.BoolVar(&flags.apiKeyStdin, "api-key-stdin", false, "从 stdin 读取本次请求的 API Key")
+	persistent.BoolVar(&flags.apiKeyStdin, "api-key-stdin", false, "从 stdin 读取本次请求的 API Key，等待上限由 --timeout 控制")
 	persistent.StringVarP(&flags.output, "output", "o", "", "输出格式：json 或 yaml；默认简洁模式（schema 默认 JSON）")
 	root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
 		selectOutput(cmd, flags)

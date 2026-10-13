@@ -2588,7 +2588,17 @@ func (s *Service) resolve(ctx context.Context, file config.File, options config.
 func (s *Service) withCredential(ctx context.Context, conn config.Connection, options config.Options) (config.Connection, error) {
 	credentialInput := s.deps.In
 	if options.APIKeyStdin {
-		value, readErr := readCredential(ctx, credentialInput)
+		inputParent := ctx
+		if inputParent == nil {
+			inputParent = context.Background()
+		}
+		inputTimeout := conn.Timeout
+		if inputTimeout <= 0 {
+			inputTimeout = 30 * time.Second
+		}
+		inputCtx, cancelInput := context.WithTimeout(inputParent, inputTimeout)
+		value, readErr := readCredential(inputCtx, credentialInput)
+		cancelInput()
 		if readErr != nil {
 			return conn, readErr
 		}
@@ -2616,6 +2626,11 @@ func readCredential(ctx context.Context, reader io.Reader) (string, error) {
 	}()
 	select {
 	case <-ctx.Done():
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			failure := result.New("network", "读取 API Key 超时；请通过 stdin 提供完整 Key 并关闭输入流，或改用环境变量")
+			failure.Reason = "stdin_timeout"
+			return "", failure
+		}
 		return "", result.New("network", "请求已取消")
 	case read := <-completed:
 		if read.err != nil {

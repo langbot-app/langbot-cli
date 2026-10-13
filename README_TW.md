@@ -95,6 +95,8 @@ lbctl context remove dev --yes
 
 `--api-key-stdin` 用於單次呼叫；請與請求內容輸入 `--file -` 分開使用。臨時 endpoint 支援受控讀取；資源寫入使用已儲存且綁定 Workspace 的 context。
 
+提供 Key 後應關閉 stdin 輸入流。憑據輸入等待使用解析後的 `--timeout` / `LANGBOT_TIMEOUT` / context 逾時（預設 30s），與每次 HTTP 請求分別計時；逾時回傳 `network`、`reason: stdin_timeout` 與結束碼 7，不傳送驗證請求。
+
 ## 本機部署與升級
 
 `adopt` 將現有 Compose 部署登記為本機受管部署，保留服務設定：

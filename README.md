@@ -95,6 +95,8 @@ Connection settings follow this precedence, with validation of the selected targ
 
 Use `--api-key-stdin` for a single invocation and `--file -` separately for request-body input. Temporary endpoints support controlled reads; resource writes use a saved, Workspace-bound context.
 
+Credential stdin must be closed after the key is provided. Its wait budget uses the resolved `--timeout` / `LANGBOT_TIMEOUT` / context timeout (30s by default), separately from each HTTP request; a timeout returns `network` with `reason: stdin_timeout` and exit code 7 without sending an authenticated request.
+
 ## Local deployment and upgrades
 
 `adopt` registers an existing Compose deployment for local management while preserving its service configuration:

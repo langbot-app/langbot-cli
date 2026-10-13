@@ -95,6 +95,8 @@ lbctl context remove dev --yes
 
 `--api-key-stdin` は単一の呼び出し用です。リクエスト本文用の `--file -` とは別々に使用します。一時 endpoint は制御された読み取りに対応し、書き込みには保存済みで Workspace に紐付いた context を使います。
 
+Key を渡した後は stdin を閉じてください。入力待機には解決済みの `--timeout` / `LANGBOT_TIMEOUT` / context のタイムアウト（既定 30s）を適用し、各 HTTP リクエストとは別に計測します。時間切れは `network`、`reason: stdin_timeout`、終了コード 7 を返し、認証リクエストを送信しません。
+
 ## ローカルのデプロイとアップグレード
 
 `adopt` は既存の Compose デプロイを、サービス設定を維持したままローカル管理対象として登録します：

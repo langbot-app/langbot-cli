@@ -95,6 +95,8 @@ lbctl context remove dev --yes
 
 `--api-key-stdin`은 일회성 호출에 사용하고 요청 본문 입력인 `--file -`와는 별도로 사용합니다. 임시 endpoint는 제어된 읽기를 지원하며 리소스 쓰기는 저장된 Workspace 연결 context를 사용합니다.
 
+Key를 제공한 후 stdin을 닫아야 합니다. 입력 대기는 해석된 `--timeout` / `LANGBOT_TIMEOUT` / context 제한 시간(기본 30s)을 사용하며 각 HTTP 요청과 별도로 계산됩니다. 시간 초과 시 인증 요청 없이 `network`, `reason: stdin_timeout`, 종료 코드 7을 반환합니다.
+
 ## 로컬 배포와 업그레이드
 
 `adopt`는 서비스 설정을 유지하면서 기존 Compose 배포를 로컬 관리 대상으로 등록합니다:

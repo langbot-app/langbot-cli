@@ -95,6 +95,8 @@ Los parámetros de conexión se resuelven en este orden y se validan el destino 
 
 Usa `--api-key-stdin` para una invocación y `--file -` por separado para el cuerpo de la petición. Los endpoints temporales admiten lecturas controladas; las escrituras usan un contexto guardado y vinculado a un Workspace.
 
+Cierra stdin tras proporcionar la clave. La espera usa el tiempo resuelto de `--timeout` / `LANGBOT_TIMEOUT` / contexto (30s por defecto), separado del de cada petición HTTP. Al agotarse, devuelve `network`, `reason: stdin_timeout` y código de salida 7 sin enviar una petición autenticada.
+
 ## Despliegue local y actualizaciones
 
 `adopt` registra un despliegue Compose existente para su gestión local, conservando la configuración de servicios:

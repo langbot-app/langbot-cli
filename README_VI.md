@@ -95,6 +95,8 @@ Tham số kết nối được xử lý theo thứ tự sau, đồng thời xác
 
 Dùng `--api-key-stdin` cho một lần gọi và dùng riêng `--file -` để nhập nội dung yêu cầu. Endpoint tạm thời hỗ trợ đọc có kiểm soát; ghi tài nguyên sử dụng context đã lưu và liên kết với Workspace.
 
+Đóng stdin sau khi cung cấp khóa. Thời gian chờ dùng giá trị đã phân giải từ `--timeout` / `LANGBOT_TIMEOUT` / context (mặc định 30s), độc lập với mỗi yêu cầu HTTP. Hết thời gian sẽ trả `network`, `reason: stdin_timeout` và mã thoát 7 mà không gửi yêu cầu xác thực.
+
 ## Triển khai cục bộ và nâng cấp
 
 `adopt` đăng ký triển khai Compose có sẵn để quản lý cục bộ, giữ nguyên cấu hình dịch vụ:
