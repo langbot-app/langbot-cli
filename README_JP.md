@@ -1,6 +1,37 @@
-# langbot-cli
+<div align="center">
+
+<a href="https://langbot.app">
+<img src="https://raw.githubusercontent.com/langbot-app/LangBot/master/res/logo-blue.png" width="96" alt="LangBot"/>
+</a>
+
+<h1>LangBot CLI</h1>
+
+<p>ターミナルから LangBot Workspace とセルフホスト環境を管理。</p>
 
 [English](README.md) / [简体中文](README_CN.md) / [繁體中文](README_TW.md) / 日本語 / [Español](README_ES.md) / [Français](README_FR.md) / [한국어](README_KO.md) / [Русский](README_RU.md) / [Tiếng Việt](README_VI.md)
+
+[![Release](https://img.shields.io/github/v/release/langbot-app/langbot-cli)](https://github.com/langbot-app/langbot-cli/releases/latest)
+[![CLI checks](https://img.shields.io/github/actions/workflow/status/langbot-app/langbot-cli/ci.yml?branch=main&label=checks)](https://github.com/langbot-app/langbot-cli/actions/workflows/ci.yml)
+[![Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white)](go.mod)
+[![License](https://img.shields.io/github/license/langbot-app/langbot-cli)](LICENSE)
+
+<a href="https://langbot.app">公式サイト</a> ｜
+<a href="https://github.com/langbot-app/LangBot">LangBot 本体</a> ｜
+<a href="https://github.com/langbot-app/langbot-cli/releases">リリース</a> ｜
+<a href="https://github.com/langbot-app/langbot-cli/issues">問題報告</a>
+
+</div>
+
+<p align="center">
+<a href="#installation">インストール</a> ·
+<a href="#connection">接続</a> ·
+<a href="#deployment">デプロイ</a> ·
+<a href="#resources">リソース</a> ·
+<a href="#automation">自動化</a> ·
+<a href="#source">ビルド</a>
+</p>
+
+---
 
 LangBot の独立したコマンドラインツール `lbctl`。HTTP 経由で Workspace のリソースを管理し、複数の context、認証・機能の検出、リソース管理、RAG 設定の検出、Pipeline の拡張と試行実行、実行記録と Sandbox の診断、非同期タスクの待機、およびローカル Docker Compose のインストール・管理・アップグレードを提供します。
 
@@ -11,6 +42,8 @@ LangBot の独立したコマンドラインツール `lbctl`。HTTP 経由で W
 - Provider/Model の機密情報をマスクする `include_secret=false`。
 
 `lbctl` は Core が宣言する capability、Workspace の紐付け、権限に基づいて操作します。
+
+<a id="installation"></a>
 
 ## インストール
 
@@ -30,6 +63,8 @@ irm https://download.langbot.app/install.ps1 | iex
 
 Cloudflare Workers がインストーラー、バイナリ、チェックサムのミラーを配信します。[GitHub Releases](https://github.com/langbot-app/langbot-cli/releases) と同期し、元のファイルもそこから入手できます。`LBCTL_VERSION` で公開済みのバージョンを指定します。
 
+<a id="source"></a>
+
 ## ソースからビルド
 
 ```sh
@@ -39,6 +74,8 @@ make build
 ```
 
 Go の基準バージョンは 1.26 です。ビルド済みバイナリを直接実行できます。ローカルのデプロイ管理には Docker Compose を使用します。
+
+<a id="connection"></a>
 
 ## リモートインスタンスの設定
 
@@ -93,6 +130,8 @@ lbctl context remove dev --yes
 
 `--api-key-stdin` は単一の呼び出し用です。リクエスト本文用の `--file -` とは別々に使用します。一時 endpoint は制御された読み取りに対応し、書き込みには保存済みで Workspace に紐付いた context を使います。
 
+<a id="deployment"></a>
+
 ## ローカルのデプロイとアップグレード
 
 `adopt` は既存の Compose デプロイを、サービス設定を維持したままローカル管理対象として登録します：
@@ -127,6 +166,8 @@ lbctl upgrade --version <newer-vX.Y.Z> --yes -o json
 自動アップグレードは `rockchin/langbot:<tag>` を直接指定し、全データが Compose ディレクトリの `data` バインドマウントにあり、ローカル SQLite、Chroma、local storage を使う構成に対応します。事前に Compose、バックアップ範囲、バージョンを検証し、新しいバージョンへ更新します。`--dry-run` は計画を表示し、実行時にイメージを検証します。Compose を手動変更した後は同じ対象で `adopt` を再実行して新しいダイジェストを確認します。
 
 ローカルのライフサイクル操作はデプロイインスタンスを対象とします。Bot、Pipeline、Skill などは以下の共通コマンドで context の Workspace を管理します。
+
+<a id="resources"></a>
 
 ## リソース管理
 
@@ -276,6 +317,8 @@ lbctl api post '/api/v1/knowledge/bases/<uuid>/retrieve' --file query.yaml
 ```
 
 Provider/Model の管理、インストール、テストなどの機密性の高い操作には専用コマンドを使います。`raw` は `/api/v1/system/info` の互換読み取りを提供します。
+
+<a id="automation"></a>
 
 ## 出力とチェック
 

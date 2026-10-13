@@ -1,6 +1,37 @@
-# langbot-cli
+<div align="center">
+
+<a href="https://langbot.app">
+<img src="https://raw.githubusercontent.com/langbot-app/LangBot/master/res/logo-blue.png" width="96" alt="LangBot"/>
+</a>
+
+<h1>LangBot CLI</h1>
+
+<p>从终端管理 LangBot Workspace 与自部署实例。</p>
 
 [English](README.md) / 简体中文 / [繁體中文](README_TW.md) / [日本語](README_JP.md) / [Español](README_ES.md) / [Français](README_FR.md) / [한국어](README_KO.md) / [Русский](README_RU.md) / [Tiếng Việt](README_VI.md)
+
+[![Release](https://img.shields.io/github/v/release/langbot-app/langbot-cli)](https://github.com/langbot-app/langbot-cli/releases/latest)
+[![CLI checks](https://img.shields.io/github/actions/workflow/status/langbot-app/langbot-cli/ci.yml?branch=main&label=checks)](https://github.com/langbot-app/langbot-cli/actions/workflows/ci.yml)
+[![Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white)](go.mod)
+[![License](https://img.shields.io/github/license/langbot-app/langbot-cli)](LICENSE)
+
+<a href="https://langbot.app">官网</a> ｜
+<a href="https://github.com/langbot-app/LangBot">LangBot 主库</a> ｜
+<a href="https://github.com/langbot-app/langbot-cli/releases">版本发布</a> ｜
+<a href="https://github.com/langbot-app/langbot-cli/issues">问题反馈</a>
+
+</div>
+
+<p align="center">
+<a href="#installation">安装</a> ·
+<a href="#connection">连接实例</a> ·
+<a href="#deployment">本机部署</a> ·
+<a href="#resources">资源管理</a> ·
+<a href="#automation">自动化</a> ·
+<a href="#source">源码构建</a>
+</p>
+
+---
 
 LangBot 的独立命令行工具，二进制名为 `lbctl`。它通过 HTTP 管理 Workspace 资源，支持多 context、身份与能力发现、资源管理、RAG 配置发现、Pipeline 扩展与试运行、运行记录和 Sandbox 诊断、异步任务等待，以及本机 Docker Compose 部署的安装、接管、启停和升级。
 
@@ -11,6 +42,8 @@ LangBot 的独立命令行工具，二进制名为 `lbctl`。它通过 HTTP 管�
 - Provider/Model 查询的服务端脱敏参数 `include_secret=false`。
 
 `lbctl` 根据 Core 声明的 capability、Workspace 绑定和权限执行操作。
+
+<a id="installation"></a>
 
 ## 安装
 
@@ -30,6 +63,8 @@ irm https://download.langbot.app/install.ps1 | iex
 
 下载域名由 Cloudflare Workers 分发，安装脚本、二进制和校验文件均从镜像获取。发行包同步自 [GitHub Releases](https://github.com/langbot-app/langbot-cli/releases)，也可以在那里直接下载原始文件。设置 `LBCTL_VERSION` 可安装指定的已发布版本。
 
+<a id="source"></a>
+
 ## 源码构建
 
 ```sh
@@ -39,6 +74,8 @@ make build
 ```
 
 Go 基线为 1.26。编译后的二进制可直接运行；本机部署管理使用 Docker Compose。
+
+<a id="connection"></a>
 
 ## 配置远端实例
 
@@ -93,6 +130,8 @@ lbctl context remove dev --yes
 
 `--api-key-stdin` 用于单次调用，不能与 `--file -` 同时使用。临时 endpoint 只允许受控读取；资源写入必须使用已保存且绑定 Workspace 的 context。
 
+<a id="deployment"></a>
+
 ## 本机部署与升级
 
 `adopt` 将已有 Compose 部署登记为本机受管部署，不改变它的服务配置：
@@ -127,6 +166,8 @@ lbctl upgrade --version <newer-vX.Y.Z> --yes -o json
 自动升级支持直接声明 `rockchin/langbot:<tag>` 的服务，数据完整位于 Compose 目录的 `data` 绑定目录，且使用本地 SQLite、Chroma 和 local storage。升级前会校验 Compose 配置、备份范围和版本；目标版本高于当前版本。`--dry-run` 显示升级计划，执行升级时验证目标镜像。接管后手动改变 Compose，需要再次执行相同目标的 `adopt`，明确确认新的资产摘要。
 
 本机生命周期作用于部署实例；Bot、Pipeline、Skill 等资源仍通过下面同一套命令管理 context 对应的 Workspace。
+
+<a id="resources"></a>
 
 ## 管理资源
 
@@ -276,6 +317,8 @@ lbctl api post '/api/v1/knowledge/bases/<uuid>/retrieve' --file query.yaml
 ```
 
 Provider/Model 管理、安装、测试和其他敏感操作必须使用专用命令。`raw` 仅保留 `/api/v1/system/info` 的兼容读取。
+
+<a id="automation"></a>
 
 ## 输出与检查
 

@@ -1,6 +1,37 @@
-# langbot-cli
+<div align="center">
+
+<a href="https://langbot.app">
+<img src="https://raw.githubusercontent.com/langbot-app/LangBot/master/res/logo-blue.png" width="96" alt="LangBot"/>
+</a>
+
+<h1>LangBot CLI</h1>
+
+<p>Управляйте Workspace LangBot и собственными развёртываниями из терминала.</p>
 
 [English](README.md) / [简体中文](README_CN.md) / [繁體中文](README_TW.md) / [日本語](README_JP.md) / [Español](README_ES.md) / [Français](README_FR.md) / [한국어](README_KO.md) / Русский / [Tiếng Việt](README_VI.md)
+
+[![Release](https://img.shields.io/github/v/release/langbot-app/langbot-cli)](https://github.com/langbot-app/langbot-cli/releases/latest)
+[![CLI checks](https://img.shields.io/github/actions/workflow/status/langbot-app/langbot-cli/ci.yml?branch=main&label=checks)](https://github.com/langbot-app/langbot-cli/actions/workflows/ci.yml)
+[![Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white)](go.mod)
+[![License](https://img.shields.io/github/license/langbot-app/langbot-cli)](LICENSE)
+
+<a href="https://langbot.app">Сайт</a> ｜
+<a href="https://github.com/langbot-app/LangBot">LangBot Core</a> ｜
+<a href="https://github.com/langbot-app/langbot-cli/releases">Релизы</a> ｜
+<a href="https://github.com/langbot-app/langbot-cli/issues">Обратная связь</a>
+
+</div>
+
+<p align="center">
+<a href="#installation">Установка</a> ·
+<a href="#connection">Подключение</a> ·
+<a href="#deployment">Развёртывание</a> ·
+<a href="#resources">Ресурсы</a> ·
+<a href="#automation">Автоматизация</a> ·
+<a href="#source">Сборка</a>
+</p>
+
+---
 
 Самостоятельный инструмент командной строки LangBot — `lbctl`. Управляет ресурсами Workspace по HTTP: несколько context, определение идентичности и возможностей, управление ресурсами, конфигурация RAG, расширения и пробные запуски Pipeline, записи выполнения и диагностика Sandbox, ожидание асинхронных задач, а также установка, принятие под управление, запуск, остановка и обновление локальных развёртываний Docker Compose.
 
@@ -11,6 +42,8 @@
 - Скрытие секретов на сервере через `include_secret=false` в запросах Provider/Model.
 
 `lbctl` выполняет операции с учётом объявленных Core возможностей, привязки Workspace и прав.
+
+<a id="installation"></a>
 
 ## Установка
 
@@ -30,6 +63,8 @@ irm https://download.langbot.app/install.ps1 | iex
 
 Cloudflare Workers раздаёт зеркало установщиков, бинарных файлов и контрольных сумм, синхронизированное с [GitHub Releases](https://github.com/langbot-app/langbot-cli/releases). Оригинальные файлы также доступны там. Задайте `LBCTL_VERSION` для конкретной опубликованной версии.
 
+<a id="source"></a>
+
 ## Сборка из исходников
 
 ```sh
@@ -39,6 +74,8 @@ make build
 ```
 
 Базовая версия Go — 1.26. Собранный бинарный файл запускается напрямую; локальные развёртывания управляются через Docker Compose.
+
+<a id="connection"></a>
 
 ## Настройка удалённых экземпляров
 
@@ -93,6 +130,8 @@ lbctl context remove dev --yes
 
 `--api-key-stdin` используется для одного вызова, отдельно от `--file -` для тела запроса. Временные endpoint поддерживают контролируемое чтение; запись ресурсов использует сохранённый context с привязкой к Workspace.
 
+<a id="deployment"></a>
+
 ## Локальное развёртывание и обновление
 
 `adopt` регистрирует существующее развёртывание Compose для локального управления, сохраняя настройки сервисов:
@@ -127,6 +166,8 @@ lbctl upgrade --version <newer-vX.Y.Z> --yes -o json
 Автоматическое обновление поддерживает сервисы с прямым указанием `rockchin/langbot:<tag>`, всеми данными в bind-монтировании `data` каталога Compose и локальными SQLite, Chroma и local storage. Перед переходом на более новую версию проверяются конфигурация, охват резервного копирования и версии. `--dry-run` показывает план, а выполнение проверяет образ. После ручного изменения Compose снова вызовите `adopt` для той же цели, чтобы подтвердить новый дайджест.
 
 Локальные команды жизненного цикла работают с экземпляром развёртывания. Bot, Pipeline, Skill и другие ресурсы управляются общими командами ниже в Workspace выбранного context.
+
+<a id="resources"></a>
 
 ## Управление ресурсами
 
@@ -276,6 +317,8 @@ lbctl api post '/api/v1/knowledge/bases/<uuid>/retrieve' --file query.yaml
 ```
 
 Для Provider/Model, установки, тестов и других чувствительных операций используйте специальные команды. `raw` предоставляет совместимое чтение `/api/v1/system/info`.
+
+<a id="automation"></a>
 
 ## Вывод и проверки
 

@@ -1,6 +1,37 @@
-# langbot-cli
+<div align="center">
+
+<a href="https://langbot.app">
+<img src="https://raw.githubusercontent.com/langbot-app/LangBot/master/res/logo-blue.png" width="96" alt="LangBot"/>
+</a>
+
+<h1>LangBot CLI</h1>
+
+<p>터미널에서 LangBot Workspace와 자체 호스팅 인스턴스를 관리하세요.</p>
 
 [English](README.md) / [简体中文](README_CN.md) / [繁體中文](README_TW.md) / [日本語](README_JP.md) / [Español](README_ES.md) / [Français](README_FR.md) / 한국어 / [Русский](README_RU.md) / [Tiếng Việt](README_VI.md)
+
+[![Release](https://img.shields.io/github/v/release/langbot-app/langbot-cli)](https://github.com/langbot-app/langbot-cli/releases/latest)
+[![CLI checks](https://img.shields.io/github/actions/workflow/status/langbot-app/langbot-cli/ci.yml?branch=main&label=checks)](https://github.com/langbot-app/langbot-cli/actions/workflows/ci.yml)
+[![Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white)](go.mod)
+[![License](https://img.shields.io/github/license/langbot-app/langbot-cli)](LICENSE)
+
+<a href="https://langbot.app">웹사이트</a> ｜
+<a href="https://github.com/langbot-app/LangBot">LangBot Core</a> ｜
+<a href="https://github.com/langbot-app/langbot-cli/releases">릴리스</a> ｜
+<a href="https://github.com/langbot-app/langbot-cli/issues">문제 보고</a>
+
+</div>
+
+<p align="center">
+<a href="#installation">설치</a> ·
+<a href="#connection">연결</a> ·
+<a href="#deployment">배포</a> ·
+<a href="#resources">리소스</a> ·
+<a href="#automation">자동화</a> ·
+<a href="#source">빌드</a>
+</p>
+
+---
 
 LangBot의 독립 명령줄 도구 `lbctl`입니다. HTTP로 Workspace 리소스를 관리하며 여러 context, ID 및 기능 검색, 리소스 관리, RAG 설정 검색, Pipeline 확장과 시험 실행, 실행 기록 및 Sandbox 진단, 비동기 작업 대기, 로컬 Docker Compose 설치·관리·업그레이드를 제공합니다.
 
@@ -11,6 +42,8 @@ LangBot의 독립 명령줄 도구 `lbctl`입니다. HTTP로 Workspace 리소스
 - Provider/Model 조회에서 서버 측 비밀 정보 마스킹을 위한 `include_secret=false`.
 
 `lbctl`은 Core가 선언한 capability, Workspace 연결 및 권한에 따라 작업을 실행합니다.
+
+<a id="installation"></a>
 
 ## 설치
 
@@ -30,6 +63,8 @@ irm https://download.langbot.app/install.ps1 | iex
 
 Cloudflare Workers가 설치 스크립트, 바이너리, 체크섬 미러를 배포합니다. [GitHub Releases](https://github.com/langbot-app/langbot-cli/releases)에서 동기화하며 원본도 다운로드할 수 있습니다. `LBCTL_VERSION`으로 특정 배포 버전을 지정합니다.
 
+<a id="source"></a>
+
 ## 소스에서 빌드
 
 ```sh
@@ -39,6 +74,8 @@ make build
 ```
 
 Go 기준 버전은 1.26입니다. 컴파일된 바이너리를 직접 실행하며 로컬 배포 관리에는 Docker Compose를 사용합니다.
+
+<a id="connection"></a>
 
 ## 원격 인스턴스 설정
 
@@ -93,6 +130,8 @@ lbctl context remove dev --yes
 
 `--api-key-stdin`은 일회성 호출에 사용하고 요청 본문 입력인 `--file -`와는 별도로 사용합니다. 임시 endpoint는 제어된 읽기를 지원하며 리소스 쓰기는 저장된 Workspace 연결 context를 사용합니다.
 
+<a id="deployment"></a>
+
 ## 로컬 배포와 업그레이드
 
 `adopt`는 서비스 설정을 유지하면서 기존 Compose 배포를 로컬 관리 대상으로 등록합니다:
@@ -127,6 +166,8 @@ lbctl upgrade --version <newer-vX.Y.Z> --yes -o json
 자동 업그레이드는 `rockchin/langbot:<tag>`를 직접 선언하고 모든 데이터가 Compose 디렉터리의 `data` 바인드 마운트에 있으며 로컬 SQLite, Chroma, local storage를 사용하는 구성을 지원합니다. 설정, 백업 범위와 버전을 확인한 뒤 더 높은 버전으로 업그레이드합니다. `--dry-run`은 계획을 표시하고 실행 시 이미지를 검증합니다. Compose를 수동 변경한 후 같은 대상에 `adopt`를 다시 실행하여 새 다이제스트를 확인합니다.
 
 로컬 수명 주기 명령은 배포 인스턴스를 대상으로 합니다. Bot, Pipeline, Skill 등의 리소스는 아래 공통 명령으로 context의 Workspace를 관리합니다.
+
+<a id="resources"></a>
 
 ## 리소스 관리
 
@@ -276,6 +317,8 @@ lbctl api post '/api/v1/knowledge/bases/<uuid>/retrieve' --file query.yaml
 ```
 
 Provider/Model 관리, 설치, 테스트 및 민감한 작업은 전용 명령을 사용합니다. `raw`는 `/api/v1/system/info`의 호환 읽기를 제공합니다.
+
+<a id="automation"></a>
 
 ## 출력과 검사
 
