@@ -278,9 +278,9 @@ func TestCheckAllExplicitTimeoutOverridesInvalidEnvironment(t *testing.T) {
 	}))
 	defer server.Close()
 	for _, name := range []string{"one", "two"} {
-		requireSuccess(t, run(t, path, nil, "", "context", "add", name, "--endpoint", server.URL))
+		requireSuccess(t, run(t, path, nil, "", "context", "add", name, "--endpoint", server.URL, "--api-key-env", "CHECK_KEY"))
 	}
-	result := run(t, path, map[string]string{"LANGBOT_TIMEOUT": "not-a-duration"}, "", "context", "check", "--all", "--timeout", "500ms")
+	result := run(t, path, map[string]string{"LANGBOT_TIMEOUT": "not-a-duration", "CHECK_KEY": "test-key"}, "", "context", "check", "--all", "--timeout", "500ms")
 	if result.code != 0 || result.data["ok"] != true {
 		t.Fatalf("explicit check-all timeout did not override invalid environment: %s", result.out)
 	}

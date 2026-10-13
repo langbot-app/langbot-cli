@@ -44,6 +44,8 @@ Go 基準版本為 1.26。編譯後的執行檔可直接執行；本機部署管
 
 API Key 由環境變數或單次 stdin 輸入提供。設定預設儲存於 `~/.config/langbot/config.yaml`，儲存環境變數名稱而非 Key 本身。
 
+先在目標 LangBot 管理頁面完成初始化，再透過 API Key 管理建立 Workspace API Key。需要驗證的命令會偵測缺少的憑據，提供所選環境變數、隱藏輸入的 PowerShell/Bash 範例，以及保留原連線選項執行 `whoami` 的驗證步驟。JSON/YAML 包含 `error.reason` 與 `error.guidance`；錯誤類型仍為 `auth`，結束碼為 3。服務端拒絕 Key 與未設定變數會分別提示；CLI 不自動等待輸入，也不儲存 Key。
+
 先查詢 Key 所屬的 Workspace：
 
 ```sh

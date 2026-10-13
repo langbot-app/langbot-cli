@@ -44,6 +44,8 @@ La versión base de Go es 1.26. El binario compilado se ejecuta directamente; la
 
 Proporciona la API Key mediante una variable de entorno o una entrada de stdin de un solo uso. La configuración se guarda en `~/.config/langbot/config.yaml` y almacena el nombre de la variable, en lugar de la clave.
 
+Tras la configuración inicial, crea una Workspace API Key en la gestión de API Keys del panel de LangBot de destino. Los comandos autenticados detectan credenciales ausentes e indican la variable seleccionada, ejemplos PowerShell/Bash con entrada oculta y la verificación con `whoami` conservando las opciones de conexión. JSON/YAML incluye `error.reason` y `error.guidance`; el tipo sigue siendo `auth` y el código de salida 3. Se distingue una clave rechazada de una variable sin configurar; la CLI no solicita entrada automáticamente ni guarda la clave.
+
 Primero consulta el Workspace asociado a la clave:
 
 ```sh

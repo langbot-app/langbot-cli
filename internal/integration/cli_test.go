@@ -492,7 +492,7 @@ func TestContextCheckKeepsReachableWhenIdentityRequestHasNoHTTPResponse(t *testi
 	}))
 	defer server.Close()
 	requireSuccess(t, run(t, path, nil, "", "context", "add", "production", "--endpoint", server.URL))
-	checked := run(t, path, nil, "", "context", "check", "production")
+	checked := run(t, path, map[string]string{"LANGBOT_API_KEY": "test-key"}, "", "context", "check", "production")
 	if checked.code != 7 {
 		t.Fatalf("identity network failure did not return network exit code: %s", checked.out)
 	}
@@ -513,7 +513,7 @@ func TestExpectedWorkspaceMismatchIsPreconditionAndPreservesIdentity(t *testing.
 	}))
 	defer server.Close()
 	requireSuccess(t, run(t, path, nil, "", "context", "add", "production", "--endpoint", server.URL, "--expect-workspace", "expected-workspace"))
-	whoami := run(t, path, nil, "", "--context", "production", "whoami")
+	whoami := run(t, path, map[string]string{"LANGBOT_API_KEY": "test-key"}, "", "--context", "production", "whoami")
 	if whoami.code != 6 || whoami.data["error"].(map[string]any)["type"] != "target_mismatch" {
 		t.Fatalf("whoami workspace mismatch was not a precondition: %s", whoami.out)
 	}
@@ -522,7 +522,7 @@ func TestExpectedWorkspaceMismatchIsPreconditionAndPreservesIdentity(t *testing.
 	if whoamiIdentity != "instance-a" || whoamiData["workspace_uuid"] != "actual-workspace" {
 		t.Fatalf("whoami mismatch lost actual identity: %s", whoami.out)
 	}
-	checked := run(t, path, nil, "", "context", "check", "production")
+	checked := run(t, path, map[string]string{"LANGBOT_API_KEY": "test-key"}, "", "context", "check", "production")
 	if checked.code != 6 || checked.data["error"].(map[string]any)["type"] != "target_mismatch" {
 		t.Fatalf("workspace mismatch was not a precondition: %s", checked.out)
 	}

@@ -96,6 +96,24 @@ func renderDefaultError(w io.Writer, value any) error {
 		_, err := fmt.Fprintln(w, "建议：对同一目标运行 lbctl capabilities，确认 Core 是否声明了所需能力。")
 		return err
 	}
+	if guidance, ok := detail["guidance"].(map[string]any); ok {
+		if steps, ok := guidance["steps"].([]any); ok {
+			for i, step := range steps {
+				if _, err := fmt.Fprintf(w, "建议 %d：%s\n", i+1, formatCell(step)); err != nil {
+					return err
+				}
+			}
+		}
+		if examples, ok := guidance["examples"].(map[string]any); ok {
+			for _, shell := range []string{"powershell", "bash"} {
+				if example, exists := examples[shell]; exists {
+					if _, err := fmt.Fprintf(w, "%s：%s\n", shell, formatCell(example)); err != nil {
+						return err
+					}
+				}
+			}
+		}
+	}
 	return nil
 }
 

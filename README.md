@@ -44,6 +44,8 @@ The Go baseline is 1.26. Run the compiled binary directly; local deployment mana
 
 Provide the API Key through an environment variable or one-time stdin input. Configuration defaults to `~/.config/langbot/config.yaml` and stores the environment variable name rather than the key itself.
 
+Create a Workspace API Key in the target LangBot dashboard's API Key management after initial setup. Authenticated commands detect missing credentials and show the selected environment variable, hidden-input PowerShell/Bash examples, and a same-target `whoami` verification step. JSON/YAML includes `error.reason` and `error.guidance`; the error type remains `auth` with exit code 3. A rejected key is reported separately from an unset variable; the CLI never prompts automatically or saves the key.
+
 First discover the Workspace associated with the key:
 
 ```sh

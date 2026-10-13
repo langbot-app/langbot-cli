@@ -44,6 +44,8 @@ Go の基準バージョンは 1.26 です。ビルド済みバイナリを直�
 
 API Key は環境変数または一度限りの stdin 入力で渡します。設定の既定パスは `~/.config/langbot/config.yaml` で、Key 本体ではなく環境変数名を保存します。
 
+初期設定後、対象の LangBot 管理画面の API Key 管理で Workspace API Key を作成します。認証が必要なコマンドは認証情報の不足を検出し、使用する環境変数、入力を隠す PowerShell/Bash の例、接続オプションを維持した `whoami` による確認手順を表示します。JSON/YAML に `error.reason` と `error.guidance` が含まれ、エラー型は `auth`、終了コードは 3 のままです。Key の拒否と変数の未設定は区別されます。CLI は自動で入力を待たず、Key を保存しません。
+
 まず Key に対応する Workspace を確認します：
 
 ```sh

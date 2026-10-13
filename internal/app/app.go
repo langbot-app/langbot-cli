@@ -2631,8 +2631,15 @@ func (s *Service) info(ctx context.Context, conn config.Connection) (api.Info, e
 }
 
 func (s *Service) identity(ctx context.Context, conn config.Connection) (api.Context, error) {
+	if strings.TrimSpace(conn.APIKey) == "" {
+		return api.Context{}, result.AuthSetupError("missing_api_key", "LANGBOT_API_KEY")
+	}
 	client := api.Client{Transport: s.deps.Transport}
-	return client.Context(ctx, api.Target{Endpoint: conn.Endpoint, APIKey: conn.APIKey, Timeout: conn.Timeout})
+	identity, err := client.Context(ctx, api.Target{Endpoint: conn.Endpoint, APIKey: conn.APIKey, Timeout: conn.Timeout})
+	if err != nil && result.AsError(err).Reason == "authentication_rejected" && strings.HasPrefix(conn.CredentialSource, "env:") {
+		result.AddAuthGuidance(result.AsError(err), "authentication_rejected", strings.TrimPrefix(conn.CredentialSource, "env:"))
+	}
+	return identity, err
 }
 
 func (s *Service) capabilities(ctx context.Context, conn config.Connection) (api.Capabilities, error) {

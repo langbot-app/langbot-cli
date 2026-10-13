@@ -9,6 +9,7 @@ import (
 	"unicode"
 
 	"github.com/langbot-app/langbot-cli/internal/endpoint"
+	"github.com/langbot-app/langbot-cli/internal/result"
 )
 
 func Resolve(file File, opts Options, lookup func(string) (string, bool)) (Connection, error) {
@@ -91,7 +92,7 @@ func (c Connection) WithCredential(opts Options, lookup func(string) (string, bo
 	}
 	if copy.credentialType == "" {
 		if copy.requiresExplicitCredential {
-			return copy, authError("endpoint 已覆盖，必须显式提供新的 API Key")
+			return copy, result.AuthSetupError("endpoint_changed", "LANGBOT_API_KEY")
 		}
 		return copy, nil
 	}
@@ -101,7 +102,7 @@ func (c Connection) WithCredential(opts Options, lookup func(string) (string, bo
 	getenv := envLookup(lookup)
 	value, ok := getenv(copy.credentialRef)
 	if !ok || strings.TrimSpace(value) == "" {
-		return copy, authError("凭据来源不可用")
+		return copy, result.AuthSetupError("environment_variable_unavailable", copy.credentialRef)
 	}
 	if len(value) > maxSecretBytes {
 		return copy, authError("API Key 过长")
@@ -201,7 +202,7 @@ func readSecret(reader io.Reader) (string, error) {
 	}
 	value := strings.TrimSpace(string(bytes.TrimPrefix(data, []byte("\ufeff"))))
 	if value == "" {
-		return "", authError("API Key 为空")
+		return "", result.AuthSetupError("empty_stdin", "")
 	}
 	if err := validateSecret(value); err != nil {
 		return "", err

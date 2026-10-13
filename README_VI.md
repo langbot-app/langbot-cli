@@ -44,6 +44,8 @@ Phiên bản Go cơ sở là 1.26. Tệp nhị phân đã biên dịch chạy tr
 
 Cung cấp API Key qua biến môi trường hoặc stdin cho một lần gọi. Cấu hình mặc định nằm tại `~/.config/langbot/config.yaml`, lưu tên biến môi trường thay cho nội dung khóa.
 
+Sau khi khởi tạo, hãy tạo Workspace API Key trong mục quản lý API Key của LangBot đích. Lệnh cần xác thực phát hiện thông tin đăng nhập bị thiếu và hiển thị biến môi trường được chọn, ví dụ PowerShell/Bash với đầu vào ẩn và bước kiểm tra `whoami` giữ nguyên tùy chọn kết nối. JSON/YAML có `error.reason` và `error.guidance`; loại lỗi vẫn là `auth`, mã thoát là 3. Khóa bị từ chối được phân biệt với biến chưa đặt; CLI không tự chờ nhập và không lưu khóa.
+
 Trước tiên xác định Workspace của khóa:
 
 ```sh
