@@ -1,6 +1,37 @@
-# langbot-cli
+<div align="center">
+
+<a href="https://langbot.app">
+<img src="https://raw.githubusercontent.com/langbot-app/LangBot/master/res/logo-blue.png" width="96" alt="LangBot"/>
+</a>
+
+<h1>LangBot CLI</h1>
+
+<p>Gestiona tu Workspace de LangBot y despliegues propios desde la terminal.</p>
 
 [English](README.md) / [简体中文](README_CN.md) / [繁體中文](README_TW.md) / [日本語](README_JP.md) / Español / [Français](README_FR.md) / [한국어](README_KO.md) / [Русский](README_RU.md) / [Tiếng Việt](README_VI.md)
+
+[![Release](https://img.shields.io/github/v/release/langbot-app/langbot-cli)](https://github.com/langbot-app/langbot-cli/releases/latest)
+[![CLI checks](https://img.shields.io/github/actions/workflow/status/langbot-app/langbot-cli/ci.yml?branch=main&label=checks)](https://github.com/langbot-app/langbot-cli/actions/workflows/ci.yml)
+[![Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white)](go.mod)
+[![License](https://img.shields.io/github/license/langbot-app/langbot-cli)](LICENSE)
+
+<a href="https://langbot.app">Sitio web</a> ｜
+<a href="https://github.com/langbot-app/LangBot">LangBot Core</a> ｜
+<a href="https://github.com/langbot-app/langbot-cli/releases">Versiones</a> ｜
+<a href="https://github.com/langbot-app/langbot-cli/issues">Incidencias</a>
+
+</div>
+
+<p align="center">
+<a href="#installation">Instalar</a> ·
+<a href="#connection">Conectar</a> ·
+<a href="#deployment">Desplegar</a> ·
+<a href="#resources">Recursos</a> ·
+<a href="#automation">Automatización</a> ·
+<a href="#source">Compilar</a>
+</p>
+
+---
 
 Herramienta independiente de línea de comandos de LangBot, distribuida como `lbctl`. Gestiona recursos de Workspace por HTTP, con múltiples contextos, descubrimiento de identidad y capacidades, gestión de recursos, configuración de RAG, extensiones y pruebas de Pipeline, registros de ejecución y diagnóstico de Sandbox, espera de tareas asíncronas y gestión de instalaciones locales con Docker Compose.
 
@@ -11,6 +42,8 @@ Utiliza un LangBot Core que proporcione:
 - Ocultación de secretos en consultas de Provider/Model mediante `include_secret=false`.
 
 `lbctl` ejecuta operaciones según las capacidades, la vinculación al Workspace y los permisos declarados por Core.
+
+<a id="installation"></a>
 
 ## Instalación
 
@@ -30,6 +63,8 @@ El instalador selecciona el binario de tu plataforma y verifica SHA-256. El scri
 
 Cloudflare Workers distribuye el espejo de instaladores, binarios y sumas de comprobación, sincronizado desde [GitHub Releases](https://github.com/langbot-app/langbot-cli/releases). Los archivos originales también están disponibles allí. Define `LBCTL_VERSION` para instalar una versión publicada específica.
 
+<a id="source"></a>
+
 ## Compilar desde el código fuente
 
 ```sh
@@ -39,6 +74,8 @@ make build
 ```
 
 La versión base de Go es 1.26. El binario compilado se ejecuta directamente; la gestión de despliegues locales utiliza Docker Compose.
+
+<a id="connection"></a>
 
 ## Configurar instancias remotas
 
@@ -93,6 +130,8 @@ Los parámetros de conexión se resuelven en este orden y se validan el destino 
 
 Usa `--api-key-stdin` para una invocación y `--file -` por separado para el cuerpo de la petición. Los endpoints temporales admiten lecturas controladas; las escrituras usan un contexto guardado y vinculado a un Workspace.
 
+<a id="deployment"></a>
+
 ## Despliegue local y actualizaciones
 
 `adopt` registra un despliegue Compose existente para su gestión local, conservando la configuración de servicios:
@@ -127,6 +166,8 @@ La actualización de un despliegue adoptado cambia las imágenes de `langbot`, `
 La actualización automática admite servicios que declaren directamente `rockchin/langbot:<tag>`, con todos los datos en el montaje `data` del directorio Compose y SQLite, Chroma y local storage locales. Verifica configuración, alcance del respaldo y versiones antes de actualizar a una versión superior. `--dry-run` muestra el plan; la ejecución verifica la imagen. Tras editar Compose manualmente, vuelve a ejecutar `adopt` sobre el mismo destino para confirmar el nuevo resumen del archivo.
 
 Los comandos de ciclo de vida local operan sobre la instancia desplegada. Bot, Pipeline, Skill y otros recursos usan los comandos siguientes para gestionar el Workspace del contexto.
+
+<a id="resources"></a>
 
 ## Gestionar recursos
 
@@ -276,6 +317,8 @@ lbctl api post '/api/v1/knowledge/bases/<uuid>/retrieve' --file query.yaml
 ```
 
 Usa comandos específicos para gestión de Provider/Model, instalación, pruebas y otras operaciones sensibles. `raw` ofrece lecturas compatibles de `/api/v1/system/info`.
+
+<a id="automation"></a>
 
 ## Salida y comprobaciones
 

@@ -1,6 +1,37 @@
-# langbot-cli
+<div align="center">
+
+<a href="https://langbot.app">
+<img src="https://raw.githubusercontent.com/langbot-app/LangBot/master/res/logo-blue.png" width="96" alt="LangBot"/>
+</a>
+
+<h1>LangBot CLI</h1>
+
+<p>Quản lý Workspace LangBot và triển khai tự lưu trữ từ terminal.</p>
 
 [English](README.md) / [简体中文](README_CN.md) / [繁體中文](README_TW.md) / [日本語](README_JP.md) / [Español](README_ES.md) / [Français](README_FR.md) / [한국어](README_KO.md) / [Русский](README_RU.md) / Tiếng Việt
+
+[![Release](https://img.shields.io/github/v/release/langbot-app/langbot-cli)](https://github.com/langbot-app/langbot-cli/releases/latest)
+[![CLI checks](https://img.shields.io/github/actions/workflow/status/langbot-app/langbot-cli/ci.yml?branch=main&label=checks)](https://github.com/langbot-app/langbot-cli/actions/workflows/ci.yml)
+[![Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white)](go.mod)
+[![License](https://img.shields.io/github/license/langbot-app/langbot-cli)](LICENSE)
+
+<a href="https://langbot.app">Trang web</a> ｜
+<a href="https://github.com/langbot-app/LangBot">LangBot Core</a> ｜
+<a href="https://github.com/langbot-app/langbot-cli/releases">Phiên bản</a> ｜
+<a href="https://github.com/langbot-app/langbot-cli/issues">Báo lỗi</a>
+
+</div>
+
+<p align="center">
+<a href="#installation">Cài đặt</a> ·
+<a href="#connection">Kết nối</a> ·
+<a href="#deployment">Triển khai</a> ·
+<a href="#resources">Tài nguyên</a> ·
+<a href="#automation">Tự động hóa</a> ·
+<a href="#source">Biên dịch</a>
+</p>
+
+---
 
 Công cụ dòng lệnh độc lập của LangBot, có tên `lbctl`. Quản lý tài nguyên Workspace qua HTTP, hỗ trợ nhiều context, khám phá danh tính và khả năng, quản lý tài nguyên, cấu hình RAG, tiện ích mở rộng và chạy thử Pipeline, bản ghi thực thi và chẩn đoán Sandbox, chờ tác vụ bất đồng bộ, cùng cài đặt, tiếp quản, quản lý vòng đời và nâng cấp triển khai Docker Compose cục bộ.
 
@@ -11,6 +42,8 @@ Sử dụng với LangBot Core cung cấp các khả năng sau:
 - Che thông tin bí mật phía máy chủ qua `include_secret=false` cho truy vấn Provider/Model.
 
 `lbctl` thực hiện thao tác theo capability, liên kết Workspace và quyền mà Core khai báo.
+
+<a id="installation"></a>
 
 ## Cài đặt
 
@@ -30,6 +63,8 @@ Trình cài đặt chọn tệp nhị phân phù hợp nền tảng và kiểm t
 
 Cloudflare Workers phân phối bản mirror của trình cài đặt, tệp nhị phân và checksum, đồng bộ từ [GitHub Releases](https://github.com/langbot-app/langbot-cli/releases). Có thể tải tệp gốc tại đó. Đặt `LBCTL_VERSION` để chọn phiên bản đã phát hành.
 
+<a id="source"></a>
+
 ## Biên dịch từ mã nguồn
 
 ```sh
@@ -39,6 +74,8 @@ make build
 ```
 
 Phiên bản Go cơ sở là 1.26. Tệp nhị phân đã biên dịch chạy trực tiếp; quản lý triển khai cục bộ sử dụng Docker Compose.
+
+<a id="connection"></a>
 
 ## Cấu hình instance từ xa
 
@@ -93,6 +130,8 @@ Tham số kết nối được xử lý theo thứ tự sau, đồng thời xác
 
 Dùng `--api-key-stdin` cho một lần gọi và dùng riêng `--file -` để nhập nội dung yêu cầu. Endpoint tạm thời hỗ trợ đọc có kiểm soát; ghi tài nguyên sử dụng context đã lưu và liên kết với Workspace.
 
+<a id="deployment"></a>
+
 ## Triển khai cục bộ và nâng cấp
 
 `adopt` đăng ký triển khai Compose có sẵn để quản lý cục bộ, giữ nguyên cấu hình dịch vụ:
@@ -127,6 +166,8 @@ Nâng cấp thay image của `langbot`, `langbot_plugin_runtime` và `langbot_bo
 Nâng cấp tự động hỗ trợ khai báo trực tiếp `rockchin/langbot:<tag>`, toàn bộ dữ liệu trong bind mount `data` của thư mục Compose, dùng SQLite, Chroma và local storage cục bộ. Cấu hình, phạm vi sao lưu và phiên bản được kiểm tra trước khi nâng cấp lên phiên bản cao hơn. `--dry-run` hiển thị kế hoạch; khi thực thi sẽ xác minh image. Sau khi sửa Compose thủ công, chạy lại `adopt` cho cùng đích để xác nhận digest mới.
 
 Lệnh vòng đời cục bộ tác động đến instance triển khai. Bot, Pipeline, Skill và tài nguyên khác dùng bộ lệnh chung dưới đây để quản lý Workspace của context.
+
+<a id="resources"></a>
 
 ## Quản lý tài nguyên
 
@@ -276,6 +317,8 @@ lbctl api post '/api/v1/knowledge/bases/<uuid>/retrieve' --file query.yaml
 ```
 
 Dùng lệnh chuyên biệt cho Provider/Model, cài đặt, kiểm thử và thao tác nhạy cảm. `raw` hỗ trợ đọc tương thích `/api/v1/system/info`.
+
+<a id="automation"></a>
 
 ## Đầu ra và kiểm tra
 
