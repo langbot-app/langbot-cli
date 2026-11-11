@@ -84,6 +84,7 @@ type schemaDocument struct {
 }
 
 type schemaCommand struct {
+	Examples              string                    `json:"examples,omitempty"`
 	Name                  string                    `json:"name"`
 	Path                  []string                  `json:"path"`
 	Summary               string                    `json:"summary"`
@@ -115,6 +116,7 @@ type schemaArguments struct {
 }
 
 type schemaArgument struct {
+	Pattern  string `json:"pattern,omitempty"`
 	Name     string `json:"name"`
 	Type     string `json:"type"`
 	Required bool   `json:"required"`
@@ -447,6 +449,7 @@ func intPointer(value int) *int { return &value }
 
 func newSchemaCommand(deps Dependencies, flags *globalFlags) *cobra.Command {
 	var commandName string
+	var summary bool
 	cmd := &cobra.Command{
 		Use:   "schema",
 		Short: "输出机器可读的命令 schema",
@@ -456,10 +459,18 @@ func newSchemaCommand(deps Dependencies, flags *globalFlags) *cobra.Command {
 			if err != nil {
 				return emitCommand(deps, flags, app.Result{}, err)
 			}
+			if summary {
+				index := []map[string]any{}
+				for _, item := range data.Commands {
+					index = append(index, map[string]any{"name": item.Name, "summary": item.Summary, "executable": item.Executable, "mutating": item.Mutating})
+				}
+				return emitCommand(deps, flags, app.Result{Data: map[string]any{"schema_version": data.SchemaVersion, "cli_version": data.CLIVersion, "commands": index}}, nil)
+			}
 			return emitCommand(deps, flags, app.Result{Data: data}, nil)
 		},
 	}
-	cmd.Flags().StringVar(&commandName, "command", "", "按逻辑命令名筛选，例如 bot.create")
+	cmd.Flags().StringVar(&commandName, "command", "", "筛选命令或命令组，例如 bot、bot.update 或 'bot update'")
+	cmd.Flags().BoolVar(&summary, "summary", false, "只输出命令索引，按需再读取单个命令详情")
 	return cmd
 }
 
@@ -467,14 +478,14 @@ func buildSchema(root *cobra.Command, cliVersion, filter string) (schemaDocument
 	if err := validateSchemaMetadata(root); err != nil {
 		return schemaDocument{}, err
 	}
-	filter = strings.TrimSpace(filter)
+	filter = strings.Join(strings.Fields(strings.TrimSpace(filter)), ".")
 	commands := make([]schemaCommand, 0)
 	collectSchemaCommands(root, nil, &commands)
 	if filter != "" {
 		found := false
 		filtered := commands[:0]
 		for _, command := range commands {
-			if command.Name == filter {
+			if command.Name == filter || strings.HasPrefix(command.Name, filter+".") {
 				found = true
 				filtered = append(filtered, command)
 			}
@@ -520,6 +531,7 @@ func collectSchemaCommands(parent *cobra.Command, prefix []string, result *[]sch
 		name := strings.Join(path, ".")
 		meta := schemaMetaByName[name]
 		*result = append(*result, schemaCommand{
+			Examples:              child.Example,
 			Name:                  name,
 			Path:                  path,
 			Summary:               child.Short,
@@ -634,6 +646,9 @@ func schemaHasFlag(flags []schemaFlag, name string) bool {
 
 func schemaArgumentsFor(command *cobra.Command, meta schemaCommandMeta) schemaArguments {
 	arguments := parseArguments(command.Use)
+	if commandPath(command) == "task.get" && len(arguments) > 0 {
+		arguments[0].Pattern = "^[0-9]+$"
+	}
 	min, max := len(arguments), len(arguments)
 	for _, argument := range arguments {
 		if !argument.Required {
@@ -675,6 +690,7 @@ func schemaFlagsFor(command *cobra.Command, meta schemaCommandMeta) []schemaFlag
 				Name: flag.Name, Shorthand: flag.Shorthand, Type: flag.Value.Type(),
 				Default: parseDefault(flag), Required: meta.RequiredFlags[flag.Name], Scope: scope, Usage: flag.Usage,
 			}
+			schemaFlagValue.Enum = flagEnum(commandPath(command), flag.Name)
 			if flag.Name == "output" {
 				schemaFlagValue.Default = nil
 				schemaFlagValue.Enum = []string{"json", "yaml", "yml"}

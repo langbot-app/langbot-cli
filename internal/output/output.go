@@ -41,7 +41,10 @@ func RenderCommand(w io.Writer, value any, format, command string) error {
 		if err != nil {
 			return err
 		}
-		return renderDefault(w, safe, command)
+		if err := renderDefault(w, safe, command); err != nil {
+			return err
+		}
+		return renderExperienceFooter(w, safe, command)
 	}
 	format, err := NormalizeFormat(format)
 	if err != nil {
