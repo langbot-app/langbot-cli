@@ -11,7 +11,7 @@ import (
 func upgradeFixture(t *testing.T) (Record, string) {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), "deployment")
-	assets, err := NewInstallAssets(dir, "v4.10.9", "basic", 15300)
+	assets, err := NewInstallAssets(dir, "v4.10.9", "basic", 15300, InstallNetworkOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

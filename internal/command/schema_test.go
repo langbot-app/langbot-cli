@@ -108,9 +108,21 @@ func TestSchemaIsOfflineStableAndDescribesCommands(t *testing.T) {
 		}
 	}
 	if _, exists := commands["deployment"]; exists {
-		t.Fatal("schema exposes the removed deployment command group")
+		t.Fatal("instance selection must reuse the context command group")
+	}
+	if !hasFlag(commands["context.list"].Flags, "discover", "local", false) {
+		t.Fatal("context.list must expose optional local discovery")
 	}
 	install := commands["install"]
+	for _, name := range []string{"project", "plugin-debug-port", "adapter-ports"} {
+		if !hasFlag(install.Flags, name, "local", false) {
+			t.Fatalf("install is missing network configuration flag %s", name)
+		}
+	}
+	installFlags := indexSchemaFlags(install.Flags)
+	if installFlags["project"].Default != "langbot-lbctl" || installFlags["plugin-debug-port"].Default != float64(5401) || !reflect.DeepEqual(installFlags["adapter-ports"].Default, []any{"2280-2285:2280-2285"}) {
+		t.Fatalf("install publication defaults are inaccurate: %#v", installFlags)
+	}
 	if !install.Mutating || !install.SupportsDryRun || install.RequiresConnection || !isRejected(install.Flags, "context") || !isRejected(install.Flags, "endpoint") || !isRejected(install.Flags, "api-key-stdin") {
 		t.Fatalf("install lifecycle contract is inaccurate: %#v", install)
 	}

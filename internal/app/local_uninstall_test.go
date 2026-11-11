@@ -52,7 +52,7 @@ func uninstallFixture(t *testing.T, containers bool) (*Service, *uninstallRunner
 	t.Helper()
 	root := t.TempDir()
 	dir := filepath.Join(root, "deployment")
-	assets, err := deploy.NewInstallAssets(dir, "v4.10.10", "basic", 15300)
+	assets, err := deploy.NewInstallAssets(dir, "v4.10.10", "basic", 15300, deploy.InstallNetworkOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

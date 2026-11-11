@@ -278,9 +278,9 @@ func TestCheckAllExplicitTimeoutOverridesInvalidEnvironment(t *testing.T) {
 	}))
 	defer server.Close()
 	for _, name := range []string{"one", "two"} {
-		requireSuccess(t, run(t, path, nil, "", "context", "add", name, "--endpoint", server.URL))
+		requireSuccess(t, run(t, path, nil, "", "context", "add", name, "--endpoint", server.URL, "--api-key-env", "CHECK_KEY"))
 	}
-	result := run(t, path, map[string]string{"LANGBOT_TIMEOUT": "not-a-duration"}, "", "context", "check", "--all", "--timeout", "500ms")
+	result := run(t, path, map[string]string{"LANGBOT_TIMEOUT": "not-a-duration", "CHECK_KEY": "test-key"}, "", "context", "check", "--all", "--timeout", "500ms")
 	if result.code != 0 || result.data["ok"] != true {
 		t.Fatalf("explicit check-all timeout did not override invalid environment: %s", result.out)
 	}
@@ -321,6 +321,70 @@ func TestCanceledStdinCredentialExitsWithoutHTTP(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		_ = writer.CloseWithError(context.Canceled)
 		t.Fatal("canceling stdin credential did not return promptly")
+	}
+}
+
+func TestOpenCredentialStdinUsesResolvedTimeout(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		env   map[string]string
+		args  []string
+		saved bool
+	}{
+		{name: "flag overrides invalid environment", env: map[string]string{"LANGBOT_TIMEOUT": "invalid"}, args: []string{"--timeout", "30ms"}},
+		{name: "environment", env: map[string]string{"LANGBOT_TIMEOUT": "30ms"}},
+		{name: "saved context", saved: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.yaml")
+			var calls atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				calls.Add(1)
+				fmt.Fprint(w, `{"code":0,"data":{}}`)
+			}))
+			defer server.Close()
+			args := []string{"--endpoint", server.URL}
+			if test.saved {
+				requireSuccess(t, run(t, path, nil, "", "context", "add", "demo", "--endpoint", server.URL, "--timeout", "30ms"))
+				args = []string{"--context", "demo"}
+			}
+			args = append(args, test.args...)
+			args = append(args, "--api-key-stdin", "whoami", "-o", "json")
+			reader, writer := io.Pipe()
+			defer reader.Close()
+			defer writer.Close()
+			const partialKey = "incomplete-secret-never-echo"
+			go func() { _, _ = writer.Write([]byte(partialKey)) }()
+			type probeResult struct {
+				code            int
+				out, diagnostic string
+			}
+			done := make(chan probeResult, 1)
+			go func() {
+				code, out, diagnostic, err := invokeRaw(path, test.env, reader, args...)
+				if err != nil {
+					diagnostic += err.Error()
+				}
+				done <- probeResult{code: code, out: out, diagnostic: diagnostic}
+			}()
+			select {
+			case got := <-done:
+				if got.code != 7 || got.diagnostic != "" || calls.Load() != 0 || strings.Contains(got.out, partialKey) {
+					t.Fatalf("unsafe timeout result: code=%d calls=%d stdout=%s stderr=%s", got.code, calls.Load(), got.out, got.diagnostic)
+				}
+				var envelope map[string]any
+				if err := json.Unmarshal([]byte(got.out), &envelope); err != nil {
+					t.Fatal(err)
+				}
+				failure := envelope["error"].(map[string]any)
+				if failure["type"] != "network" || failure["reason"] != "stdin_timeout" {
+					t.Fatalf("wrong timeout classification: %+v", failure)
+				}
+			case <-time.After(2 * time.Second):
+				_ = writer.CloseWithError(context.Canceled)
+				t.Fatal("open credential stdin ignored the resolved timeout")
+			}
+		})
 	}
 }
 

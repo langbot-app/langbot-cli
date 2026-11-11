@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 )
 
@@ -85,7 +86,8 @@ func samePurgeTarget(current, requested Record) bool {
 		current.Driver == requested.Driver && current.CoreVersion == requested.CoreVersion && current.Profile == requested.Profile &&
 		current.ComposeProject == requested.ComposeProject && samePath(current.ComposeFile, requested.ComposeFile) &&
 		samePath(current.EnvFile, requested.EnvFile) && samePath(current.DataDir, requested.DataDir) &&
-		current.Endpoint == requested.Endpoint && current.Port == requested.Port && current.Asset == requested.Asset
+		current.Endpoint == requested.Endpoint && current.Port == requested.Port && current.Asset == requested.Asset &&
+		reflect.DeepEqual(current.InstallPorts, requested.InstallPorts)
 }
 
 func validateRemovalBoundary(dir, target string) error {

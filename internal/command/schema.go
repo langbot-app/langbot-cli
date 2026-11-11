@@ -1,6 +1,7 @@
 package command
 
 import (
+	"encoding/csv"
 	"regexp"
 	"sort"
 	"strconv"
@@ -745,7 +746,12 @@ func parseDefault(flag *pflag.Flag) any {
 		if value == "[]" || value == "" {
 			return []string{}
 		}
-		return strings.Split(value, ",")
+		if strings.HasPrefix(value, "[") && strings.HasSuffix(value, "]") {
+			value = value[1 : len(value)-1]
+		}
+		if parsed, err := csv.NewReader(strings.NewReader(value)).Read(); err == nil {
+			return parsed
+		}
 	}
 	return value
 }

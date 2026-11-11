@@ -96,6 +96,24 @@ func renderDefaultError(w io.Writer, value any) error {
 		_, err := fmt.Fprintln(w, "建议：对同一目标运行 lbctl capabilities，确认 Core 是否声明了所需能力。")
 		return err
 	}
+	if guidance, ok := detail["guidance"].(map[string]any); ok {
+		if steps, ok := guidance["steps"].([]any); ok {
+			for i, step := range steps {
+				if _, err := fmt.Fprintf(w, "建议 %d：%s\n", i+1, formatCell(step)); err != nil {
+					return err
+				}
+			}
+		}
+		if examples, ok := guidance["examples"].(map[string]any); ok {
+			for _, shell := range []string{"powershell", "bash"} {
+				if example, exists := examples[shell]; exists {
+					if _, err := fmt.Fprintf(w, "%s：%s\n", shell, formatCell(example)); err != nil {
+						return err
+					}
+				}
+			}
+		}
+	}
 	return nil
 }
 
@@ -128,6 +146,40 @@ func renderDefaultData(w io.Writer, value any, command string) error {
 		return renderValue(w, value, "")
 	}
 	switch command {
+	case "context.list":
+		bound := map[string]bool{}
+		if items, ok := data["contexts"].([]any); ok {
+			for _, item := range items {
+				if row, ok := item.(map[string]any); ok {
+					if id, ok := row["deployment_id"].(string); ok && id != "" {
+						bound[id] = true
+					}
+				}
+			}
+			if err := renderResourceList(w, "contexts", items); err != nil {
+				return err
+			}
+		}
+		if items, ok := data["deployments"].([]any); ok {
+			unconfigured := []any{}
+			for _, item := range items {
+				row, ok := item.(map[string]any)
+				if !ok || !bound[formatCell(row["deployment_id"])] {
+					unconfigured = append(unconfigured, item)
+				}
+			}
+			if len(unconfigured) > 0 {
+				if err := renderResourceList(w, "unconfigured_deployments", unconfigured); err != nil {
+					return err
+				}
+			}
+		}
+		if items, ok := data["discovered_deployments"].([]any); ok && len(items) > 0 {
+			if err := renderResourceList(w, "discovered_deployments", items); err != nil {
+				return err
+			}
+		}
+		return renderFields(w, data, []string{"skipped_projects", "local_error"})
 	case "context.show":
 		for _, key := range []string{"saved", "effective"} {
 			if item, exists := data[key]; exists {
@@ -313,6 +365,11 @@ func renderLocalAction(w io.Writer, data map[string]any) error {
 		}
 	}
 	if data["dry_run"] == true || (action == "install" && data["changed"] != true) {
+		if action == "install" {
+			if err := renderFields(w, data, []string{"compose_project", "plugin_debug_port", "adapter_ports"}); err != nil {
+				return err
+			}
+		}
 		if dir, ok := data["dir"].(string); ok && dir != "" {
 			if _, err := fmt.Fprintln(w, "部署目录："+dir); err != nil {
 				return err
@@ -600,8 +657,14 @@ func commandListKey(command string) string {
 
 func resourceFields(key string) []string {
 	switch key {
+	case "deployments":
+		return []string{"deployment_id", "endpoint", "project", "binding", "dir"}
+	case "unconfigured_deployments":
+		return []string{"endpoint", "project", "binding", "dir"}
+	case "discovered_deployments":
+		return []string{"project", "endpoint", "binding", "compose_file"}
 	case "contexts":
-		return []string{"current", "name", "endpoint", "expected_workspace_uuid"}
+		return []string{"current", "name", "endpoint", "expected_workspace_uuid", "project", "binding"}
 	case "checks":
 		return []string{"name", "status", "reason", "context", "endpoint", "reachable", "diagnostic_ok", "identity", "capabilities", "server_version", "error"}
 	case "containers":

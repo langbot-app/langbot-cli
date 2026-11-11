@@ -35,21 +35,22 @@ var (
 
 // Record 是本地部署的唯一持久化描述，不保存 Workspace API Key。
 type Record struct {
-	SchemaVersion  int       `yaml:"schema_version" json:"schema_version"`
-	ManagedBy      string    `yaml:"managed_by" json:"managed_by"`
-	DeploymentID   string    `yaml:"deployment_id" json:"deployment_id"`
-	InstanceUUID   string    `yaml:"instance_uuid,omitempty" json:"instance_uuid,omitempty"`
-	Driver         string    `yaml:"driver" json:"driver"`
-	CoreVersion    string    `yaml:"core_version" json:"core_version"`
-	Profile        string    `yaml:"profile" json:"profile"`
-	ComposeProject string    `yaml:"compose_project" json:"compose_project"`
-	ComposeFile    string    `yaml:"compose_file" json:"compose_file"`
-	EnvFile        string    `yaml:"env_file,omitempty" json:"env_file,omitempty"`
-	DataDir        string    `yaml:"data_dir" json:"data_dir"`
-	Endpoint       string    `yaml:"endpoint" json:"endpoint"`
-	Port           int       `yaml:"port" json:"port"`
-	Asset          AssetInfo `yaml:"asset" json:"asset"`
-	UpdatedAt      time.Time `yaml:"updated_at" json:"updated_at"`
+	SchemaVersion  int           `yaml:"schema_version" json:"schema_version"`
+	ManagedBy      string        `yaml:"managed_by" json:"managed_by"`
+	DeploymentID   string        `yaml:"deployment_id" json:"deployment_id"`
+	InstanceUUID   string        `yaml:"instance_uuid,omitempty" json:"instance_uuid,omitempty"`
+	Driver         string        `yaml:"driver" json:"driver"`
+	CoreVersion    string        `yaml:"core_version" json:"core_version"`
+	Profile        string        `yaml:"profile" json:"profile"`
+	ComposeProject string        `yaml:"compose_project" json:"compose_project"`
+	ComposeFile    string        `yaml:"compose_file" json:"compose_file"`
+	EnvFile        string        `yaml:"env_file,omitempty" json:"env_file,omitempty"`
+	DataDir        string        `yaml:"data_dir" json:"data_dir"`
+	Endpoint       string        `yaml:"endpoint" json:"endpoint"`
+	Port           int           `yaml:"port" json:"port"`
+	InstallPorts   *InstallPorts `yaml:"install_ports,omitempty" json:"install_ports,omitempty"`
+	Asset          AssetInfo     `yaml:"asset" json:"asset"`
+	UpdatedAt      time.Time     `yaml:"updated_at" json:"updated_at"`
 }
 
 type AssetInfo struct {

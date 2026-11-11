@@ -81,6 +81,8 @@ Go 基线为 1.26。编译后的二进制可直接运行；本机部署管理使
 
 API Key 由环境变量或单次 stdin 提供。配置默认保存在 `~/.config/langbot/config.yaml`，只保存环境变量名，不保存 Key 明文。
 
+先在目标 LangBot 管理页面完成初始化，再通过 API Key 管理创建 Workspace API Key。需要鉴权的命令会检测缺失凭据，提示实际使用的环境变量、隐藏输入的 PowerShell/Bash 设置示例，以及保留原连接选项运行 `whoami` 的验证步骤。JSON/YAML 提供 `error.reason` 和 `error.guidance`；错误类型仍为 `auth`，退出码为 3。服务端拒绝已有 Key 与环境变量未设置会分别提示；CLI 不自动等待输入，也不保存 Key。
+
 先查询 Key 对应的 Workspace：
 
 ```sh
@@ -130,9 +132,50 @@ lbctl context remove dev --yes
 
 `--api-key-stdin` 用于单次调用，不能与 `--file -` 同时使用。临时 endpoint 只允许受控读取；资源写入必须使用已保存且绑定 Workspace 的 context。
 
+提供 Key 后应关闭 stdin 输入流。凭据输入等待使用解析后的 `--timeout` / `LANGBOT_TIMEOUT` / context 超时（默认 30s），与单次 HTTP 请求分别计时；超时返回 `network`、`reason: stdin_timeout` 和退出码 7，不发送鉴权请求。
+
 <a id="deployment"></a>
 
 ## 本机部署与升级
+
+可以发现并登记多个本机 LangBot Compose 实例：
+
+```sh
+lbctl context list --discover
+lbctl --endpoint http://127.0.0.1:15301 adopt \
+  --dir /absolute/path/records/first --file /absolute/path/first/compose.yaml --project first
+lbctl --endpoint http://127.0.0.1:15302 adopt \
+  --dir /absolute/path/records/second --file /absolute/path/second/compose.yaml --project second
+lbctl context add first --endpoint http://127.0.0.1:15301
+lbctl context add second --endpoint http://127.0.0.1:15302
+lbctl context list
+lbctl context use second
+lbctl status
+lbctl stop
+lbctl --context first status
+```
+
+`context list` 离线列出已保存的 context 及本机部署登记，展示匹配的 Compose project；加 `--discover` 才会只读检查本机 Docker Compose 项目，不自动接管或保存 context。无法读取或使用多个 Compose 文件的项目会列入 `skipped_projects`。发现后，通过 `adopt` 显式登记，每个实例使用不同的记录目录和 Compose project。登记后，`status`、`doctor`、启停、日志和升级会按当前 context / endpoint 匹配对应的本机记录，匹配不唯一时拒绝自动选择。
+
+云端和本地实例统一用 `context use <name>` 切换，用 `--context <name>` 临时选择。切换不要求实例在线，临时选择不改变已保存的当前 context。显式参数和环境变量保持原有优先级。旧的单部署定位记录会在下次登记时迁移，保留原有本机兜底目录；接管另一实例不会改变当前 context。新登记格式不能由旧版 CLI 读取。
+
+内置 `install` 支持独立 Compose project 和宿主机端口映射。默认仍为 `--project langbot-lbctl`、`--plugin-debug-port 5401` 和 `--adapter-ports 2280-2285:2280-2285`。安装多个实例时，为每套部署指定不同的 `--dir`、`--project` 和 HTTP `--port`。无须插件调试或入站适配器的测试实例，可关闭这些宿主机端口发布：
+
+```sh
+lbctl install --version <vX.Y.Z> --dir /absolute/path/regression \
+  --project regression --port 15301 --profile all \
+  --plugin-debug-port 0 --adapter-ports none --dry-run
+```
+
+去掉 `--dry-run` 即可安装。需要插件调试或入站适配器时，可选择其他空闲宿主机端口：
+
+```sh
+lbctl install --version <vX.Y.Z> --dir /absolute/path/second \
+  --project second --port 15302 --plugin-debug-port 15402 \
+  --adapter-ports 12280-12285:2280-2285
+```
+
+适配器映射支持逗号分隔的 `HOST:CONTAINER` 或等长端口范围，容器端口限于 `2280-2285`。可以只发布需要的端口，例如 `--adapter-ports 12280:2280,12283:2283`。预检只检查选中的宿主机端口和 Compose project，并拒绝重复映射。容器内部服务端口保持不变，生成的调试地址随宿主机调试端口同步调整。端口配置随部署记录保存，升级时保留；旧部署记录继续兼容。
 
 `adopt` 将已有 Compose 部署登记为本机受管部署，不改变它的服务配置：
 

@@ -117,21 +117,47 @@ func (s *Service) Version(ctx context.Context, server bool, options CheckOptions
 	return Result{Data: data, Meta: connectionMeta(conn)}, nil
 }
 
-func (s *Service) ContextList() (Result, error) {
+func (s *Service) ContextList(discover bool) (Result, error) {
 	file, err := s.load()
 	if err != nil {
 		return Result{}, err
 	}
 	names := sortedContextNames(file)
+	deployments, localErr := s.localDeployments()
 	items := make([]map[string]any, 0, len(names))
 	for _, name := range names {
 		item := contextView(name, file.Contexts[name], name == file.CurrentContext)
+		for _, deployment := range deployments {
+			if deployment.Binding != "registered" || !sameLocalEndpoint(deployment.Endpoint, file.Contexts[name].Endpoint) {
+				continue
+			}
+			if item["deployment_id"] != nil {
+				delete(item, "deployment_id")
+				delete(item, "project")
+				item["binding"] = "ambiguous"
+				break
+			}
+			item["deployment_id"], item["project"], item["binding"] = deployment.ID, deployment.Project, "registered"
+		}
 		items = append(items, item)
 	}
-	return Result{Data: map[string]any{
+	data := map[string]any{
 		"current_context": file.CurrentContext,
 		"contexts":        items,
-	}}, nil
+		"deployments":     deployments,
+	}
+	if localErr != nil {
+		data["local_error"] = result.AsError(localErr)
+	}
+	if discover {
+		discovered, err := s.DeploymentDiscover(s.ctx)
+		if err != nil {
+			return Result{Data: data}, err
+		}
+		local := discovered.Data.(map[string]any)
+		data["discovered_deployments"], data["skipped_projects"] = local["deployments"], local["skipped_projects"]
+	}
+	return Result{Data: data}, nil
 }
 
 func (s *Service) ContextShow(name string, overrides ...CheckOptions) (Result, error) {
@@ -2588,7 +2614,17 @@ func (s *Service) resolve(ctx context.Context, file config.File, options config.
 func (s *Service) withCredential(ctx context.Context, conn config.Connection, options config.Options) (config.Connection, error) {
 	credentialInput := s.deps.In
 	if options.APIKeyStdin {
-		value, readErr := readCredential(ctx, credentialInput)
+		inputParent := ctx
+		if inputParent == nil {
+			inputParent = context.Background()
+		}
+		inputTimeout := conn.Timeout
+		if inputTimeout <= 0 {
+			inputTimeout = 30 * time.Second
+		}
+		inputCtx, cancelInput := context.WithTimeout(inputParent, inputTimeout)
+		value, readErr := readCredential(inputCtx, credentialInput)
+		cancelInput()
 		if readErr != nil {
 			return conn, readErr
 		}
@@ -2616,6 +2652,11 @@ func readCredential(ctx context.Context, reader io.Reader) (string, error) {
 	}()
 	select {
 	case <-ctx.Done():
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			failure := result.New("network", "读取 API Key 超时；请通过 stdin 提供完整 Key 并关闭输入流，或改用环境变量")
+			failure.Reason = "stdin_timeout"
+			return "", failure
+		}
 		return "", result.New("network", "请求已取消")
 	case read := <-completed:
 		if read.err != nil {
@@ -2631,8 +2672,15 @@ func (s *Service) info(ctx context.Context, conn config.Connection) (api.Info, e
 }
 
 func (s *Service) identity(ctx context.Context, conn config.Connection) (api.Context, error) {
+	if strings.TrimSpace(conn.APIKey) == "" {
+		return api.Context{}, result.AuthSetupError("missing_api_key", "LANGBOT_API_KEY")
+	}
 	client := api.Client{Transport: s.deps.Transport}
-	return client.Context(ctx, api.Target{Endpoint: conn.Endpoint, APIKey: conn.APIKey, Timeout: conn.Timeout})
+	identity, err := client.Context(ctx, api.Target{Endpoint: conn.Endpoint, APIKey: conn.APIKey, Timeout: conn.Timeout})
+	if err != nil && result.AsError(err).Reason == "authentication_rejected" && strings.HasPrefix(conn.CredentialSource, "env:") {
+		result.AddAuthGuidance(result.AsError(err), "authentication_rejected", strings.TrimPrefix(conn.CredentialSource, "env:"))
+	}
+	return identity, err
 }
 
 func (s *Service) capabilities(ctx context.Context, conn config.Connection) (api.Capabilities, error) {

@@ -119,7 +119,7 @@ func TestInstallAndLifecycleCommands(t *testing.T) {
 		LatestRelease:     func(context.Context) (string, error) { return "v4.10.10", nil },
 		DefaultConfigPath: func() (string, error) { return filepath.Join(root, "config.yaml"), nil },
 	})
-	installed, err := service.Install(context.Background(), InstallOptions{Profile: "basic", Port: port})
+	installed, err := service.Install(context.Background(), InstallOptions{Profile: "basic", Port: port, PluginDebugPort: new(int), AdapterPorts: []string{"none"}})
 	if err != nil {
 		t.Fatalf("Install() error = %v, data = %#v", err, installed.Data)
 	}
@@ -154,8 +154,8 @@ func TestInstallDryRunDoesNotWriteOrPull(t *testing.T) {
 	root := t.TempDir()
 	dir := filepath.Join(root, "deployment")
 	runner := &lifecycleTestRunner{port: port}
-	service := New(Dependencies{LocalDir: dir, LocalRunner: runner, LatestRelease: func(context.Context) (string, error) { return "v4.10.10", nil }})
-	resultValue, err := service.Install(context.Background(), InstallOptions{DryRun: true, Port: port})
+	service := New(Dependencies{LocalDir: dir, LocalLocatorPath: filepath.Join(root, "locator.yaml"), LocalRunner: runner, LatestRelease: func(context.Context) (string, error) { return "v4.10.10", nil }})
+	resultValue, err := service.Install(context.Background(), InstallOptions{DryRun: true, Port: port, PluginDebugPort: new(int), AdapterPorts: []string{"none"}})
 	if err != nil || resultValue.Data.(map[string]any)["dry_run"] != true {
 		t.Fatalf("Install(dry-run) = %#v, %v", resultValue.Data, err)
 	}

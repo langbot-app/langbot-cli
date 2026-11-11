@@ -3,12 +3,14 @@ package result
 import "errors"
 
 type Error struct {
-	Kind       string `json:"-" yaml:"-"`
-	Type       string `json:"type" yaml:"type"`
-	Message    string `json:"message" yaml:"message"`
-	HTTPStatus int    `json:"http_status,omitempty" yaml:"http_status,omitempty"`
-	ServerCode any    `json:"server_code,omitempty" yaml:"server_code,omitempty"`
-	RequestID  string `json:"request_id,omitempty" yaml:"request_id,omitempty"`
+	Kind       string        `json:"-" yaml:"-"`
+	Type       string        `json:"type" yaml:"type"`
+	Message    string        `json:"message" yaml:"message"`
+	HTTPStatus int           `json:"http_status,omitempty" yaml:"http_status,omitempty"`
+	ServerCode any           `json:"server_code,omitempty" yaml:"server_code,omitempty"`
+	RequestID  string        `json:"request_id,omitempty" yaml:"request_id,omitempty"`
+	Reason     string        `json:"reason,omitempty" yaml:"reason,omitempty"`
+	Guidance   *AuthGuidance `json:"guidance,omitempty" yaml:"guidance,omitempty"`
 }
 
 func (e *Error) Error() string { return e.Message }

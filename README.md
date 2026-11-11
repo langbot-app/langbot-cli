@@ -81,6 +81,8 @@ The Go baseline is 1.26. Run the compiled binary directly; local deployment mana
 
 Provide the API Key through an environment variable or one-time stdin input. Configuration defaults to `~/.config/langbot/config.yaml` and stores the environment variable name rather than the key itself.
 
+Create a Workspace API Key in the target LangBot dashboard's API Key management after initial setup. Authenticated commands detect missing credentials and show the selected environment variable, hidden-input PowerShell/Bash examples, and a same-target `whoami` verification step. JSON/YAML includes `error.reason` and `error.guidance`; the error type remains `auth` with exit code 3. A rejected key is reported separately from an unset variable; the CLI never prompts automatically or saves the key.
+
 First discover the Workspace associated with the key:
 
 ```sh
@@ -130,9 +132,50 @@ Connection settings follow this precedence, with validation of the selected targ
 
 Use `--api-key-stdin` for a single invocation and `--file -` separately for request-body input. Temporary endpoints support controlled reads; resource writes use a saved, Workspace-bound context.
 
+Credential stdin must be closed after the key is provided. Its wait budget uses the resolved `--timeout` / `LANGBOT_TIMEOUT` / context timeout (30s by default), separately from each HTTP request; a timeout returns `network` with `reason: stdin_timeout` and exit code 7 without sending an authenticated request.
+
 <a id="deployment"></a>
 
 ## Local deployment and upgrades
+
+Discover and register multiple local LangBot Compose instances:
+
+```sh
+lbctl context list --discover
+lbctl --endpoint http://127.0.0.1:15301 adopt \
+  --dir /absolute/path/records/first --file /absolute/path/first/compose.yaml --project first
+lbctl --endpoint http://127.0.0.1:15302 adopt \
+  --dir /absolute/path/records/second --file /absolute/path/second/compose.yaml --project second
+lbctl context add first --endpoint http://127.0.0.1:15301
+lbctl context add second --endpoint http://127.0.0.1:15302
+lbctl context list
+lbctl context use second
+lbctl status
+lbctl stop
+lbctl --context first status
+```
+
+`context list` lists saved contexts and local deployment registrations offline, including matching Compose projects. Add `--discover` to inspect local Compose projects without adopting them or saving contexts. Unreadable projects and projects using multiple Compose files appear in `skipped_projects`. Use `adopt` to register each instance with a distinct record directory and Compose project. Status, diagnostics, lifecycle, logs, and upgrades match the active context/endpoint against all registered deployments; ambiguous matches are rejected.
+
+Use `context use <name>` for both cloud and local instances, or `--context <name>` for a single invocation. Switching works offline and temporary selection preserves the saved current context. Explicit selectors and environment variables retain their existing priority. Legacy single-deployment locators migrate on the next registration, preserving the original fallback directory. Adopting another instance does not change the current context. Older CLI versions cannot read the new registry format.
+
+Built-in `install` supports independent Compose projects and host port mappings. Defaults remain `--project langbot-lbctl`, `--plugin-debug-port 5401`, and `--adapter-ports 2280-2285:2280-2285`. Use a different `--dir`, `--project`, and HTTP `--port` for each installation. Set `--plugin-debug-port 0` and `--adapter-ports none` to disable those host publications for headless instances:
+
+```sh
+lbctl install --version <vX.Y.Z> --dir /absolute/path/regression \
+  --project regression --port 15301 --profile all \
+  --plugin-debug-port 0 --adapter-ports none --dry-run
+```
+
+Remove `--dry-run` to install. For plugin development or inbound adapters, select unused host ports instead:
+
+```sh
+lbctl install --version <vX.Y.Z> --dir /absolute/path/second \
+  --project second --port 15302 --plugin-debug-port 15402 \
+  --adapter-ports 12280-12285:2280-2285
+```
+
+Adapter mappings accept comma-separated `HOST:CONTAINER` pairs or equal-length ranges; container ports are limited to `2280-2285`. Publish only the ports you need, for example `--adapter-ports 12280:2280,12283:2283`. Preflight checks only the selected host ports and Compose project, and rejects overlapping mappings. Container-internal service ports stay unchanged. The generated debug URL follows the selected host debug port. Publication settings are saved with the deployment and preserved during upgrades; legacy deployment records continue to work.
 
 `adopt` registers an existing Compose deployment for local management while preserving its service configuration:
 

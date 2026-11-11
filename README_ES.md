@@ -81,6 +81,8 @@ La versión base de Go es 1.26. El binario compilado se ejecuta directamente; la
 
 Proporciona la API Key mediante una variable de entorno o una entrada de stdin de un solo uso. La configuración se guarda en `~/.config/langbot/config.yaml` y almacena el nombre de la variable, en lugar de la clave.
 
+Tras la configuración inicial, crea una Workspace API Key en la gestión de API Keys del panel de LangBot de destino. Los comandos autenticados detectan credenciales ausentes e indican la variable seleccionada, ejemplos PowerShell/Bash con entrada oculta y la verificación con `whoami` conservando las opciones de conexión. JSON/YAML incluye `error.reason` y `error.guidance`; el tipo sigue siendo `auth` y el código de salida 3. Se distingue una clave rechazada de una variable sin configurar; la CLI no solicita entrada automáticamente ni guarda la clave.
+
 Primero consulta el Workspace asociado a la clave:
 
 ```sh
@@ -129,6 +131,8 @@ Los parámetros de conexión se resuelven en este orden y se validan el destino 
 | Tiempo de espera | `--timeout` → `LANGBOT_TIMEOUT` → configuración del contexto → 30s |
 
 Usa `--api-key-stdin` para una invocación y `--file -` por separado para el cuerpo de la petición. Los endpoints temporales admiten lecturas controladas; las escrituras usan un contexto guardado y vinculado a un Workspace.
+
+Cierra stdin tras proporcionar la clave. La espera usa el tiempo resuelto de `--timeout` / `LANGBOT_TIMEOUT` / contexto (30s por defecto), separado del de cada petición HTTP. Al agotarse, devuelve `network`, `reason: stdin_timeout` y código de salida 7 sin enviar una petición autenticada.
 
 <a id="deployment"></a>
 

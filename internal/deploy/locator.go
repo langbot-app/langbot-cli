@@ -13,11 +13,12 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
-const locatorSchemaVersion = 1
+const locatorSchemaVersion = 2
 
 type locatorRecord struct {
-	SchemaVersion int    `yaml:"schema_version"`
-	Dir           string `yaml:"dir"`
+	SchemaVersion int      `yaml:"schema_version"`
+	Dir           string   `yaml:"dir"`
+	Dirs          []string `yaml:"dirs,omitempty"`
 }
 
 type Locator struct {
@@ -66,32 +67,70 @@ func (l Locator) Resolve(override string) (string, error) {
 	if strings.TrimSpace(override) != "" {
 		return ResolveDir(override)
 	}
+	record, err := l.read()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Clean(record.Dir), nil
+}
+
+// Directories includes the legacy/default directory without changing the registry.
+func (l Locator) Directories() ([]string, error) {
+	record, err := l.read()
+	if err != nil {
+		return nil, err
+	}
+	if len(record.Dirs) == 0 {
+		return []string{record.Dir}, nil
+	}
+	return record.Dirs, nil
+}
+
+// RegisteredDirectories excludes the implicit default when no locator exists.
+func (l Locator) RegisteredDirectories() ([]string, error) {
+	record, err := l.read()
+	return record.Dirs, err
+}
+
+func (l Locator) read() (locatorRecord, error) {
 	path := l.Path
 	if strings.TrimSpace(path) == "" {
 		var err error
 		path, err = DefaultLocatorPath()
 		if err != nil {
-			return "", err
+			return locatorRecord{}, err
 		}
 	}
 	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return DefaultDir()
+		dir, err := DefaultDir()
+		return locatorRecord{SchemaVersion: locatorSchemaVersion, Dir: dir}, err
 	}
 	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
-		return "", errors.New("本机部署定位记录不可用")
+		return locatorRecord{}, errors.New("本机部署定位记录不可用")
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return "", errors.New("无法读取本机部署定位记录")
+		return locatorRecord{}, errors.New("无法读取本机部署定位记录")
 	}
 	var record locatorRecord
-	if err := yaml.Unmarshal(data, &record); err != nil || record.SchemaVersion != locatorSchemaVersion || !filepath.IsAbs(record.Dir) {
-		return "", errors.New("本机部署定位记录损坏")
+	if err := yaml.Unmarshal(data, &record); err != nil || (record.SchemaVersion != 1 && record.SchemaVersion != locatorSchemaVersion) || !filepath.IsAbs(record.Dir) {
+		return locatorRecord{}, errors.New("本机部署定位记录损坏")
 	}
-	return filepath.Clean(record.Dir), nil
+	record.Dir = filepath.Clean(record.Dir)
+	dirs := []string{record.Dir}
+	for _, dir := range record.Dirs {
+		if !filepath.IsAbs(dir) {
+			return locatorRecord{}, errors.New("本机部署定位记录损坏")
+		}
+		dirs = appendUniqueDir(dirs, filepath.Clean(dir))
+	}
+	record.Dirs = dirs
+	return record, nil
 }
 
+// Write registers a deployment, preserving the legacy fallback. The caller
+// must hold WithLock when performing a read/modify/write operation.
 func (l Locator) Write(dir string) error {
 	resolved, err := ResolveDir(dir)
 	if err != nil {
@@ -114,11 +153,35 @@ func (l Locator) Write(dir string) error {
 	if info, statErr := os.Lstat(path); statErr == nil && info.Mode()&os.ModeSymlink != 0 {
 		return errors.New("本机部署定位记录不能是符号链接")
 	}
-	data, err := yaml.Marshal(locatorRecord{SchemaVersion: locatorSchemaVersion, Dir: resolved})
+	record, err := l.read()
+	if err != nil {
+		return err
+	}
+	dirs := record.Dirs
+	if len(dirs) == 0 {
+		if _, readErr := (Store{Dir: record.Dir}).Read(); readErr == nil {
+			dirs = append(dirs, record.Dir)
+		}
+	}
+	if len(dirs) == 0 {
+		record.Dir = resolved
+	}
+	record.SchemaVersion = locatorSchemaVersion
+	record.Dirs = appendUniqueDir(dirs, resolved)
+	data, err := yaml.Marshal(record)
 	if err != nil {
 		return err
 	}
 	return writeAtomic(path, data, 0o600)
+}
+
+func appendUniqueDir(dirs []string, dir string) []string {
+	for _, existing := range dirs {
+		if existing == dir {
+			return dirs
+		}
+	}
+	return append(dirs, dir)
 }
 
 func writeAtomic(path string, data []byte, mode os.FileMode) error {

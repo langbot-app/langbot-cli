@@ -81,6 +81,8 @@ La version de référence de Go est 1.26. Le binaire compilé s'exécute directe
 
 Fournissez l'API Key par variable d'environnement ou par une entrée stdin ponctuelle. La configuration est stockée dans `~/.config/langbot/config.yaml` et conserve le nom de la variable plutôt que la clé.
 
+Après l'initialisation, créez une Workspace API Key dans la gestion des clés API du tableau de bord LangBot cible. Les commandes authentifiées détectent les identifiants manquants et indiquent la variable choisie, des exemples PowerShell/Bash à saisie masquée et la vérification `whoami` en conservant les options de connexion. JSON/YAML inclut `error.reason` et `error.guidance` ; le type reste `auth` et le code de sortie 3. Une clé rejetée est distinguée d'une variable non définie ; la CLI ne demande pas automatiquement de saisie et ne sauvegarde pas la clé.
+
 Identifiez d'abord le Workspace associé à la clé :
 
 ```sh
@@ -129,6 +131,8 @@ Les paramètres suivent cet ordre de priorité ; la destination et les identifia
 | Délai | `--timeout` → `LANGBOT_TIMEOUT` → configuration du contexte → 30s |
 
 Utilisez `--api-key-stdin` pour un appel unique et `--file -` séparément pour le corps de requête. Les endpoints temporaires permettent des lectures contrôlées ; les écritures utilisent un contexte enregistré et lié au Workspace.
+
+Fermez stdin après avoir fourni la clé. L'attente utilise le délai résolu de `--timeout` / `LANGBOT_TIMEOUT` / contexte (30s par défaut), indépendamment de chaque requête HTTP. Une expiration retourne `network`, `reason: stdin_timeout` et le code de sortie 7 sans envoyer de requête authentifiée.
 
 <a id="deployment"></a>
 

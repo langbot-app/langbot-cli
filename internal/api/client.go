@@ -2194,6 +2194,9 @@ func httpError(status int, code json.RawMessage, requestID, secret string) *resu
 		err.Message = "托管 sandbox 不可用；请检查 Workspace 的 sandbox 授权和服务状态"
 	}
 	err.RequestID = requestID
+	if status == http.StatusUnauthorized && secret != "" {
+		result.AddAuthGuidance(err, "authentication_rejected", "")
+	}
 	return err
 }
 

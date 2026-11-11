@@ -81,6 +81,8 @@ Go 기준 버전은 1.26입니다. 컴파일된 바이너리를 직접 실행하
 
 API Key는 환경 변수 또는 일회성 stdin 입력으로 제공합니다. 기본 설정 파일은 `~/.config/langbot/config.yaml`이며 Key 자체 대신 환경 변수 이름을 저장합니다.
 
+초기 설정 후 대상 LangBot 관리 화면의 API Key 관리에서 Workspace API Key를 생성합니다. 인증이 필요한 명령은 자격 증명 누락을 감지하고 선택된 환경 변수, 입력을 숨기는 PowerShell/Bash 예제, 기존 연결 옵션을 유지한 `whoami` 확인 절차를 안내합니다. JSON/YAML에는 `error.reason`과 `error.guidance`가 포함되며 오류 유형은 `auth`, 종료 코드는 3으로 유지됩니다. Key 거부와 변수 미설정을 구분하며, CLI는 자동으로 입력을 기다리거나 Key를 저장하지 않습니다.
+
 먼저 Key에 연결된 Workspace를 확인합니다:
 
 ```sh
@@ -129,6 +131,8 @@ lbctl context remove dev --yes
 | 시간 제한 | `--timeout` → `LANGBOT_TIMEOUT` → context 설정 → 30s |
 
 `--api-key-stdin`은 일회성 호출에 사용하고 요청 본문 입력인 `--file -`와는 별도로 사용합니다. 임시 endpoint는 제어된 읽기를 지원하며 리소스 쓰기는 저장된 Workspace 연결 context를 사용합니다.
+
+Key를 제공한 후 stdin을 닫아야 합니다. 입력 대기는 해석된 `--timeout` / `LANGBOT_TIMEOUT` / context 제한 시간(기본 30s)을 사용하며 각 HTTP 요청과 별도로 계산됩니다. 시간 초과 시 인증 요청 없이 `network`, `reason: stdin_timeout`, 종료 코드 7을 반환합니다.
 
 <a id="deployment"></a>
 
