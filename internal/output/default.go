@@ -365,6 +365,11 @@ func renderLocalAction(w io.Writer, data map[string]any) error {
 		}
 	}
 	if data["dry_run"] == true || (action == "install" && data["changed"] != true) {
+		if action == "install" {
+			if err := renderFields(w, data, []string{"compose_project", "plugin_debug_port", "adapter_ports"}); err != nil {
+				return err
+			}
+		}
 		if dir, ok := data["dir"].(string); ok && dir != "" {
 			if _, err := fmt.Fprintln(w, "部署目录："+dir); err != nil {
 				return err

@@ -2,6 +2,7 @@ package output
 
 // Labels apply only to human rendering. Protocol keys and resource names stay unchanged.
 var humanFieldLabels = map[string]string{
+	"compose_project": "Compose 项目", "plugin_debug_port": "Runtime 调试宿主机端口（0 为不发布）", "adapter_ports": "适配器宿主机映射",
 	"deployments": "本机部署", "discovered_deployments": "发现的部署", "deployment_id": "部署 ID",
 	"project": "Compose 项目", "binding": "登记状态", "compose_file": "Compose 文件", "skipped_projects": "跳过的项目",
 	"local_error":              "本机部署登记读取失败",

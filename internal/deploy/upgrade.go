@@ -113,7 +113,8 @@ func validateUpgradeLayout(record Record, dir string) error {
 }
 
 func ValidateOwnedLayout(record Record, dir string) error {
-	if record.Driver != DriverDockerCompose || record.ComposeProject != DefaultComposeProject ||
+	if record.Driver != DriverDockerCompose || !ValidComposeProject(record.ComposeProject) ||
+		(record.InstallPorts == nil && record.ComposeProject != DefaultComposeProject) ||
 		record.ComposeFile != filepath.Join(dir, "compose.yaml") || record.EnvFile != filepath.Join(dir, ".env") ||
 		record.DataDir != filepath.Join(dir, "data") || record.Asset.Name != DefaultImageRepository+":"+record.CoreVersion ||
 		record.Endpoint != fmt.Sprintf("http://127.0.0.1:%d", record.Port) ||
@@ -123,7 +124,14 @@ func ValidateOwnedLayout(record Record, dir string) error {
 	if record.Profile != "basic" && record.Profile != "all" {
 		return errors.New("部署 profile 不受支持")
 	}
-	current := []byte(renderCompose(record.Asset.Name, record.Port, filepath.Join(dir, "data", "box")))
+	ports := defaultInstallPorts()
+	if record.InstallPorts != nil {
+		ports = *record.InstallPorts
+	}
+	if _, err := ports.hostPorts(record.Port); err != nil {
+		return errors.New("部署记录的端口映射无效")
+	}
+	current := []byte(renderCompose(record.Asset.Name, record.Port, filepath.Join(dir, "data", "box"), ports))
 	actual, err := os.ReadFile(record.ComposeFile)
 	if err != nil || !equalDigest(actual, current) {
 		return errors.New("Compose 资产已变更")

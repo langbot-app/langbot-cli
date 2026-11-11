@@ -11,7 +11,7 @@ import (
 
 func TestInstallAssetsUsePinnedImageAndRestrictedFiles(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "deployment")
-	assets, err := NewInstallAssets(dir, "v4.10.10", "basic", 15300)
+	assets, err := NewInstallAssets(dir, "v4.10.10", "basic", 15300, InstallNetworkOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,7 +39,7 @@ func TestInstallAssetsUsePinnedImageAndRestrictedFiles(t *testing.T) {
 }
 
 func TestInstallAssetsRejectUnpinnedVersionAndUnsafeTarget(t *testing.T) {
-	if _, err := NewInstallAssets(t.TempDir(), "latest", "basic", 5300); err == nil {
+	if _, err := NewInstallAssets(t.TempDir(), "latest", "basic", 5300, InstallNetworkOptions{}); err == nil {
 		t.Fatal("应该拒绝 latest")
 	}
 	dir := t.TempDir()
@@ -79,8 +79,12 @@ func TestPreflightInstallDoesNotCreateTarget(t *testing.T) {
 		"info --format {{.ServerVersion}}": {Stdout: "29"},
 		"compose version --short":          {Stdout: "5.5.1"},
 	}}
-	checks, err := PreflightInstall(context.Background(), dir, 15431, runner)
-	if err != nil || len(checks) != 14 {
+	assets, err := NewInstallAssets(dir, "v4.10.10", "basic", freeInstallTestPort(t), InstallNetworkOptions{PluginDebugPort: new(int), AdapterPorts: []string{"none"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	checks, err := PreflightInstall(context.Background(), assets, runner)
+	if err != nil || len(checks) != 7 {
 		t.Fatalf("checks = %+v, err = %v", checks, err)
 	}
 	if _, statErr := os.Stat(dir); !os.IsNotExist(statErr) {
@@ -96,7 +100,11 @@ func TestPreflightRejectsExistingManagedProject(t *testing.T) {
 		"compose version --short":          {Stdout: "5.5.1"},
 		"ps -a --filter label=com.docker.compose.project=langbot-lbctl --format {{.ID}}": {Stdout: "existing-container\n"},
 	}}
-	checks, err := PreflightInstall(context.Background(), dir, 15431, runner)
+	assets, err := NewInstallAssets(dir, "v4.10.10", "basic", freeInstallTestPort(t), InstallNetworkOptions{PluginDebugPort: new(int), AdapterPorts: []string{"none"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	checks, err := PreflightInstall(context.Background(), assets, runner)
 	if err == nil {
 		t.Fatal("已有相同 Compose project 时应拒绝安装")
 	}

@@ -1218,8 +1218,9 @@ func newDoctorCommand(service *app.Service, deps Dependencies, flags *globalFlag
 }
 
 func newInstallCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
-	var dir, version, profile string
-	var port int
+	var dir, version, profile, project string
+	var port, pluginDebugPort int
+	var adapterPorts []string
 	var dryRun bool
 	cmd := &cobra.Command{
 		Use: "install", Short: "安装本机 LangBot", Args: cobra.NoArgs,
@@ -1230,6 +1231,7 @@ func newInstallCommand(service *app.Service, deps Dependencies, flags *globalFla
 			return emitCall(deps, flags, func() (app.Result, error) {
 				return service.Install(cmd.Context(), app.InstallOptions{
 					Dir: dir, Version: version, Profile: profile, Port: port, DryRun: dryRun,
+					Project: project, PluginDebugPort: &pluginDebugPort, AdapterPorts: adapterPorts,
 					Timeout: flags.timeout, TimeoutSet: flags.timeoutSet,
 				})
 			})
@@ -1239,6 +1241,9 @@ func newInstallCommand(service *app.Service, deps Dependencies, flags *globalFla
 	cmd.Flags().StringVar(&version, "version", "", "LangBot 稳定 Release tag，默认最新版")
 	cmd.Flags().StringVar(&profile, "profile", "basic", "部署 profile：basic 或 all")
 	cmd.Flags().IntVar(&port, "port", 5300, "LangBot HTTP 宿主机端口")
+	cmd.Flags().StringVar(&project, "project", deploy.DefaultComposeProject, "独立的 Compose project 名称；安装多个实例时使用不同名称")
+	cmd.Flags().IntVar(&pluginDebugPort, "plugin-debug-port", 5401, "Plugin Runtime 调试宿主机端口，0 表示不发布")
+	cmd.Flags().StringSliceVar(&adapterPorts, "adapter-ports", []string{"2280-2285:2280-2285"}, "适配器 HOST:CONTAINER 映射，支持等长范围及逗号分隔；none 表示不发布")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "只执行前置检查并输出安装计划")
 	return cmd
 }

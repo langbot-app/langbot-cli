@@ -120,7 +120,23 @@ lbctl --context first status
 
 Use `context use <name>` for both cloud and local instances, or `--context <name>` for a single invocation. Switching works offline and temporary selection preserves the saved current context. Explicit selectors and environment variables retain their existing priority. Legacy single-deployment locators migrate on the next registration, preserving the original fallback directory. Adopting another instance does not change the current context. Older CLI versions cannot read the new registry format.
 
-This supports discovering and managing existing deployments. Built-in `install` still uses a fixed Compose project and additional host ports. To add another instance, configure a separate Compose project with non-conflicting ports and adopt it.
+Built-in `install` supports independent Compose projects and host port mappings. Defaults remain `--project langbot-lbctl`, `--plugin-debug-port 5401`, and `--adapter-ports 2280-2285:2280-2285`. Use a different `--dir`, `--project`, and HTTP `--port` for each installation. Set `--plugin-debug-port 0` and `--adapter-ports none` to disable those host publications for headless instances:
+
+```sh
+lbctl install --version <vX.Y.Z> --dir /absolute/path/regression \
+  --project regression --port 15301 --profile all \
+  --plugin-debug-port 0 --adapter-ports none --dry-run
+```
+
+Remove `--dry-run` to install. For plugin development or inbound adapters, select unused host ports instead:
+
+```sh
+lbctl install --version <vX.Y.Z> --dir /absolute/path/second \
+  --project second --port 15302 --plugin-debug-port 15402 \
+  --adapter-ports 12280-12285:2280-2285
+```
+
+Adapter mappings accept comma-separated `HOST:CONTAINER` pairs or equal-length ranges; container ports are limited to `2280-2285`. Publish only the ports you need, for example `--adapter-ports 12280:2280,12283:2283`. Preflight checks only the selected host ports and Compose project, and rejects overlapping mappings. Container-internal service ports stay unchanged. The generated debug URL follows the selected host debug port. Publication settings are saved with the deployment and preserved during upgrades; legacy deployment records continue to work.
 
 `adopt` registers an existing Compose deployment for local management while preserving its service configuration:
 

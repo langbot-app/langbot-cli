@@ -32,13 +32,16 @@ const latestReleaseURL = "https://api.github.com/repos/langbot-app/LangBot/relea
 var ansiEscapePattern = regexp.MustCompile(`\x1b\[[0-9;]*[A-Za-z]`)
 
 type InstallOptions struct {
-	Dir        string
-	Version    string
-	Profile    string
-	Port       int
-	DryRun     bool
-	Timeout    string
-	TimeoutSet bool
+	Dir             string
+	Version         string
+	Profile         string
+	Port            int
+	Project         string
+	PluginDebugPort *int
+	AdapterPorts    []string
+	DryRun          bool
+	Timeout         string
+	TimeoutSet      bool
 }
 
 type AdoptOptions struct {
@@ -83,17 +86,22 @@ func (s *Service) Install(ctx context.Context, options InstallOptions) (Result, 
 			return Result{}, err
 		}
 	}
-	assets, err := deploy.NewInstallAssets(dir, version, options.Profile, options.Port)
+	assets, err := deploy.NewInstallAssets(dir, version, options.Profile, options.Port, deploy.InstallNetworkOptions{
+		Project: options.Project, PluginDebugPort: options.PluginDebugPort, AdapterPorts: options.AdapterPorts,
+	})
 	if err != nil {
 		return Result{}, result.New("input", err.Error())
 	}
 	runner := s.localRunner()
-	checks, preflightErr := deploy.PreflightInstall(operationCtx, assets.Dir, assets.Port, runner)
+	checks, preflightErr := deploy.PreflightInstall(operationCtx, assets, runner)
 	plan := installPlanData(assets, checks)
 	if preflightErr != nil {
 		return Result{Data: plan}, mapLocalError(preflightErr)
 	}
 	if options.DryRun {
+		if err := s.checkDeploymentRegistration(assets.Dir, assets.Record("", "")); err != nil {
+			return Result{Data: plan}, err
+		}
 		plan["dry_run"] = true
 		return Result{Data: plan}, nil
 	}
@@ -108,7 +116,7 @@ func (s *Service) Install(ctx context.Context, options InstallOptions) (Result, 
 			if err := deploy.ValidateInstallTarget(assets.Dir, true); err != nil {
 				return result.New("precondition", "目标目录不为空，拒绝覆盖")
 			}
-			occupied, occupiedErr := deploy.InstallProjectOccupied(operationCtx, runner)
+			occupied, occupiedErr := deploy.InstallProjectOccupied(operationCtx, runner, assets.Project)
 			if occupiedErr != nil || occupied {
 				return result.New("precondition", "受管 Compose project 不可用")
 			}
@@ -571,6 +579,7 @@ func installPlanData(assets deploy.InstallAssets, checks []deploy.Check) map[str
 		"action": "install", "version": assets.Version, "image": assets.Image, "profile": assets.Profile,
 		"dir": assets.Dir, "endpoint": fmt.Sprintf("http://127.0.0.1:%d", assets.Port), "compose_project": assets.Project,
 		"compose_file": assets.ComposeFile, "data_dir": assets.DataDir, "asset_digest": assets.Digest, "checks": checks,
+		"plugin_debug_port": assets.Ports.PluginDebugPort, "adapter_ports": assets.Ports.AdapterPorts,
 	}
 }
 
@@ -635,19 +644,7 @@ func resolveComposeFile(value string) (string, error) {
 }
 
 func validComposeProject(value string) bool {
-	if value == "" || len(value) > 63 {
-		return false
-	}
-	for index, char := range value {
-		if index == 0 && !((char >= 'a' && char <= 'z') || (char >= '0' && char <= '9')) {
-			return false
-		}
-		if (char >= 'a' && char <= 'z') || (char >= '0' && char <= '9') || char == '-' || char == '_' {
-			continue
-		}
-		return false
-	}
-	return true
+	return deploy.ValidComposeProject(value)
 }
 
 func loopbackEndpoint(endpoint string) bool {

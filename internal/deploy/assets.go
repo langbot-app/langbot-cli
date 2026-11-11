@@ -31,6 +31,7 @@ type InstallAssets struct {
 	Image       string
 	Port        int
 	Project     string
+	Ports       InstallPorts
 	ComposeFile string
 	EnvFile     string
 	DataDir     string
@@ -39,7 +40,12 @@ type InstallAssets struct {
 	Digest      string
 }
 
-func PreflightInstall(ctx context.Context, dir string, port int, runner Runner) ([]Check, error) {
+func PreflightInstall(ctx context.Context, assets InstallAssets, runner Runner) ([]Check, error) {
+	dir := assets.Dir
+	ports, err := assets.Ports.hostPorts(assets.Port)
+	if err != nil || !ValidComposeProject(assets.Project) {
+		return nil, Problem{Kind: "input", Msg: "安装端口映射或 Compose project 无效"}
+	}
 	checks := make([]Check, 0, 6)
 	add := func(name, status, reason string, detail any) {
 		checks = append(checks, Check{Name: name, Status: status, Reason: reason, Detail: detail})
@@ -63,12 +69,12 @@ func PreflightInstall(ctx context.Context, dir string, port int, runner Runner) 
 	} else {
 		add("compose_v2", "ok", "Docker Compose 插件可用", strings.TrimSpace(result.Stdout))
 	}
-	if occupied, err := InstallProjectOccupied(ctx, runner); err != nil {
-		add("compose_project", "error", "无法检查受管 Compose project", DefaultComposeProject)
+	if occupied, err := InstallProjectOccupied(ctx, runner, assets.Project); err != nil {
+		add("compose_project", "error", "无法检查受管 Compose project", assets.Project)
 	} else if occupied {
-		add("compose_project", "error", "受管 Compose project 已存在", DefaultComposeProject)
+		add("compose_project", "error", "受管 Compose project 已存在", assets.Project)
 	} else {
-		add("compose_project", "ok", "受管 Compose project 未被占用", DefaultComposeProject)
+		add("compose_project", "ok", "受管 Compose project 未被占用", assets.Project)
 	}
 	if err := ValidateInstallTarget(dir, true); err != nil {
 		add("install_dir", "error", "目标目录不为空或不可用", dir)
@@ -88,13 +94,7 @@ func PreflightInstall(ctx context.Context, dir string, port int, runner Runner) 
 	} else {
 		add("disk_space", "ok", "可用磁盘空间充足", free)
 	}
-	ports := []int{port, 5401, 2280, 2281, 2282, 2283, 2284, 2285}
-	checked := make(map[int]bool, len(ports))
 	for _, candidate := range ports {
-		if checked[candidate] {
-			continue
-		}
-		checked[candidate] = true
 		if available, err := portAvailable(candidate); err != nil {
 			add("port", "error", "无法检查端口", candidate)
 		} else if !available {
@@ -111,8 +111,11 @@ func PreflightInstall(ctx context.Context, dir string, port int, runner Runner) 
 	return checks, nil
 }
 
-func InstallProjectOccupied(ctx context.Context, runner Runner) (bool, error) {
-	filter := "label=com.docker.compose.project=" + DefaultComposeProject
+func InstallProjectOccupied(ctx context.Context, runner Runner, project string) (bool, error) {
+	if !ValidComposeProject(project) {
+		return false, errors.New("Compose project 名称无效")
+	}
+	filter := "label=com.docker.compose.project=" + project
 	for _, args := range [][]string{
 		{"ps", "-a", "--filter", filter, "--format", "{{.ID}}"},
 		{"network", "ls", "--filter", filter, "--format", "{{.ID}}"},
@@ -128,7 +131,7 @@ func InstallProjectOccupied(ctx context.Context, runner Runner) (bool, error) {
 	return false, nil
 }
 
-func NewInstallAssets(dir, version, profile string, port int) (InstallAssets, error) {
+func NewInstallAssets(dir, version, profile string, port int, network InstallNetworkOptions) (InstallAssets, error) {
 	resolved, err := ResolveDir(dir)
 	if err != nil {
 		return InstallAssets{}, err
@@ -150,11 +153,12 @@ func NewInstallAssets(dir, version, profile string, port int) (InstallAssets, er
 	if port < 1 || port > 65535 {
 		return InstallAssets{}, errors.New("端口必须在 1-65535 之间")
 	}
-	if port == 5401 || (port >= 2280 && port <= 2285) {
-		return InstallAssets{}, errors.New("端口与 LangBot 运行时必需端口冲突")
+	project, ports, err := resolveInstallNetwork(port, network)
+	if err != nil {
+		return InstallAssets{}, err
 	}
 	image := DefaultImageRepository + ":" + version
-	compose := []byte(renderCompose(image, port, filepath.Join(resolved, "data", "box")))
+	compose := []byte(renderCompose(image, port, filepath.Join(resolved, "data", "box"), ports))
 	sum := sha256.Sum256(compose)
 	pluginToken, err := randomToken()
 	if err != nil {
@@ -170,18 +174,21 @@ func NewInstallAssets(dir, version, profile string, port int) (InstallAssets, er
 	}
 	environment := []byte(fmt.Sprintf("LANGBOT_PLUGIN_RUNTIME_CONTROL_TOKEN=%s\nLANGBOT_BOX_CONTROL_TOKEN=%s\nLANGBOT_BOX_ENABLED=%s\n", pluginToken, boxToken, boxEnabled))
 	return InstallAssets{
-		Dir: resolved, Version: version, Profile: profile, Image: image, Port: port, Project: DefaultComposeProject,
+		Dir: resolved, Version: version, Profile: profile, Image: image, Port: port, Project: project, Ports: ports,
 		ComposeFile: filepath.Join(resolved, "compose.yaml"), EnvFile: filepath.Join(resolved, ".env"), DataDir: filepath.Join(resolved, "data"),
 		Compose: compose, Environment: environment, Digest: "sha256:" + hex.EncodeToString(sum[:]),
 	}, nil
 }
 
 func (a InstallAssets) Record(deploymentID, imageDigest string) Record {
+	ports := a.Ports
+	ports.AdapterPorts = append([]string{}, ports.AdapterPorts...)
 	return Record{
 		DeploymentID: deploymentID, Driver: DriverDockerCompose, CoreVersion: a.Version, Profile: a.Profile,
 		ComposeProject: a.Project, ComposeFile: a.ComposeFile, EnvFile: a.EnvFile, DataDir: a.DataDir,
 		Endpoint: fmt.Sprintf("http://127.0.0.1:%d", a.Port), Port: a.Port,
-		Asset: AssetInfo{Name: a.Image, Digest: imageDigest},
+		Asset:        AssetInfo{Name: a.Image, Digest: imageDigest},
+		InstallPorts: &ports,
 	}
 }
 
@@ -259,17 +266,30 @@ func randomToken() (string, error) {
 	return hex.EncodeToString(value), nil
 }
 
-func renderCompose(image string, port int, boxRoot string) string {
+func renderCompose(image string, port int, boxRoot string, ports InstallPorts) string {
 	quotedBoxRoot := strconv.Quote(boxRoot)
 	quotedBoxMount := strconv.Quote(boxRoot + ":" + boxRoot)
+	debugPublication, debugEnvironment := "", ""
+	if ports.PluginDebugPort > 0 {
+		debugPublication = fmt.Sprintf("    ports:\n      - \"%d:5401\"\n", ports.PluginDebugPort)
+	}
+	if ports.PluginDebugPort != 5401 {
+		debugURL := ""
+		if ports.PluginDebugPort > 0 {
+			debugURL = fmt.Sprintf("ws://localhost:%d/plugin/debug/ws", ports.PluginDebugPort)
+		}
+		debugEnvironment = "      PLUGIN__DISPLAY_PLUGIN_DEBUG_URL: " + strconv.Quote(debugURL) + "\n"
+	}
+	adapterPublications := ""
+	for _, mapping := range ports.AdapterPorts {
+		adapterPublications += "      - " + strconv.Quote(mapping) + "\n"
+	}
 	return fmt.Sprintf(`services:
   langbot_plugin_runtime:
     image: %s
     volumes:
       - ./data/plugins:/app/data/plugins
-    ports:
-      - "5401:5401"
-    restart: on-failure
+%s    restart: on-failure
     environment:
       TZ: Asia/Shanghai
       LANGBOT_PLUGIN_RUNTIME_CONTROL_TOKEN: ${LANGBOT_PLUGIN_RUNTIME_CONTROL_TOKEN}
@@ -298,18 +318,17 @@ func renderCompose(image string, port int, boxRoot string) string {
       TZ: Asia/Shanghai
       LANGBOT_PLUGIN_RUNTIME_CONTROL_TOKEN: ${LANGBOT_PLUGIN_RUNTIME_CONTROL_TOKEN}
       LANGBOT_BOX_CONTROL_TOKEN: ${LANGBOT_BOX_CONTROL_TOKEN}
-      BOX__ENABLED: ${LANGBOT_BOX_ENABLED}
+%s      BOX__ENABLED: ${LANGBOT_BOX_ENABLED}
       BOX__LOCAL__HOST_ROOT: %s
       BOX__LOCAL__DEFAULT_WORKSPACE: default
       BOX__LOCAL__SKILLS_ROOT: skills
       BOX__LOCAL__ALLOWED_MOUNT_ROOTS: %s
     ports:
       - "%d:5300"
-      - "2280-2285:2280-2285"
-    networks: [langbot_network]
+%s    networks: [langbot_network]
 
 networks:
   langbot_network:
     driver: bridge
-`, image, image, quotedBoxMount, image, quotedBoxRoot, quotedBoxRoot, port)
+`, image, debugPublication, image, quotedBoxMount, image, debugEnvironment, quotedBoxRoot, quotedBoxRoot, port, adapterPublications)
 }

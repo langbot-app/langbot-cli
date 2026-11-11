@@ -183,7 +183,7 @@ func upgradeServiceFixture(t *testing.T, failUp bool) (*Service, *upgradeRunner,
 	t.Helper()
 	root := t.TempDir()
 	dir := filepath.Join(root, "deployment")
-	assets, err := deploy.NewInstallAssets(dir, "v4.10.9", "basic", 15300)
+	assets, err := deploy.NewInstallAssets(dir, "v4.10.9", "basic", 15300, deploy.InstallNetworkOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -120,7 +120,23 @@ lbctl --context first status
 
 云端和本地实例统一用 `context use <name>` 切换，用 `--context <name>` 临时选择。切换不要求实例在线，临时选择不改变已保存的当前 context。显式参数和环境变量保持原有优先级。旧的单部署定位记录会在下次登记时迁移，保留原有本机兜底目录；接管另一实例不会改变当前 context。新登记格式不能由旧版 CLI 读取。
 
-此处支持的是多个现有部署的发现和管理。内置 `install` 仍使用固定的 Compose project 和附加宿主机端口；安装第二套请先手动配置独立 Compose 项目及不冲突的端口，再分别 `adopt`。
+内置 `install` 支持独立 Compose project 和宿主机端口映射。默认仍为 `--project langbot-lbctl`、`--plugin-debug-port 5401` 和 `--adapter-ports 2280-2285:2280-2285`。安装多个实例时，为每套部署指定不同的 `--dir`、`--project` 和 HTTP `--port`。无须插件调试或入站适配器的测试实例，可关闭这些宿主机端口发布：
+
+```sh
+lbctl install --version <vX.Y.Z> --dir /absolute/path/regression \
+  --project regression --port 15301 --profile all \
+  --plugin-debug-port 0 --adapter-ports none --dry-run
+```
+
+去掉 `--dry-run` 即可安装。需要插件调试或入站适配器时，可选择其他空闲宿主机端口：
+
+```sh
+lbctl install --version <vX.Y.Z> --dir /absolute/path/second \
+  --project second --port 15302 --plugin-debug-port 15402 \
+  --adapter-ports 12280-12285:2280-2285
+```
+
+适配器映射支持逗号分隔的 `HOST:CONTAINER` 或等长端口范围，容器端口限于 `2280-2285`。可以只发布需要的端口，例如 `--adapter-ports 12280:2280,12283:2283`。预检只检查选中的宿主机端口和 Compose project，并拒绝重复映射。容器内部服务端口保持不变，生成的调试地址随宿主机调试端口同步调整。端口配置随部署记录保存，升级时保留；旧部署记录继续兼容。
 
 `adopt` 将已有 Compose 部署登记为本机受管部署，不改变它的服务配置：
 
