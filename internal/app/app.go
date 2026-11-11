@@ -117,21 +117,47 @@ func (s *Service) Version(ctx context.Context, server bool, options CheckOptions
 	return Result{Data: data, Meta: connectionMeta(conn)}, nil
 }
 
-func (s *Service) ContextList() (Result, error) {
+func (s *Service) ContextList(discover bool) (Result, error) {
 	file, err := s.load()
 	if err != nil {
 		return Result{}, err
 	}
 	names := sortedContextNames(file)
+	deployments, localErr := s.localDeployments()
 	items := make([]map[string]any, 0, len(names))
 	for _, name := range names {
 		item := contextView(name, file.Contexts[name], name == file.CurrentContext)
+		for _, deployment := range deployments {
+			if deployment.Binding != "registered" || !sameLocalEndpoint(deployment.Endpoint, file.Contexts[name].Endpoint) {
+				continue
+			}
+			if item["deployment_id"] != nil {
+				delete(item, "deployment_id")
+				delete(item, "project")
+				item["binding"] = "ambiguous"
+				break
+			}
+			item["deployment_id"], item["project"], item["binding"] = deployment.ID, deployment.Project, "registered"
+		}
 		items = append(items, item)
 	}
-	return Result{Data: map[string]any{
+	data := map[string]any{
 		"current_context": file.CurrentContext,
 		"contexts":        items,
-	}}, nil
+		"deployments":     deployments,
+	}
+	if localErr != nil {
+		data["local_error"] = result.AsError(localErr)
+	}
+	if discover {
+		discovered, err := s.DeploymentDiscover(s.ctx)
+		if err != nil {
+			return Result{Data: data}, err
+		}
+		local := discovered.Data.(map[string]any)
+		data["discovered_deployments"], data["skipped_projects"] = local["deployments"], local["skipped_projects"]
+	}
+	return Result{Data: data}, nil
 }
 
 func (s *Service) ContextShow(name string, overrides ...CheckOptions) (Result, error) {

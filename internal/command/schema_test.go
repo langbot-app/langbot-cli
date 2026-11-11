@@ -108,7 +108,10 @@ func TestSchemaIsOfflineStableAndDescribesCommands(t *testing.T) {
 		}
 	}
 	if _, exists := commands["deployment"]; exists {
-		t.Fatal("schema exposes the removed deployment command group")
+		t.Fatal("instance selection must reuse the context command group")
+	}
+	if !hasFlag(commands["context.list"].Flags, "discover", "local", false) {
+		t.Fatal("context.list must expose optional local discovery")
 	}
 	install := commands["install"]
 	if !install.Mutating || !install.SupportsDryRun || install.RequiresConnection || !isRejected(install.Flags, "context") || !isRejected(install.Flags, "endpoint") || !isRejected(install.Flags, "api-key-stdin") {

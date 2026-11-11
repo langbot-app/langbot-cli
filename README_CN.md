@@ -99,6 +99,29 @@ lbctl context remove dev --yes
 
 ## 本机部署与升级
 
+可以发现并登记多个本机 LangBot Compose 实例：
+
+```sh
+lbctl context list --discover
+lbctl --endpoint http://127.0.0.1:15301 adopt \
+  --dir /absolute/path/records/first --file /absolute/path/first/compose.yaml --project first
+lbctl --endpoint http://127.0.0.1:15302 adopt \
+  --dir /absolute/path/records/second --file /absolute/path/second/compose.yaml --project second
+lbctl context add first --endpoint http://127.0.0.1:15301
+lbctl context add second --endpoint http://127.0.0.1:15302
+lbctl context list
+lbctl context use second
+lbctl status
+lbctl stop
+lbctl --context first status
+```
+
+`context list` 离线列出已保存的 context 及本机部署登记，展示匹配的 Compose project；加 `--discover` 才会只读检查本机 Docker Compose 项目，不自动接管或保存 context。无法读取或使用多个 Compose 文件的项目会列入 `skipped_projects`。发现后，通过 `adopt` 显式登记，每个实例使用不同的记录目录和 Compose project。登记后，`status`、`doctor`、启停、日志和升级会按当前 context / endpoint 匹配对应的本机记录，匹配不唯一时拒绝自动选择。
+
+云端和本地实例统一用 `context use <name>` 切换，用 `--context <name>` 临时选择。切换不要求实例在线，临时选择不改变已保存的当前 context。显式参数和环境变量保持原有优先级。旧的单部署定位记录会在下次登记时迁移，保留原有本机兜底目录；接管另一实例不会改变当前 context。新登记格式不能由旧版 CLI 读取。
+
+此处支持的是多个现有部署的发现和管理。内置 `install` 仍使用固定的 Compose project 和附加宿主机端口；安装第二套请先手动配置独立 Compose 项目及不冲突的端口，再分别 `adopt`。
+
 `adopt` 将已有 Compose 部署登记为本机受管部署，不改变它的服务配置：
 
 ```sh

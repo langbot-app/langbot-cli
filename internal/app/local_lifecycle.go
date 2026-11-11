@@ -87,9 +87,6 @@ func (s *Service) Install(ctx context.Context, options InstallOptions) (Result, 
 	if err != nil {
 		return Result{}, result.New("input", err.Error())
 	}
-	if err := s.rejectOtherManagedDeployment(assets.Dir); err != nil {
-		return Result{}, err
-	}
 	runner := s.localRunner()
 	checks, preflightErr := deploy.PreflightInstall(operationCtx, assets.Dir, assets.Port, runner)
 	plan := installPlanData(assets, checks)
@@ -105,7 +102,7 @@ func (s *Service) Install(ctx context.Context, options InstallOptions) (Result, 
 	locator := deploy.Locator{Path: s.deps.LocalLocatorPath}
 	err = locator.WithLock(operationCtx, func() error {
 		return deploy.WithMutationLock(operationCtx, assets.Dir, func() error {
-			if err := s.rejectOtherManagedDeployment(assets.Dir); err != nil {
+			if err := s.checkDeploymentRegistration(assets.Dir, assets.Record("", "")); err != nil {
 				return err
 			}
 			if err := deploy.ValidateInstallTarget(assets.Dir, true); err != nil {
@@ -184,9 +181,6 @@ func (s *Service) Adopt(ctx context.Context, options AdoptOptions) (Result, erro
 	if err != nil {
 		return Result{}, result.New("input", "部署记录目录无效")
 	}
-	if err := s.rejectOtherManagedDeployment(dir); err != nil {
-		return Result{}, err
-	}
 	composeFile, err := resolveComposeFile(options.ComposeFile)
 	if err != nil {
 		return Result{}, err
@@ -259,7 +253,7 @@ func (s *Service) Adopt(ctx context.Context, options AdoptOptions) (Result, erro
 	locator := deploy.Locator{Path: s.deps.LocalLocatorPath}
 	err = locator.WithLock(operationCtx, func() error {
 		if err := deploy.WithMutationLock(operationCtx, dir, func() error {
-			if err := s.rejectOtherManagedDeployment(dir); err != nil {
+			if err := s.checkDeploymentRegistration(dir, record); err != nil {
 				return err
 			}
 			store := deploy.Store{Dir: dir}
@@ -499,31 +493,6 @@ func sameLocalEndpoint(left, right string) bool {
 	first, firstErr := endpointutil.Normalize(left)
 	second, secondErr := endpointutil.Normalize(right)
 	return firstErr == nil && secondErr == nil && first == second
-}
-
-func (s *Service) rejectOtherManagedDeployment(dir string) error {
-	if strings.TrimSpace(s.deps.LocalDir) != "" {
-		if existing, err := deploy.ResolveDir(s.deps.LocalDir); err == nil && existing != dir {
-			if _, readErr := (deploy.Store{Dir: existing}).Read(); readErr == nil {
-				return result.New("precondition", "本机已有其他 lbctl 受管部署")
-			}
-		}
-	}
-	if s.deps.LocalDir != "" {
-		return nil
-	}
-	existing, err := (deploy.Locator{Path: s.deps.LocalLocatorPath}).Resolve("")
-	if err != nil {
-		return result.New("precondition", "本机部署定位记录不可用")
-	}
-	if existing != dir {
-		if _, readErr := (deploy.Store{Dir: existing}).Read(); readErr == nil {
-			return result.New("precondition", "本机已有其他 lbctl 受管部署")
-		} else if readErr != nil && !errors.Is(readErr, deploy.ErrNotInstalled) {
-			return result.New("precondition", "已有本机部署记录，请先诊断")
-		}
-	}
-	return nil
 }
 
 func (s *Service) localRunner() deploy.Runner {

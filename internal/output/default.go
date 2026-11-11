@@ -146,6 +146,40 @@ func renderDefaultData(w io.Writer, value any, command string) error {
 		return renderValue(w, value, "")
 	}
 	switch command {
+	case "context.list":
+		bound := map[string]bool{}
+		if items, ok := data["contexts"].([]any); ok {
+			for _, item := range items {
+				if row, ok := item.(map[string]any); ok {
+					if id, ok := row["deployment_id"].(string); ok && id != "" {
+						bound[id] = true
+					}
+				}
+			}
+			if err := renderResourceList(w, "contexts", items); err != nil {
+				return err
+			}
+		}
+		if items, ok := data["deployments"].([]any); ok {
+			unconfigured := []any{}
+			for _, item := range items {
+				row, ok := item.(map[string]any)
+				if !ok || !bound[formatCell(row["deployment_id"])] {
+					unconfigured = append(unconfigured, item)
+				}
+			}
+			if len(unconfigured) > 0 {
+				if err := renderResourceList(w, "unconfigured_deployments", unconfigured); err != nil {
+					return err
+				}
+			}
+		}
+		if items, ok := data["discovered_deployments"].([]any); ok && len(items) > 0 {
+			if err := renderResourceList(w, "discovered_deployments", items); err != nil {
+				return err
+			}
+		}
+		return renderFields(w, data, []string{"skipped_projects", "local_error"})
 	case "context.show":
 		for _, key := range []string{"saved", "effective"} {
 			if item, exists := data[key]; exists {
@@ -618,8 +652,14 @@ func commandListKey(command string) string {
 
 func resourceFields(key string) []string {
 	switch key {
+	case "deployments":
+		return []string{"deployment_id", "endpoint", "project", "binding", "dir"}
+	case "unconfigured_deployments":
+		return []string{"endpoint", "project", "binding", "dir"}
+	case "discovered_deployments":
+		return []string{"project", "endpoint", "binding", "compose_file"}
 	case "contexts":
-		return []string{"current", "name", "endpoint", "expected_workspace_uuid"}
+		return []string{"current", "name", "endpoint", "expected_workspace_uuid", "project", "binding"}
 	case "checks":
 		return []string{"name", "status", "reason", "context", "endpoint", "reachable", "diagnostic_ok", "identity", "capabilities", "server_version", "error"}
 	case "containers":

@@ -303,9 +303,13 @@ func (s *Service) completeRuntime(ctx context.Context, resolved environmentResol
 
 func (s *Service) resolveRuntime(ctx context.Context, environment ActiveEnvironment, identity api.Context, identityVerified, inspect bool, resolved *environmentResolution) (EnvironmentRuntime, error) {
 	runtimeInfo := EnvironmentRuntime{Location: "unknown", Driver: "unbound", Management: "unavailable", Binding: "none"}
-	diagnostics, err := s.localDiagnostics("")
+	diagnostics, err := s.matchingLocalDiagnostics(environment.Connection.Endpoint, identity, identityVerified)
 	if err != nil {
 		runtimeInfo.Binding = "unavailable"
+		var problem *result.Error
+		if errors.As(err, &problem) && problem.Kind == "precondition" {
+			return fallbackRuntime(environment, runtimeInfo), err
+		}
 		return fallbackRuntime(environment, runtimeInfo), nil
 	}
 	resolved.Diagnostics = &diagnostics

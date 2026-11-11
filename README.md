@@ -99,6 +99,29 @@ Credential stdin must be closed after the key is provided. Its wait budget uses 
 
 ## Local deployment and upgrades
 
+Discover and register multiple local LangBot Compose instances:
+
+```sh
+lbctl context list --discover
+lbctl --endpoint http://127.0.0.1:15301 adopt \
+  --dir /absolute/path/records/first --file /absolute/path/first/compose.yaml --project first
+lbctl --endpoint http://127.0.0.1:15302 adopt \
+  --dir /absolute/path/records/second --file /absolute/path/second/compose.yaml --project second
+lbctl context add first --endpoint http://127.0.0.1:15301
+lbctl context add second --endpoint http://127.0.0.1:15302
+lbctl context list
+lbctl context use second
+lbctl status
+lbctl stop
+lbctl --context first status
+```
+
+`context list` lists saved contexts and local deployment registrations offline, including matching Compose projects. Add `--discover` to inspect local Compose projects without adopting them or saving contexts. Unreadable projects and projects using multiple Compose files appear in `skipped_projects`. Use `adopt` to register each instance with a distinct record directory and Compose project. Status, diagnostics, lifecycle, logs, and upgrades match the active context/endpoint against all registered deployments; ambiguous matches are rejected.
+
+Use `context use <name>` for both cloud and local instances, or `--context <name>` for a single invocation. Switching works offline and temporary selection preserves the saved current context. Explicit selectors and environment variables retain their existing priority. Legacy single-deployment locators migrate on the next registration, preserving the original fallback directory. Adopting another instance does not change the current context. Older CLI versions cannot read the new registry format.
+
+This supports discovering and managing existing deployments. Built-in `install` still uses a fixed Compose project and additional host ports. To add another instance, configure a separate Compose project with non-conflicting ports and adopt it.
+
 `adopt` registers an existing Compose deployment for local management while preserving its service configuration:
 
 ```sh

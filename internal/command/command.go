@@ -1043,15 +1043,18 @@ func newContextCommand(service *app.Service, deps Dependencies, flags *globalFla
 	}
 	contextCommand.AddCommand(newContextAdd(service, deps, flags))
 	contextCommand.AddCommand(newContextUpdate(service, deps, flags))
-	contextCommand.AddCommand(&cobra.Command{
+	var discover bool
+	list := &cobra.Command{
 		Use: "list", Short: "列出本地 context", Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := rejectCredentialInput(flags); err != nil {
 				return emitCommand(deps, flags, app.Result{}, err)
 			}
-			return emitCall(deps, flags, func() (app.Result, error) { return service.WithContext(cmd.Context()).ContextList() })
+			return emitCall(deps, flags, func() (app.Result, error) { return service.WithContext(cmd.Context()).ContextList(discover) })
 		},
-	})
+	}
+	list.Flags().BoolVar(&discover, "discover", false, "同时只读发现本机 LangBot Compose 项目")
+	contextCommand.AddCommand(list)
 	contextCommand.AddCommand(newContextShow(service, deps, flags))
 	contextCommand.AddCommand(newContextUse(service, deps, flags))
 	contextCommand.AddCommand(newContextRemove(service, deps, flags))
