@@ -22,6 +22,27 @@ func TestHumanHelpHasConsistentLabels(t *testing.T) {
 	}
 }
 
+func TestHelpGroupsExamplesAndApplicableFlags(t *testing.T) {
+	_, root, _ := executeCommand(t, nil, "--help")
+	for _, title := range []string{"连接与诊断：", "资源与内容：", "本机部署：", "工具与自动化："} {
+		if !strings.Contains(root, title) {
+			t.Fatalf("missing group %s: %s", title, root)
+		}
+	}
+	_, help, _ := executeCommand(t, nil, "bot", "update", "--help")
+	for _, part := range []string{"（必填）", "request.yaml", "\"name\":\"my-bot\"", "预检通过不代表"} {
+		if !strings.Contains(help, part) {
+			t.Fatalf("missing guidance %s: %s", part, help)
+		}
+	}
+	_, local, _ := executeCommand(t, nil, "context", "use", "--help")
+	for _, flag := range []string{"--api-key-stdin", "--endpoint", "--context", "--timeout"} {
+		if strings.Contains(local, flag) {
+			t.Fatalf("inapplicable flag %s: %s", flag, local)
+		}
+	}
+}
+
 func TestInputErrorsAreSpecificAndNeverEchoSuppliedValues(t *testing.T) {
 	for _, test := range []struct {
 		name string

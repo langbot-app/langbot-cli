@@ -1,6 +1,7 @@
 package command
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/langbot-app/langbot-cli/internal/api"
@@ -39,6 +41,7 @@ type Dependencies struct {
 }
 
 type globalFlags struct {
+	listView    listViewOptions
 	config      string
 	configSet   bool
 	context     string
@@ -62,7 +65,7 @@ func Execute(ctx context.Context, args []string, deps Dependencies) int {
 			if flags.config != "" {
 				return flags.config, nil
 			}
-			return deps.DefaultConfigPath()
+			return selectedConfigPath(deps, flags)
 		},
 		Transport: deps.Transport, Version: deps.Version, Commit: deps.Commit, BuildDate: deps.BuildDate,
 		LocalRunner: deps.LocalRunner, LocalHTTP: deps.LocalHTTP, LocalDir: deps.LocalDir,
@@ -119,7 +122,7 @@ func newRoot(deps Dependencies, flags *globalFlags, service *app.Service) *cobra
 	root.SetErr(deps.Err)
 	root.SetFlagErrorFunc(commandFlagError)
 	persistent := root.PersistentFlags()
-	persistent.StringVar(&flags.config, "config", "", "配置文件路径")
+	persistent.StringVar(&flags.config, "config", "", "配置文件路径；其次使用 LANGBOT_CONFIG，再使用 ~/.config/langbot/config.yaml")
 	persistent.StringVar(&flags.context, "context", "", "使用指定 context")
 	persistent.StringVar(&flags.endpoint, "endpoint", "", "临时服务地址")
 	persistent.StringVar(&flags.timeout, "timeout", "", "操作超时时间")
@@ -171,6 +174,7 @@ func newRoot(deps Dependencies, flags *globalFlags, service *app.Service) *cobra
 	root.AddCommand(newSkillCommand(service, deps, flags))
 	root.AddCommand(newMCPServerCommand(service, deps, flags))
 	configureHumanHelp(root)
+	configureExperience(root, deps, flags)
 	return root
 }
 
@@ -1125,10 +1129,14 @@ func newContextUpdate(service *app.Service, deps Dependencies, flags *globalFlag
 
 func newContextShow(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
 	return &cobra.Command{
-		Use: "show <name>", Short: "查看 context 配置", Args: cobra.ExactArgs(1),
+		Use: "show [name]", Short: "查看 context 配置；默认查看当前环境", Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			name := ""
+			if len(args) > 0 {
+				name = args[0]
+			}
 			return emitCall(deps, flags, func() (app.Result, error) {
-				return service.WithContext(cmd.Context()).ContextShow(args[0], app.CheckOptions{
+				return service.WithContext(cmd.Context()).ContextShow(name, app.CheckOptions{
 					Context: flags.context, Endpoint: flags.endpoint, Timeout: flags.timeout,
 					ContextSet: flags.contextSet, EndpointSet: flags.endpointSet, TimeoutSet: flags.timeoutSet,
 					APIKeyStdin: flags.apiKeyStdin,
@@ -1492,11 +1500,18 @@ func emitCommand(deps Dependencies, flags *globalFlags, value app.Result, err er
 }
 
 func emitCall(deps Dependencies, flags *globalFlags, call func() (app.Result, error)) error {
+	stop := startProgress(deps, flags)
+	defer stop()
 	value, err := call()
+	stop()
 	return emitCommand(deps, flags, value, err)
 }
 
 func emit(deps Dependencies, flags *globalFlags, value app.Result, callErr error) int {
+	if callErr == nil {
+		value, callErr = applyListView(value, flags.listView)
+	}
+	value = enrichResult(deps, flags, value, callErr)
 	format := output.FormatDefault
 	if flags.outputSet {
 		if normalized, err := output.NormalizeFormat(flags.output); err == nil {
@@ -1542,4 +1557,207 @@ func rejectCredentialInput(flags *globalFlags) error {
 
 func hasConnectionOverride(flags *globalFlags) bool {
 	return flags.contextSet || flags.endpointSet || flags.timeoutSet || flags.apiKeyStdin
+}
+
+type listViewOptions struct{ key, filter string }
+
+func resourceListKey(command string) string {
+	return map[string]string{"bot.list": "bots", "pipeline.list": "pipelines", "provider.list": "providers", "model.list": "models", "knowledge-base.list": "bases", "plugin.list": "plugins", "skill.list": "skills", "mcp-server.list": "servers", "task.list": "tasks"}[command]
+}
+
+func configureListFilter(cmd *cobra.Command, flags *globalFlags) {
+	key := resourceListKey(commandPath(cmd))
+	if key == "" {
+		return
+	}
+	var filter string
+	cmd.Flags().StringVar(&filter, "filter", "", "按名称或 ID 包含文本筛选（客户端筛选，不减少服务端传输）")
+	original := cmd.RunE
+	cmd.RunE = func(c *cobra.Command, args []string) error {
+		flags.listView = listViewOptions{key: key, filter: filter}
+		return original(c, args)
+	}
+}
+
+func applyListView(value app.Result, options listViewOptions) (app.Result, error) {
+	if options.key == "" || options.filter == "" || value.Data == nil {
+		return value, nil
+	}
+	encoded, err := json.Marshal(value.Data)
+	if err != nil {
+		return value, result.New("internal", "无法整理资源列表")
+	}
+	var data map[string]any
+	decoder := json.NewDecoder(bytes.NewReader(encoded))
+	decoder.UseNumber()
+	if err = decoder.Decode(&data); err != nil {
+		return value, result.New("internal", "资源列表格式无效")
+	}
+	total, matched, shown := 0, 0, 0
+	selectRows := func(items []any) []any {
+		rows := []any{}
+		for _, item := range items {
+			total++
+			row, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			match := options.filter == ""
+			for _, field := range []string{"name", "display_name", "uuid", "id", "file_name"} {
+				if raw, exists := row[field]; exists && strings.Contains(strings.ToLower(fmt.Sprint(raw)), strings.ToLower(options.filter)) {
+					match = true
+				}
+			}
+			if !match {
+				continue
+			}
+			matched++
+			rows = append(rows, item)
+			shown++
+		}
+		return rows
+	}
+	switch items := data[options.key].(type) {
+	case []any:
+		data[options.key] = selectRows(items)
+	case map[string]any:
+		for _, kind := range []string{"llm", "embedding", "rerank"} {
+			if rows, ok := items[kind].([]any); ok {
+				items[kind] = selectRows(rows)
+			}
+		}
+	default:
+		return value, nil
+	}
+	if value.Meta == nil {
+		value.Meta = map[string]any{}
+	}
+	value.Meta["list_selection"] = map[string]any{"scope": "client", "total": total, "matched": matched, "shown": shown}
+	value.Data = data
+	return value, nil
+}
+
+func enrichResult(deps Dependencies, flags *globalFlags, value app.Result, err error) app.Result {
+	if flags.commandPath == "schema" || flags.commandPath == "version" || strings.HasPrefix(flags.commandPath, "completion") {
+		return value
+	}
+	meta := map[string]any{}
+	for key, item := range value.Meta {
+		meta[key] = item
+	}
+	path, pathErr := selectedConfigPath(deps, flags)
+	if strings.HasPrefix(flags.commandPath, "context.") || flags.commandPath == "status" || flags.commandPath == "doctor" {
+		if pathErr == nil {
+			meta["config_file"] = path
+		}
+	}
+	base := []string{"lbctl"}
+	if pathErr == nil && (flags.config != "" || hasEnvironmentConfig(deps)) {
+		base = append(base, "--config", path)
+	}
+	connect := append([]string(nil), base...)
+	if flags.context != "" {
+		connect = append(connect, "--context", flags.context)
+	} else if name, ok := meta["context"].(string); ok && name != "" {
+		connect = append(connect, "--context", name)
+	}
+	if endpoint, ok := meta["endpoint"].(string); flags.endpoint != "" && ok && endpoint != "" {
+		connect = append(connect, "--endpoint", endpoint)
+	}
+	if _, err := time.ParseDuration(flags.timeout); flags.timeout != "" && err == nil {
+		connect = append(connect, "--timeout", flags.timeout)
+	}
+	steps := []map[string]any{}
+	add := func(label string, prefix []string, args ...string) {
+		argv := append(append([]string(nil), prefix...), args...)
+		steps = append(steps, map[string]any{"description": label, "argv": argv})
+	}
+	data, _ := value.Data.(map[string]any)
+	if err != nil {
+		e := result.AsError(err)
+		switch e.Kind {
+		case "auth":
+			add("验证当前目标的凭据", connect, "whoami")
+		case "permission", "incompatible":
+			add("查看当前目标支持的能力与权限", connect, "capabilities")
+		case "precondition":
+			if e.Message == "服务端未明确支持该操作" || e.Message == "服务端明确不支持该操作" {
+				add("查看当前目标支持的能力", connect, "capabilities")
+			} else {
+				add("检查目标和 Workspace 绑定", connect, "context", "show")
+			}
+		case "network", "result_unknown":
+			if id, ok := data["task_id"].(string); ok && id != "" {
+				add("查询已提交的任务，不重新提交", connect, "task", "get", id)
+			} else if id, ok := data["uuid"].(string); ok && id != "" && strings.HasPrefix(flags.commandPath, "bot.") {
+				add("回读资源确认结果", connect, "bot", "get", id)
+			} else {
+				add("诊断当前目标", connect, "doctor")
+			}
+		case "input":
+			add("查看参数与请求体示例", base, append(strings.Split(flags.commandPath, "."), "--help")...)
+		case "not_found":
+			family := strings.Split(flags.commandPath, ".")[0]
+			if resourceListKey(family+".list") != "" {
+				add("列出当前目标中的资源", connect, family, "list")
+			}
+		}
+	} else {
+		switch flags.commandPath {
+		case "context.add", "context.update":
+			if name, ok := data["name"].(string); ok {
+				add("选择这个环境", base, "context", "use", name)
+			}
+		case "context.use":
+			add("检查所选实例", base, "status")
+		case "context.remove":
+			add("查看剩余环境", base, "context", "list")
+		}
+		if data["submitted"] == true && data["step"] != "completed" {
+			if id, ok := data["task_id"].(string); ok && id != "" {
+				add("跟踪任务进度", connect, "task", "get", id, "--wait")
+			}
+		}
+	}
+	if len(steps) > 0 {
+		meta["next_steps"] = steps
+	}
+	if len(meta) > 0 {
+		value.Meta = meta
+	}
+	return value
+}
+
+func hasEnvironmentConfig(deps Dependencies) bool {
+	_, ok := deps.LookupEnv("LANGBOT_CONFIG")
+	return ok
+}
+
+// Human waiting feedback is terminal-only; redirected and machine output stay quiet.
+func startProgress(deps Dependencies, flags *globalFlags) func() {
+	file, ok := deps.Err.(*os.File)
+	if !ok || flags.outputSet || flags.commandPath == "schema" {
+		return func() {}
+	}
+	info, err := file.Stat()
+	if err != nil || info.Mode()&os.ModeCharDevice == 0 {
+		return func() {}
+	}
+	done, exited := make(chan struct{}), make(chan struct{})
+	start := time.Now()
+	go func() {
+		defer close(exited)
+		ticker := time.NewTicker(2 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				fmt.Fprintf(deps.Err, "正在执行 %s（已等待 %s）\n", strings.ReplaceAll(flags.commandPath, ".", " "), time.Since(start).Round(time.Second))
+			}
+		}
+	}()
+	var once sync.Once
+	return func() { once.Do(func() { close(done); <-exited }) }
 }

@@ -6,10 +6,79 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/langbot-app/langbot-cli/internal/app"
 )
+
+func TestCompactSchemaAndExamplesStayOffline(t *testing.T) {
+	full := executeSchemaForTest(t, "schema")
+	compact := executeSchemaForTest(t, "schema", "--summary")
+	if compact.code != 0 || len(compact.output) >= len(full.output)/5 {
+		t.Fatal("summary should be a small offline index")
+	}
+	group := executeSchemaForTest(t, "schema", "--command", "bot")
+	var envelope schemaEnvelope
+	if json.Unmarshal([]byte(group.output), &envelope) != nil || len(envelope.Data.Commands) < 3 {
+		t.Fatal("missing command group")
+	}
+	one := executeSchemaForTest(t, "schema", "--command", "bot update")
+	if json.Unmarshal([]byte(one.output), &envelope) != nil || len(envelope.Data.Commands) != 1 || !strings.Contains(envelope.Data.Commands[0].Examples, "request.yaml") {
+		t.Fatal("space-separated command or shared examples missing")
+	}
+}
+
+func TestListFilterPreservesGroupsAndNumericIDs(t *testing.T) {
+	value, err := applyListView(app.Result{Data: map[string]any{"models": map[string]any{"llm": []any{map[string]any{"id": json.Number("9007199254740993"), "name": "DeepSeek"}, map[string]any{"name": "Other"}}, "embedding": []any{}}}}, listViewOptions{key: "models", filter: "deepseek"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, _ := json.Marshal(value.Data)
+	if !strings.Contains(string(encoded), "9007199254740993") || strings.Contains(string(encoded), "Other") || !strings.Contains(string(encoded), `"embedding":[]`) {
+		t.Fatalf("filter changed data: %s", encoded)
+	}
+	if value.Meta["list_selection"].(map[string]any)["total"] != 2 {
+		t.Fatal("missing client-side counts")
+	}
+}
+
+func TestCurrentContextAndOfflineCompletionUseSelectedConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "custom.yaml")
+	if err := os.WriteFile(path, []byte("version: 1\ncurrent_context: local\ncontexts:\n  local:\n    endpoint: http://127.0.0.1:5300\n    credential:\n      type: env\n      name: LOCAL_KEY\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"context", "show", "-o", "json"}, {"__complete", "--context", "lo"}, {"__complete", "model", "list", "--type", "l"}, {"task", "get", "invalid", "-o", "json"}} {
+		var out, diagnostic bytes.Buffer
+		code := Execute(context.Background(), args, Dependencies{Out: &out, Err: &diagnostic, LookupEnv: func(key string) (string, bool) {
+			value, ok := map[string]string{"LANGBOT_CONFIG": path, "LOCAL_KEY": "never-print-this-key"}[key]
+			return value, ok
+		}, DefaultConfigPath: func() (string, error) { panic("custom config ignored") }, Transport: panicRoundTripper{}})
+		if strings.Contains(out.String(), "never-print-this-key") {
+			t.Fatal("key leaked")
+		}
+		if args[0] == "context" {
+			if code != 0 || !strings.Contains(out.String(), `"credential_state": "available"`) || !strings.Contains(out.String(), `"config_file"`) {
+				t.Fatalf("bad context: %d %s", code, &out)
+			}
+		} else if args[0] == "task" {
+			if code != 2 || !strings.Contains(out.String(), "非负整数") {
+				t.Fatalf("invalid task was not rejected offline: %s", &out)
+			}
+		} else {
+			want := "local"
+			if args[1] == "model" {
+				want = "llm"
+			}
+			if code != 0 || !strings.Contains(out.String(), want) {
+				t.Fatalf("completion failed: %s", &out)
+			}
+		}
+	}
+}
 
 type schemaEnvelope struct {
 	OK    bool             `json:"ok"`

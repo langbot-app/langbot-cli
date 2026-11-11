@@ -79,7 +79,7 @@ Go 基线为 1.26。编译后的二进制可直接运行；本机部署管理使
 
 ## 配置远端实例
 
-API Key 由环境变量或单次 stdin 提供。配置默认保存在 `~/.config/langbot/config.yaml`，只保存环境变量名，不保存 Key 明文。
+API Key 由环境变量或单次 stdin 提供。配置路径按 `--config` → `LANGBOT_CONFIG` → `~/.config/langbot/config.yaml` 选择，只保存环境变量名，不保存 Key 明文。`context list`、`context show`、`status` 和 `doctor` 会显示当前配置路径；`context show` 不带名称时查看当前环境。离线显示“凭据可用”仅说明变量已设置，实际鉴权用 `context check` 或 `whoami` 验证。
 
 先在目标 LangBot 管理页面完成初始化，再通过 API Key 管理创建 Workspace API Key。需要鉴权的命令会检测缺失凭据，提示实际使用的环境变量、隐藏输入的 PowerShell/Bash 设置示例，以及保留原连接选项运行 `whoami` 的验证步骤。JSON/YAML 提供 `error.reason` 和 `error.guidance`；错误类型仍为 `auth`，退出码为 3。服务端拒绝已有 Key 与环境变量未设置会分别提示；CLI 不自动等待输入，也不保存 Key。
 
@@ -209,6 +209,23 @@ lbctl upgrade --version <newer-vX.Y.Z> --yes -o json
 自动升级支持直接声明 `rockchin/langbot:<tag>` 的服务，数据完整位于 Compose 目录的 `data` 绑定目录，且使用本地 SQLite、Chroma 和 local storage。升级前会校验 Compose 配置、备份范围和版本；目标版本高于当前版本。`--dry-run` 显示升级计划，执行升级时验证目标镜像。接管后手动改变 Compose，需要再次执行相同目标的 `adopt`，明确确认新的资产摘要。
 
 本机生命周期作用于部署实例；Bot、Pipeline、Skill 等资源仍通过下面同一套命令管理 context 对应的 Workspace。
+
+已有实例完成 context 和 API Key 配置后即可管理资源，无须先接管 Docker。`adopt` 用于启停、部署日志和升级等本机管理。
+
+人工使用时，帮助按用途分组，显示适用选项、必填项和常用示例。列表优先展示名称和状态，保留完整 ID；长名称在表格中缩略，过宽的表格按条目显示（可用 `COLUMNS` 指定显示宽度）。`-o json` / `-o yaml` 保留完整名称和结构化数据。资源列表支持 `--filter` 按名称或 ID 包含文本筛选，不区分大小写；这是客户端筛选，不减少服务端传输，也不自动选择重名资源。
+
+```sh
+lbctl bot list --filter my-bot
+lbctl bot get <bot-id>             # 查看 use_pipeline_uuid，再用 pipeline get 查看关联配置
+lbctl model list --type llm --provider <provider-id>
+lbctl model list --filter deepseek -o json
+lbctl bot update --help            # 查看最小请求体示例和预检说明
+lbctl schema --summary             # agent 先读简要命令索引
+lbctl schema --command bot         # 按需读取整个命令组
+lbctl schema --command 'bot update'
+```
+
+Shell 补全读取已保存的 context 和静态枚举，不请求远端资源。人工终端中的耗时命令会在 stderr 显示等待时间；重定向输出和 JSON/YAML 模式保持安静。操作结果区分预检、已提交、已验证和隐藏字段未验证；部分结果及退出码保持原有语义。适用时，`meta.next_steps` 提供保留连接选择的下一步命令参数，人工输出会显示可复制命令。
 
 <a id="resources"></a>
 

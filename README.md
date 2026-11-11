@@ -79,7 +79,7 @@ The Go baseline is 1.26. Run the compiled binary directly; local deployment mana
 
 ## Configure remote instances
 
-Provide the API Key through an environment variable or one-time stdin input. Configuration defaults to `~/.config/langbot/config.yaml` and stores the environment variable name rather than the key itself.
+Provide the API Key through an environment variable or one-time stdin input. Configuration is selected in this order: `--config`, `LANGBOT_CONFIG`, then `~/.config/langbot/config.yaml`. It stores the variable name rather than the key itself. `context list`, `context show`, `status`, and `doctor` display the selected configuration path. Without a name, `context show` inspects the current context. Offline credential availability only means the variable is set; use `context check` or `whoami` to verify authentication.
 
 Create a Workspace API Key in the target LangBot dashboard's API Key management after initial setup. Authenticated commands detect missing credentials and show the selected environment variable, hidden-input PowerShell/Bash examples, and a same-target `whoami` verification step. JSON/YAML includes `error.reason` and `error.guidance`; the error type remains `auth` with exit code 3. A rejected key is reported separately from an unset variable; the CLI never prompts automatically or saves the key.
 
@@ -209,6 +209,23 @@ Adopted upgrades replace the images for `langbot`, `langbot_plugin_runtime`, and
 Automatic upgrades support services declaring `rockchin/langbot:<tag>` directly, with all data under the Compose directory's `data` bind mount and local SQLite, Chroma, and local storage. Compose configuration, backup scope, and versions are checked before upgrading; the target version is newer than the current version. `--dry-run` shows the plan, and execution verifies the target image. After manually editing adopted Compose content, run `adopt` again for the same target to confirm its updated asset digest.
 
 Local lifecycle commands target deployment instances. Resources such as Bots, Pipelines, and Skills use the same commands below to manage the context's Workspace.
+
+An existing instance's resources can be managed as soon as its context and API key are configured. Docker adoption is needed for local lifecycle operations, deployment logs, and upgrades.
+
+Human help groups commands by purpose, shows applicable and required flags, and includes common examples. Lists show names and state first while retaining complete IDs. Long names are shortened in tables; wide tables use per-item fields (`COLUMNS` can set the display width). JSON/YAML retains complete names and structured data. Resource lists accept `--filter` for a case-insensitive substring match on names or IDs. Filtering happens in the client; it does not reduce server transfer or choose among duplicate names.
+
+```sh
+lbctl bot list --filter my-bot
+lbctl bot get <bot-id>             # Follow use_pipeline_uuid with pipeline get
+lbctl model list --type llm --provider <provider-id>
+lbctl model list --filter deepseek -o json
+lbctl bot update --help            # Minimal body example and preflight scope
+lbctl schema --summary             # Start with a compact command index
+lbctl schema --command bot         # Expand one command group
+lbctl schema --command 'bot update'
+```
+
+Shell completion reads saved context names and static enums without requesting remote resources. Long commands display elapsed waiting time on stderr in human terminals; redirected and JSON/YAML output remain quiet. Results distinguish preflight, submission, verification, and unverified hidden fields while preserving partial results and exit codes. Where applicable, `meta.next_steps` contains follow-up argument arrays retaining connection selectors, rendered as copyable commands for humans.
 
 <a id="resources"></a>
 

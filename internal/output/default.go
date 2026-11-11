@@ -3,8 +3,11 @@ package output
 import (
 	"fmt"
 	"io"
+	"os"
 	"reflect"
+	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode"
 )
@@ -16,6 +19,13 @@ func renderDefault(w io.Writer, value any, command string) error {
 	}
 	if _, exists := envelope["ok"]; !exists {
 		return renderValue(w, value, "")
+	}
+	if meta, ok := envelope["meta"].(map[string]any); ok {
+		if path, ok := meta["config_file"].(string); ok && path != "" {
+			if _, err := fmt.Fprintln(w, "配置文件："+displayCell(path)); err != nil {
+				return err
+			}
+		}
 	}
 	if envelope["ok"] == false {
 		if err := renderDefaultError(w, envelope["error"]); err != nil {
@@ -63,6 +73,9 @@ func renderDefault(w io.Writer, value any, command string) error {
 			view[key] = item
 		}
 		data = view
+		if envelope["ok"] == false && isAction(view) {
+			view["outcome_error"] = true
+		}
 	}
 	return renderDefaultData(w, data, command)
 }
@@ -146,6 +159,15 @@ func renderDefaultData(w io.Writer, value any, command string) error {
 		return renderValue(w, value, "")
 	}
 	switch command {
+	case "context.add", "context.update", "context.use":
+		verb := map[string]string{"context.add": "已添加环境", "context.update": "已更新环境", "context.use": "已切换到环境"}[command]
+		if _, err := fmt.Fprintf(w, "%s %s（%s）\n", verb, displayCell(data["name"]), displayCell(data["endpoint"])); err != nil {
+			return err
+		}
+		return renderFields(w, data, []string{"credential_source", "expected_workspace_uuid"})
+	case "context.remove":
+		_, err := fmt.Fprintln(w, "已移除环境 "+displayCell(data["removed"]))
+		return err
 	case "context.list":
 		bound := map[string]bool{}
 		if items, ok := data["contexts"].([]any); ok {
@@ -543,6 +565,9 @@ func isAction(data map[string]any) bool {
 }
 
 func renderAction(w io.Writer, data map[string]any) error {
+	if _, err := fmt.Fprintln(w, actionSummary(data)); err != nil {
+		return err
+	}
 	keys := []string{"operation", "action", "changed", "version", "profile", "endpoint", "dir", "image", "uuid", "model_uuid", "provider_uuid", "skill_name", "name", "author", "plugin_name", "server_name", "path", "file_id", "task_id", "model_type", "dry_run", "executed", "step", "submitted", "submission_result", "server_write", "verified", "server_cancelled", "delete_data", "business_validation"}
 	if err := renderFields(w, data, keys); err != nil {
 		return err
@@ -552,6 +577,7 @@ func renderAction(w io.Writer, data map[string]any) error {
 		handled[key] = true
 	}
 	handled["preconditions_confirmed"], handled["preflight_confirmed"] = true, true
+	handled["outcome_error"] = true
 	for _, key := range sortedKeys(data) {
 		if handled[key] {
 			continue
@@ -664,27 +690,27 @@ func resourceFields(key string) []string {
 	case "discovered_deployments":
 		return []string{"project", "endpoint", "binding", "compose_file"}
 	case "contexts":
-		return []string{"current", "name", "endpoint", "expected_workspace_uuid", "project", "binding"}
+		return []string{"current", "name", "endpoint", "credential_state", "project", "binding"}
 	case "checks":
 		return []string{"name", "status", "reason", "context", "endpoint", "reachable", "diagnostic_ok", "identity", "capabilities", "server_version", "error"}
 	case "containers":
 		return []string{"service", "name", "state", "health"}
 	case "bots":
-		return []string{"uuid", "name", "adapter", "enable", "use_pipeline_uuid"}
+		return []string{"name", "enable", "adapter", "use_pipeline_name", "uuid"}
 	case "pipelines":
-		return []string{"uuid", "name", "is_default", "for_version"}
+		return []string{"name", "is_default", "for_version", "uuid"}
 	case "providers":
-		return []string{"uuid", "name", "requester", "llm_count", "embedding_count", "rerank_count"}
+		return []string{"name", "requester", "llm_count", "embedding_count", "rerank_count", "uuid"}
 	case "models":
-		return []string{"uuid", "name", "provider_uuid", "context_length"}
+		return []string{"name", "provider_name", "context_length", "uuid"}
 	case "tasks":
 		return []string{"id", "task_type", "kind", "status", "created_at"}
 	case "bases":
-		return []string{"uuid", "name", "knowledge_engine_plugin_id"}
+		return []string{"name", "knowledge_engine_plugin_id", "uuid"}
 	case "files":
 		return []string{"uuid", "file_name", "extension", "status"}
 	case "servers":
-		return []string{"uuid", "name", "enable", "mode"}
+		return []string{"name", "enable", "mode", "uuid"}
 	case "plugins":
 		return []string{"author", "name", "version", "enabled", "status"}
 	case "skills":
@@ -704,6 +730,12 @@ func renderResourceList(w io.Writer, key string, items []any) error {
 		return err
 	}
 	fields := presentResourceFields(resourceFields(key), items)
+	if key == "bots" && len(presentResourceFields([]string{"use_pipeline_name"}, items)) == 0 {
+		fields = presentResourceFields([]string{"name", "enable", "adapter", "use_pipeline_uuid", "uuid"}, items)
+	}
+	if key == "models" && len(presentResourceFields([]string{"provider_name"}, items)) == 0 {
+		fields = presentResourceFields([]string{"name", "provider_uuid", "context_length", "uuid"}, items)
+	}
 	if len(fields) == 0 {
 		return renderValue(w, items, "")
 	}
@@ -719,6 +751,33 @@ func renderResourceList(w io.Writer, key string, items []any) error {
 		line := make([]string, len(fields))
 		for i, field := range fields {
 			line[i] = displayCell(row[field])
+			if field == "enable" || field == "enabled" {
+				if value, ok := row[field].(bool); ok {
+					if value {
+						line[i] = "已启用"
+					} else {
+						line[i] = "已停用"
+					}
+				}
+			}
+			if field == "is_default" {
+				if value, ok := row[field].(bool); ok {
+					if value {
+						line[i] = "是"
+					} else {
+						line[i] = "否"
+					}
+				}
+			}
+			if field == "binding" {
+				line[i] = bindingLabel(line[i])
+			}
+			if field == "credential_state" {
+				line[i] = credentialLabel(line[i])
+			}
+			if field == "name" || field == "description" || field == "display_name" || field == "requester" {
+				line[i] = truncateCell(line[i], 32)
+			}
 			if key == "contexts" && field == "current" {
 				line[i] = "-"
 				if row[field] == true {
@@ -764,6 +823,17 @@ func renderValue(w io.Writer, value any, label string) error {
 }
 
 func renderValueAt(w io.Writer, value any, label, indent string) error {
+	if label == fieldLabel("credential_state") {
+		if state, ok := value.(string); ok {
+			value = credentialLabel(state)
+		}
+	}
+	if label == fieldLabel("business_validation") && value == "not_run" {
+		value = "未执行"
+	}
+	if label == fieldLabel("validation_scope") && value == "identity_permissions_capabilities" {
+		value = "身份、权限和操作能力"
+	}
 	prefix := indent
 	if label != "" {
 		prefix += label + ": "
@@ -902,6 +972,29 @@ func renderCells(w io.Writer, rows [][]string) error {
 			}
 		}
 	}
+	width := 120
+	if configured, err := strconv.Atoi(os.Getenv("COLUMNS")); err == nil && configured >= 40 {
+		width = configured
+	}
+	total := 2 * (len(widths) - 1)
+	for _, size := range widths {
+		total += size
+	}
+	if total > width {
+		for index, row := range rows[1:] {
+			if index > 0 {
+				if _, err := fmt.Fprintln(w); err != nil {
+					return err
+				}
+			}
+			for i, cell := range row {
+				if _, err := fmt.Fprintf(w, "%s: %s\n", rows[0][i], cell); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
 	for _, row := range rows {
 		for i, cell := range row {
 			if _, err := io.WriteString(w, cell); err != nil {
@@ -932,4 +1025,111 @@ func cellWidth(value string) int {
 		}
 	}
 	return width
+}
+
+func actionSummary(data map[string]any) string {
+	if data["outcome_error"] == true {
+		return "操作未完整确认，请依据下方执行状态和回读结果处理。"
+	}
+	if data["dry_run"] == true {
+		if data["business_validation"] == "server_preview" {
+			return "服务端预览已完成，尚未执行安装。"
+		}
+		return "预检通过，尚未执行；仅确认所列检查，未确认服务端业务校验。"
+	}
+	if data["step"] == "completed" {
+		return "任务已完成，服务端结果如下。"
+	}
+	if data["submitted"] == true {
+		return "请求已提交；请查看任务状态确认是否完成。"
+	}
+	if data["verified"] == true {
+		return "操作已完成，回读验证通过。"
+	}
+	if verification, ok := data["verification"].(map[string]any); ok && verification["observable_fields_match"] == true {
+		return "操作已完成，可观察字段一致；隐藏字段未验证。"
+	}
+	if data["server_write"] == false {
+		return "检查已完成，未写入服务端。"
+	}
+	return "操作返回成功，具体执行与验证状态如下。"
+}
+
+func credentialLabel(state string) string {
+	if label, ok := map[string]string{"available": "可用（未鉴权）", "missing": "变量未设置", "not_configured": "未配置", "invalid_configuration": "配置无效", "stdin_required": "等待 stdin"}[state]; ok {
+		return label
+	}
+	return state
+}
+func bindingLabel(state string) string {
+	if label, ok := map[string]string{"registered": "已登记", "unregistered": "未登记", "ambiguous": "存在多个匹配", "verified": "已验证"}[state]; ok {
+		return label
+	}
+	return state
+}
+func truncateCell(text string, width int) string {
+	if cellWidth(text) <= width {
+		return text
+	}
+	out := ""
+	for _, r := range text {
+		next := out + string(r)
+		if cellWidth(next) > width-1 {
+			break
+		}
+		out = next
+	}
+	return out + "…"
+}
+
+func renderExperienceFooter(w io.Writer, value any, command string) error {
+	envelope, ok := value.(map[string]any)
+	if !ok {
+		return nil
+	}
+	data, _ := envelope["data"].(map[string]any)
+	meta, _ := envelope["meta"].(map[string]any)
+	if selection, ok := meta["list_selection"].(map[string]any); ok {
+		if _, err := fmt.Fprintf(w, "显示 %s 条（共 %s 条，客户端筛选）\n", displayCell(selection["matched"]), displayCell(selection["total"])); err != nil {
+			return err
+		}
+	}
+	if strings.HasSuffix(command, ".list") && commandListKey(command) != "" && command != "context.list" {
+		if _, err := fmt.Fprintln(w, "完整字段与未截断名称：在当前命令后加 -o json 或 -o yaml。"); err != nil {
+			return err
+		}
+	}
+	if command == "context.list" {
+		if items, ok := data["contexts"].([]any); ok && len(items) == 0 {
+			if _, err := fmt.Fprintln(w, "尚未保存环境。已有配置请用 --config <path> 或 LANGBOT_CONFIG；连接已有实例用 context add <name> --endpoint <url> --api-key-env <变量名>。"); err != nil {
+				return err
+			}
+		}
+	}
+	if steps, ok := meta["next_steps"].([]any); ok {
+		for _, step := range steps {
+			item, _ := step.(map[string]any)
+			argv, _ := item["argv"].([]any)
+			parts := []string{}
+			for _, arg := range argv {
+				parts = append(parts, quoteCommandArg(formatCell(arg)))
+			}
+			if _, err := fmt.Fprintln(w, "下一步（"+displayCell(item["description"])+"）："+strings.Join(parts, " ")); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func quoteCommandArg(value string) string {
+	if value != "" && strings.IndexFunc(value, func(r rune) bool {
+		return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("-_=./:\\", r))
+	}) < 0 {
+		return value
+	}
+	if runtime.GOOS == "windows" {
+		return "'" + strings.ReplaceAll(value, "'", "''") + "'"
+	}
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }

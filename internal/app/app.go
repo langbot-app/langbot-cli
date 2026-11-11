@@ -127,6 +127,7 @@ func (s *Service) ContextList(discover bool) (Result, error) {
 	items := make([]map[string]any, 0, len(names))
 	for _, name := range names {
 		item := contextView(name, file.Contexts[name], name == file.CurrentContext)
+		item["credential_state"] = s.credentialState(file, name)
 		for _, deployment := range deployments {
 			if deployment.Binding != "registered" || !sameLocalEndpoint(deployment.Endpoint, file.Contexts[name].Endpoint) {
 				continue
@@ -165,6 +166,16 @@ func (s *Service) ContextShow(name string, overrides ...CheckOptions) (Result, e
 	if err != nil {
 		return Result{}, err
 	}
+	if name == "" {
+		options := CheckOptions{}
+		if len(overrides) > 0 {
+			options = overrides[0]
+		}
+		name, err = writeContextName(file, options, s.deps.LookupEnv)
+		if err != nil {
+			return Result{}, result.New("input", "尚未选择环境；请运行 lbctl context list 和 lbctl context use <name>")
+		}
+	}
 	ctx, ok := file.Contexts[name]
 	if !ok {
 		return Result{}, result.New("not_found", "context 不存在")
@@ -185,6 +196,7 @@ func (s *Service) ContextShow(name string, overrides ...CheckOptions) (Result, e
 	}, s.deps.LookupEnv)
 	if resolveErr == nil {
 		effective = connectionView(conn)
+		effective["credential_state"] = s.connectionCredentialState(conn)
 	} else {
 		if conn.Endpoint != "" {
 			effective = connectionView(conn)
@@ -2291,6 +2303,8 @@ func writePlan(preflight WritePreflight, operation, uuid string) Result {
 		"dry_run":                 true,
 		"server_write":            false,
 		"preconditions_confirmed": true,
+		"business_validation":     "not_run",
+		"validation_scope":        "identity_permissions_capabilities",
 	}
 	if uuid != "" {
 		data["uuid"] = uuid
@@ -2944,4 +2958,26 @@ func validateContextName(name string) error {
 		return result.New("input", "context 名称无效")
 	}
 	return nil
+}
+
+func (s *Service) credentialState(file config.File, name string) string {
+	conn, err := config.Resolve(file, config.Options{Context: name, ContextSet: true}, s.deps.LookupEnv)
+	if err != nil {
+		return "invalid_configuration"
+	}
+	return s.connectionCredentialState(conn)
+}
+
+func (s *Service) connectionCredentialState(conn config.Connection) string {
+	if strings.HasPrefix(conn.CredentialSource, "env:") {
+		value, _ := s.deps.LookupEnv(strings.TrimPrefix(conn.CredentialSource, "env:"))
+		if strings.TrimSpace(value) == "" {
+			return "missing"
+		}
+		return "available"
+	}
+	if conn.CredentialSource == "stdin" {
+		return "stdin_required"
+	}
+	return "not_configured"
 }
