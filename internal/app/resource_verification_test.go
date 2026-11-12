@@ -26,6 +26,13 @@ func TestResourceVerificationChecksSubmittedFields(t *testing.T) {
 		{"missing credential", map[string]any{"config": map[string]any{"token": "sensitive-value"}}, map[string]any{"config": map[string]any{}}, false, false},
 		{"credential not saved", map[string]any{"config": map[string]any{"token": "sensitive-value"}}, map[string]any{"config": map[string]any{"token": ""}}, false, false},
 		{"credential clearing observable", map[string]any{"config": map[string]any{"token": ""}}, map[string]any{"config": map[string]any{"token": ""}}, true, true},
+		{"binding defaults", map[string]any{"event_bindings": []any{map[string]any{"target_uuid": "pipeline-a"}}}, map[string]any{"event_bindings": []any{map[string]any{"target_uuid": "pipeline-a", "id": "generated", "priority": 0}}}, true, true},
+		{"submitted binding ID changed", map[string]any{"event_bindings": []any{map[string]any{"id": "expected"}}}, map[string]any{"event_bindings": []any{map[string]any{"id": "different", "priority": 0}}}, false, false},
+		{"binding clearing ignored", map[string]any{"event_bindings": []any{}}, map[string]any{"event_bindings": []any{map[string]any{"id": "existing"}}}, false, false},
+		{"binding order changed", map[string]any{"event_bindings": []any{map[string]any{"target_uuid": "a"}, map[string]any{"target_uuid": "b"}}}, map[string]any{"event_bindings": []any{map[string]any{"target_uuid": "b"}, map[string]any{"target_uuid": "a"}}}, false, false},
+		{"binding filter clearing ignored", map[string]any{"event_bindings": []any{map[string]any{"filters": []any{}}}}, map[string]any{"event_bindings": []any{map[string]any{"id": "generated", "filters": []any{map[string]any{"field": "text"}}}}}, false, false},
+		{"processor defaults", map[string]any{"plugin_processors": []any{map[string]any{"processor_uuid": "processor-a"}}}, map[string]any{"plugin_processors": []any{map[string]any{"processor_uuid": "processor-a", "enabled": true}}}, true, true},
+		{"other records remain exact", map[string]any{"config": []any{map[string]any{"limit": 2}}}, map[string]any{"config": []any{map[string]any{"limit": 2, "extra": true}}}, false, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			got, err := verifyResourceWrite(WritePreflight{}, writeResultData("bot.update", "test"), test.expected, test.actual)

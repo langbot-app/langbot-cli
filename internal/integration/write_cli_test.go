@@ -122,6 +122,10 @@ func TestBotRoutingWriteReadback(t *testing.T) {
 					t.Fatal(err)
 				}
 				bot["uuid"] = "bot-a"
+				for _, raw := range bot["event_bindings"].([]any) {
+					binding := raw.(map[string]any)
+					binding["id"], binding["priority"], binding["description"], binding["order"] = "binding-a", 0, "", 0
+				}
 				switch test.mismatch {
 				case "binding":
 					bot["event_bindings"].([]any)[0].(map[string]any)["target_uuid"] = "different-pipeline"
