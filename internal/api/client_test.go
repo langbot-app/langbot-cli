@@ -642,9 +642,9 @@ func TestResourceReadsKeepPrefixAndProjectSensitiveFields(t *testing.T) {
 		paths = append(paths, r.URL.Path)
 		switch r.URL.Path {
 		case "/proxy/api/v1/platform/bots":
-			_, _ = w.Write([]byte(`{"code":0,"data":{"bots":[{"uuid":"bot-a","name":"resource-key","description":"desc","adapter":"http_bot","enable":true,"adapter_config":{"token":"bot-secret"},"created_at":"2026-01-01T00:00:00","unknown":{"secret":"hidden"}}]}}`))
+			_, _ = w.Write([]byte(`{"code":0,"data":{"bots":[{"uuid":"bot-a","name":"resource-key","description":"desc","adapter":"http_bot","enable":true,"adapter_config":{"token":"bot-secret"},"event_bindings":[{"event_pattern":"message.received","target_uuid":"pipeline-a","enabled":true,"filters":[],"token":"binding-secret"}],"plugin_processors":[{"processor_uuid":"processor-a","enabled":false,"config":{"authorization":"processor-secret"}}],"created_at":"2026-01-01T00:00:00","unknown":{"secret":"hidden"}}]}}`))
 		case "/proxy/api/v1/platform/bots/bot-a":
-			_, _ = w.Write([]byte(`{"code":0,"data":{"bot":{"uuid":"bot-a","name":"Bot A","adapter":"http_bot","config":{"api_key":"bot-secret"}}}}`))
+			_, _ = w.Write([]byte(`{"code":0,"data":{"bot":{"uuid":"bot-a","name":"Bot A","adapter":"http_bot","event_bindings":[],"plugin_processors":[],"config":{"api_key":"bot-secret"}}}}`))
 		case "/proxy/api/v1/pipelines":
 			_, _ = w.Write([]byte(`{"code":0,"data":{"pipelines":[{"uuid":"pipeline-a","name":"Pipeline A","description":"desc","is_default":false,"config":{"provider":{"secret":"provider-secret","token":"provider-token","key":"provider-key","url":"https://provider.example/key"}},"created_at":"2026-01-01T00:00:00"}]}}`))
 		case "/proxy/api/v1/pipelines/pipeline-a":
@@ -666,12 +666,33 @@ func TestResourceReadsKeepPrefixAndProjectSensitiveFields(t *testing.T) {
 	if _, ok := bots[0]["name"]; ok {
 		t.Fatal("Bot projection exposed a safe field containing the API Key")
 	}
+	bindings, bindingsOK := bots[0]["event_bindings"].([]any)
+	processors, processorsOK := bots[0]["plugin_processors"].([]any)
+	if !bindingsOK || !processorsOK || len(bindings) != 1 || len(processors) != 1 {
+		t.Fatalf("Bot list lost routing fields: %#v", bots[0])
+	}
+	if binding := bindings[0].(map[string]any); binding["target_uuid"] != "pipeline-a" || binding["enabled"] != true || binding["token"] != "***" {
+		t.Fatalf("Bot binding projection is incomplete or unsafe: %#v", binding)
+	}
+	if processor := processors[0].(map[string]any); processor["processor_uuid"] != "processor-a" || processor["enabled"] != false || processor["config"].(map[string]any)["authorization"] != "***" {
+		t.Fatalf("Bot processor projection is incomplete or unsafe: %#v", processor)
+	}
+	for _, secret := range []string{"bot-secret", "binding-secret", "processor-secret", "hidden"} {
+		if strings.Contains(fmt.Sprint(bots), secret) {
+			t.Fatalf("Bot projection exposed %q", secret)
+		}
+	}
 	bot, err := (Client{}).Bot(context.Background(), target, "bot-a")
 	if err != nil || bot["uuid"] != "bot-a" {
 		t.Fatalf("Bot() = %#v, err=%v", bot, err)
 	}
 	if _, ok := bot["config"]; ok {
 		t.Fatal("Bot projection exposed config")
+	}
+	for _, field := range []string{"event_bindings", "plugin_processors"} {
+		if items, ok := bot[field].([]any); !ok || items == nil || len(items) != 0 {
+			t.Fatalf("Bot get lost empty %s: %#v", field, bot)
+		}
 	}
 	pipelines, err := (Client{}).Pipelines(context.Background(), target)
 	if err != nil || len(pipelines) != 1 || pipelines[0]["uuid"] != "pipeline-a" {
