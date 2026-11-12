@@ -6,6 +6,38 @@ import (
 	"testing"
 )
 
+func TestBatchIngestOutputKeepsPartialResultsVisible(t *testing.T) {
+	var out bytes.Buffer
+	value := map[string]any{"ok": false, "error": map[string]any{"type": "batch_incomplete", "message": "批量入库未全部成功"}, "data": map[string]any{
+		"batch": true, "operation": "knowledge_base.ingest", "dry_run": false,
+		"summary": map[string]int{"total": 3, "completed": 1, "submitted": 0, "failed": 0, "unknown": 0, "pending": 1, "not_started": 1},
+		"files": []map[string]any{
+			{"path": "docs/a.txt", "status": "completed", "task_id": "17"},
+			{"path": "docs/b.txt", "status": "pending", "task_id": "18", "error": map[string]any{"type": "wait_timeout", "message": "等待异步任务超时"}},
+			{"path": "docs/c.txt", "status": "not_started"},
+		},
+	}}
+	if err := RenderCommand(&out, value, FormatDefault, "knowledge-base.ingest"); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"已完成 1", "等待未完成 1", "未开始 1", "docs/a.txt", "任务 17", "任务 18", "等待异步任务超时", "docs/c.txt"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("missing %q: %s", want, out.String())
+		}
+	}
+	if strings.Contains(out.String(), "任务已完成") {
+		t.Fatalf("batch failure reported as success: %s", out.String())
+	}
+	out.Reset()
+	value["data"].(map[string]any)["dry_run"] = true
+	if err := RenderCommand(&out, value, FormatDefault, "knowledge-base.ingest"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "批量预检未完成") || strings.Contains(out.String(), "预检通过") {
+		t.Fatalf("incomplete dry-run reported as success: %s", out.String())
+	}
+}
+
 func TestDefaultUninstallOutputIsConcise(t *testing.T) {
 	var out bytes.Buffer
 	value := map[string]any{

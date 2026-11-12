@@ -254,6 +254,10 @@ func renderDefaultData(w io.Writer, value any, command string) error {
 			return err
 		}
 		return renderValue(w, data, "")
+	case "knowledge-base.ingest":
+		if data["batch"] == true {
+			return renderIngestBatch(w, data)
+		}
 	case "logs":
 		if lines, ok := data["lines"].([]any); ok {
 			for _, line := range lines {
@@ -314,6 +318,46 @@ func renderDefaultData(w io.Writer, value any, command string) error {
 	}
 	// 文件正文、日志、检索和未专门编排的响应使用完整的安全详情。
 	return renderValue(w, data, "")
+}
+
+func renderIngestBatch(w io.Writer, data map[string]any) error {
+	summary, _ := data["summary"].(map[string]any)
+	if data["dry_run"] == true {
+		outcome := "批量预检通过"
+		if data["outcome_error"] == true {
+			outcome = "批量预检未完成"
+		}
+		if _, err := fmt.Fprintf(w, "%s，共 %s 个文件；未上传，未执行服务端业务校验。\n", outcome, formatCell(summary["total"])); err != nil {
+			return err
+		}
+	} else {
+		if _, err := fmt.Fprintf(w, "共 %s 个文件：已完成 %s，已提交 %s，失败 %s，结果未知 %s，等待未完成 %s，未开始 %s。\n",
+			formatCell(summary["total"]), formatCell(summary["completed"]), formatCell(summary["submitted"]), formatCell(summary["failed"]), formatCell(summary["unknown"]), formatCell(summary["pending"]), formatCell(summary["not_started"])); err != nil {
+			return err
+		}
+	}
+	states := map[string]string{"planned": "待上传", "submitted": "已提交", "completed": "已完成", "failed": "失败", "unknown": "结果未知", "pending": "等待未完成", "not_started": "未开始"}
+	items, _ := data["files"].([]any)
+	for _, item := range items {
+		row, _ := item.(map[string]any)
+		if _, err := fmt.Fprintf(w, "%s  %s", states[formatCell(row["status"])], displayCell(row["path"])); err != nil {
+			return err
+		}
+		if id, ok := row["task_id"]; ok {
+			if _, err := fmt.Fprintf(w, "  任务 %s", displayCell(id)); err != nil {
+				return err
+			}
+		}
+		if detail, ok := row["error"].(map[string]any); ok {
+			if _, err := fmt.Fprintf(w, "  %s", displayCell(detail["message"])); err != nil {
+				return err
+			}
+		}
+		if _, err := fmt.Fprintln(w); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func renderLocalAction(w io.Writer, data map[string]any) error {

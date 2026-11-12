@@ -137,6 +137,9 @@ func TestSchemaIsOfflineStableAndDescribesCommands(t *testing.T) {
 		t.Fatalf("unexpected bot.delete metadata: %#v", deleteCommand)
 	}
 	ingest := commands["knowledge-base.ingest"]
+	if !reflect.DeepEqual(ingest.RequiredOneOf, [][]string{{"file", "dir"}}) || !hasFlag(ingest.Flags, "file", "local", false) || !hasFlag(ingest.Flags, "dir", "local", false) || !strings.Contains(ingest.Examples, "--dir") {
+		t.Fatalf("ingest input alternatives are missing: %#v", ingest)
+	}
 	if !ingest.Mutating || !ingest.SupportsDryRun || !ingest.SupportsWait || len(ingest.Operations) < 3 {
 		t.Fatalf("knowledge-base.ingest metadata is incomplete: %#v", ingest)
 	}

@@ -270,6 +270,18 @@ Upload a document, submit ingestion, and wait for completion:
 lbctl knowledge-base ingest <uuid> --file ./document.pdf --wait
 ```
 
+Repeat `--file` or recursively import a directory with `--dir`. Both can be combined; duplicate paths are submitted once:
+
+```sh
+lbctl knowledge-base ingest <uuid> --file ./guide.pdf --file ./faq.md --wait
+lbctl knowledge-base ingest <uuid> --dir ./documents --dry-run
+lbctl knowledge-base ingest <uuid> --dir ./documents --wait
+```
+
+Directory scans skip dot-prefixed files/directories and symbolic links. Each file remains subject to the existing 10 MiB upload limit, including request metadata. The CLI checks all local paths before uploading and submitting files sequentially. `--wait` follows each task, with `--wait-timeout` applied separately to each file. Batch JSON/YAML output retains per-file status, file IDs, task IDs, and errors in `files`, with counts in `summary`; human output shows the same per-file outcomes. Without `--wait`, success means tasks were submitted.
+
+Confirmed file-specific failures allow the remaining files to proceed. An unknown submission, incomplete wait, authentication/permission failure, or incompatible target stops further submissions, preserves completed and unstarted items, and exits nonzero. Re-running uploads again; there is no cross-run deduplication or automatic retry. Single-file ZIP submission remains supported, but Core returns only one child task ID. Batch `--wait` rejects ZIP inputs before uploading: extract the archive and use `--dir` instead.
+
 ### Provider and Model
 
 ```sh

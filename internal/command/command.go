@@ -603,18 +603,17 @@ func newKnowledgeBaseCommand(service *app.Service, deps Dependencies, flags *glo
 	fileDelete.Flags().BoolVar(&fileDryRun, "dry-run", false, "只检查前置条件，不写入")
 	files.AddCommand(fileDelete)
 	command.AddCommand(files)
-	var filename string
+	var filenames []string
+	var directory string
 	var parserPluginID string
 	var dryRun bool
 	var wait bool
 	var pollInterval time.Duration
 	var waitTimeout time.Duration
 	ingest := &cobra.Command{
-		Use: "ingest <knowledge-base-id>", Short: "上传文件并提交知识库入库", Args: cobra.ExactArgs(1),
+		Use: "ingest <knowledge-base-id>", Short: "上传单个、多份文件或目录并提交知识库入库", Args: cobra.ExactArgs(1),
+		Example: "  lbctl knowledge-base ingest <id> --file guide.pdf --file faq.md --wait\n  lbctl knowledge-base ingest <id> --dir ./documents --dry-run\n  lbctl knowledge-base ingest <id> --dir ./documents --wait",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if strings.TrimSpace(filename) == "" || filename == "-" {
-				return emitCommand(deps, flags, app.Result{}, result.New("input", "--file 必须指定本地文件，不能使用 stdin"))
-			}
 			if dryRun && wait {
 				return emitCommand(deps, flags, app.Result{}, result.New("input", "--dry-run 不能与 --wait 同时使用"))
 			}
@@ -622,18 +621,19 @@ func newKnowledgeBaseCommand(service *app.Service, deps Dependencies, flags *glo
 				return emitCommand(deps, flags, app.Result{}, result.New("input", "等待间隔和等待超时必须为正数"))
 			}
 			return emitCall(deps, flags, func() (app.Result, error) {
-				return service.KnowledgeBaseIngest(cmd.Context(), args[0], filename, parserPluginID, dryRun, app.WaitOptions{
+				return service.KnowledgeBaseIngestFiles(cmd.Context(), args[0], filenames, directory, parserPluginID, dryRun, app.WaitOptions{
 					Wait: wait, PollInterval: pollInterval, WaitTimeout: waitTimeout,
 				}, connectionOptions(flags))
 			})
 		},
 	}
-	ingest.Flags().StringVar(&filename, "file", "", "要上传的本地文件")
+	ingest.Flags().StringArrayVar(&filenames, "file", nil, "本地文件；可重复传入，与 --dir 至少提供一项，不支持 stdin")
+	ingest.Flags().StringVar(&directory, "dir", "", "递归导入目录，跳过点开头项和符号链接；可与 --file 合用")
 	ingest.Flags().StringVar(&parserPluginID, "parser-plugin-id", "", "可选的解析器插件 ID")
 	ingest.Flags().BoolVar(&dryRun, "dry-run", false, "检查前置条件但不上传或提交")
-	ingest.Flags().BoolVar(&wait, "wait", false, "等待入库任务进入终态")
+	ingest.Flags().BoolVar(&wait, "wait", false, "逐个等待所有输入文件的入库任务；批量等待不支持 ZIP，请先解压")
 	ingest.Flags().DurationVar(&pollInterval, "poll-interval", time.Second, "任务轮询间隔")
-	ingest.Flags().DurationVar(&waitTimeout, "wait-timeout", 5*time.Minute, "本地等待超时")
+	ingest.Flags().DurationVar(&waitTimeout, "wait-timeout", 5*time.Minute, "每个文件的本地等待超时")
 	command.AddCommand(ingest)
 	return command
 }

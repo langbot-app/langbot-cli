@@ -26,6 +26,7 @@ type schemaCommandMeta struct {
 	SupportsDryRun       bool
 	SupportsWait         bool
 	RequiredFlags        map[string]bool
+	RequiredOneOf        [][]string
 	FlagApplicability    map[string]schemaFlagApplicability
 	InputConflicts       []schemaConflict
 	ConditionalOutputs   []schemaConditionalOutput
@@ -102,6 +103,7 @@ type schemaCommand struct {
 	SupportsDryRun        bool                      `json:"supports_dry_run"`
 	SupportsWait          bool                      `json:"supports_wait"`
 	InputConflicts        []schemaConflict          `json:"input_conflicts,omitempty"`
+	RequiredOneOf         [][]string                `json:"required_one_of,omitempty"`
 	DefaultOutput         string                    `json:"default_output"`
 	MachineOutputs        []string                  `json:"machine_outputs"`
 	OutputEnvelope        string                    `json:"output_envelope,omitempty"`
@@ -243,7 +245,11 @@ var schemaMetaByName = map[string]schemaCommandMeta{
 	"knowledge-base.retrieve":    readMetaWithFlags(operationIDs("knowledge_base.retrieve"), "file"),
 	"knowledge-base.file.list":   readMeta(operationIDs("knowledge_base.file.list")...),
 	"knowledge-base.file.delete": writeMeta(operationIDs("knowledge_base.file.delete"), schemaWriteOptions{SupportsDryRun: true, Destructive: true, RequiresYes: true, Readbacks: []schemaOperation{readbackID("knowledge_base.file.list")}}),
-	"knowledge-base.ingest":      writeMeta(operationIDs("knowledge_base.file.store", "file.document.upload", "knowledge_base.get", conditionalID("task.get", flagEquals("wait", true))), schemaWriteOptions{SupportsDryRun: true, SupportsWait: true, RequiredFlags: []string{"file"}}),
+	"knowledge-base.ingest": func() schemaCommandMeta {
+		meta := writeMeta(operationIDs("knowledge_base.file.store", "file.document.upload", "knowledge_base.get", conditionalID("task.get", flagEquals("wait", true))), schemaWriteOptions{SupportsDryRun: true, SupportsWait: true})
+		meta.RequiredOneOf = [][]string{{"file", "dir"}}
+		return meta
+	}(),
 
 	"plugin.list":                readMeta(operationIDs("plugin.list")...),
 	"plugin.get":                 readMeta(operationIDs("plugin.get")...),
@@ -549,6 +555,7 @@ func collectSchemaCommands(parent *cobra.Command, prefix []string, result *[]sch
 			SupportsDryRun:        meta.SupportsDryRun,
 			SupportsWait:          meta.SupportsWait,
 			InputConflicts:        schemaInputConflicts(meta, schemaFlagsFor(child, meta)),
+			RequiredOneOf:         meta.RequiredOneOf,
 			DefaultOutput:         defaultOutputFor(child),
 			MachineOutputs:        machineOutputsFor(child),
 			OutputEnvelope:        outputEnvelopeFor(child),
@@ -603,6 +610,16 @@ func validateSchemaMetadata(root *cobra.Command) error {
 				for flagName := range meta.RequiredFlags {
 					if !schemaHasFlag(flags, flagName) {
 						return result.New("internal", "schema 元数据引用了不存在的 flag: "+name+" --"+flagName)
+					}
+				}
+				for _, group := range meta.RequiredOneOf {
+					if len(group) == 0 {
+						return result.New("internal", "schema 至少必选项分组不能为空: "+name)
+					}
+					for _, flagName := range group {
+						if !schemaHasFlag(flags, flagName) {
+							return result.New("internal", "schema 必选项分组引用了不存在的 flag: "+name+" --"+flagName)
+						}
 					}
 				}
 				for flagName, applicability := range meta.FlagApplicability {
@@ -718,7 +735,7 @@ func schemaInputConflicts(meta schemaCommandMeta, flags []schemaFlag) []schemaCo
 		if flag.Name == "api-key-stdin" {
 			hasAPIKeyStdin = true
 		}
-		if flag.Name == "file" && strings.Contains(flag.Usage, "stdin") {
+		if flag.Name == "file" && flag.Type == "string" && strings.Contains(flag.Usage, "stdin") {
 			hasStdinFile = true
 		}
 		if flag.Name == "dry-run" {

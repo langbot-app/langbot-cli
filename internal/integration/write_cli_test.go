@@ -333,6 +333,84 @@ func TestKnowledgeBaseIngestAndTaskGetCommands(t *testing.T) {
 	}
 }
 
+func TestKnowledgeBatchIngestDirectoryAndRepeatedFileFlags(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	for _, name := range []string{"comma,name.txt", "second.md", "nested/third.txt", ".env"} {
+		path := filepath.Join(dir, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(name), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var uploads, submissions, identities atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if request.Header.Get("X-API-Key") != "batch-key" {
+			w.WriteHeader(401)
+			fmt.Fprint(w, `{"code":401,"data":null}`)
+			return
+		}
+		switch request.URL.Path {
+		case "/api/v1/system/context":
+			identities.Add(1)
+			fmt.Fprint(w, `{"code":0,"data":{"instance_uuid":"instance-a","workspace_uuid":"workspace-a","api_key_id":"key-a","permissions":["resource.manage","resource.view"]}}`)
+		case "/api/v1/system/capabilities":
+			fmt.Fprint(w, `{"code":0,"data":{"schema_version":1,"operations":{"knowledge_base.file.store":{"supported":true},"knowledge_base.get":{"supported":true},"file.document.upload":{"supported":true},"task.get":{"supported":true}}}}`)
+		case "/api/v1/knowledge/bases/kb-a":
+			fmt.Fprint(w, `{"code":0,"data":{"base":{"uuid":"kb-a","name":"KB"}}}`)
+		case "/api/v1/files/documents":
+			file, header, err := request.FormFile("file")
+			if err != nil {
+				t.Error(err)
+				w.WriteHeader(400)
+				return
+			}
+			_ = file.Close()
+			if header.Filename != "comma,name.txt" && header.Filename != "second.md" && header.Filename != "third.txt" {
+				t.Errorf("unexpected file: %s", header.Filename)
+			}
+			fmt.Fprintf(w, `{"code":0,"data":{"file_id":"file-%d"}}`, uploads.Add(1))
+		case "/api/v1/knowledge/bases/kb-a/files":
+			var body map[string]any
+			if err := json.NewDecoder(request.Body).Decode(&body); err != nil || body["parser_plugin_id"] != "parser-a" {
+				t.Errorf("body=%v err=%v", body, err)
+			}
+			fmt.Fprintf(w, `{"code":0,"data":{"task_id":%d}}`, submissions.Add(1))
+		default:
+			if strings.HasPrefix(request.URL.Path, "/api/v1/system/tasks/") {
+				fmt.Fprintf(w, `{"code":0,"data":{"id":%s,"task_type":"user","kind":"knowledge-operation","status":"succeeded","error":null,"result":null,"created_at":1}}`, strings.TrimPrefix(request.URL.Path, "/api/v1/system/tasks/"))
+				return
+			}
+			w.WriteHeader(404)
+		}
+	}))
+	defer server.Close()
+	configureWriteContext(t, configPath, server.URL, "BATCH_KEY")
+	env := map[string]string{"BATCH_KEY": "batch-key"}
+	dry := run(t, configPath, env, "", "knowledge-base", "ingest", "kb-a", "--dir", dir, "--dry-run")
+	requireSuccess(t, dry)
+	if data := dry.data["data"].(map[string]any); data["batch"] != true || len(data["files"].([]any)) != 3 || uploads.Load() != 0 {
+		t.Fatalf("dry-run did not plan directory without writes: %s", dry.out)
+	}
+	first, second := filepath.Join(dir, "comma,name.txt"), filepath.Join(dir, "second.md")
+	repeated := run(t, configPath, env, "batch-key\n", "knowledge-base", "ingest", "kb-a", "--file", first, "--file", second, "--file", first, "--parser-plugin-id", "parser-a", "--api-key-stdin")
+	requireSuccess(t, repeated)
+	if data := repeated.data["data"].(map[string]any); len(data["files"].([]any)) != 2 || data["summary"].(map[string]any)["submitted"] != float64(2) || uploads.Load() != 2 {
+		t.Fatalf("repeated --file did not preserve comma or deduplicate: %s", repeated.out)
+	}
+	waited := run(t, configPath, env, "", "knowledge-base", "ingest", "kb-a", "--dir", dir, "--parser-plugin-id", "parser-a", "--wait", "--wait-timeout", "1s")
+	requireSuccess(t, waited)
+	if data := waited.data["data"].(map[string]any); data["summary"].(map[string]any)["completed"] != float64(3) || uploads.Load() != 5 || submissions.Load() != 5 || identities.Load() != 3 {
+		t.Fatalf("directory did not wait for every file: %s", waited.out)
+	}
+	invalid := run(t, configPath, env, "", "knowledge-base", "ingest", "kb-a", "--file", first, "--file", filepath.Join(dir, "missing.txt"))
+	if invalid.code != 2 || uploads.Load() != 5 || identities.Load() != 3 {
+		t.Fatalf("invalid batch wrote data or queried the target: %s", invalid.out)
+	}
+}
+
 func TestExtensionCommandsCoverDryRunInstallAndAsyncTest(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "config.yaml")
 	bodyPath := filepath.Join(t.TempDir(), "request.json")
