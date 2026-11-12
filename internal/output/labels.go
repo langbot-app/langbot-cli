@@ -2,6 +2,11 @@ package output
 
 // Labels apply only to human rendering. Protocol keys and resource names stay unchanged.
 var humanFieldLabels = map[string]string{
+	"backend": "已保存后端", "effective_backend": "当前生效后端", "backends": "后端可用性",
+	"e2b": "E2B 连接", "e2b_configurable": "允许自定义 E2B", "api_key_configured": "已配置 API Key",
+	"api_url": "API 地址", "sandbox_url": "沙箱地址", "template": "模板", "source": "配置来源",
+	"limits": "工作区限制", "limit_caps": "服务端上限", "limit_capabilities": "支持的资源限制",
+	"settings": "沙箱配置", "template_validation": "模板验证状态", "template_validated": "临时执行及清理已验证", "cleanup_reason": "清理诊断",
 	"credential_state": "凭据状态", "use_pipeline_name": "Pipeline", "provider_name": "供应商",
 	"model_type": "模型类型", "timeout": "超时",
 	"business_validation": "业务校验", "validation_scope": "检查范围", "server_write": "已写入服务端", "submitted": "已提交",

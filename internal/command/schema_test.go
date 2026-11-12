@@ -32,6 +32,26 @@ func TestCompactSchemaAndExamplesStayOffline(t *testing.T) {
 	}
 }
 
+func TestSandboxConfigurationSchemaIsOfflineAndSeparatesCheckFromTest(t *testing.T) {
+	result := executeSchemaForTest(t, "schema", "--command", "sandbox.config")
+	var envelope schemaEnvelope
+	if json.Unmarshal([]byte(result.output), &envelope) != nil || len(envelope.Data.Commands) != 5 {
+		t.Fatal("sandbox config group or children missing")
+	}
+	for _, command := range envelope.Data.Commands {
+		switch command.Name {
+		case "sandbox.config.check":
+			if command.Mutating || command.RequiresYes || !command.RequiresSavedContext || !command.RequiresWorkspaceBind || !strings.Contains(command.Examples, "--e2b-api-key-env") {
+				t.Fatalf("incorrect draft check contract: %#v", command)
+			}
+		case "sandbox.config.test", "sandbox.config.update":
+			if !command.Mutating || !command.RequiresYes || !command.SupportsDryRun || !hasFlag(command.Flags, "yes", "local", false) {
+				t.Fatalf("confirmation or dry-run contract missing: %#v", command)
+			}
+		}
+	}
+}
+
 func TestListFilterPreservesGroupsAndNumericIDs(t *testing.T) {
 	value, err := applyListView(app.Result{Data: map[string]any{"models": map[string]any{"llm": []any{map[string]any{"id": json.Number("9007199254740993"), "name": "DeepSeek"}, map[string]any{"name": "Other"}}, "embedding": []any{}}}}, listViewOptions{key: "models", filter: "deepseek"})
 	if err != nil {
@@ -137,6 +157,9 @@ func TestSchemaIsOfflineStableAndDescribesCommands(t *testing.T) {
 		t.Fatalf("unexpected bot.delete metadata: %#v", deleteCommand)
 	}
 	ingest := commands["knowledge-base.ingest"]
+	if !reflect.DeepEqual(ingest.RequiredOneOf, [][]string{{"file", "dir"}}) || !hasFlag(ingest.Flags, "file", "local", false) || !hasFlag(ingest.Flags, "dir", "local", false) || !strings.Contains(ingest.Examples, "--dir") {
+		t.Fatalf("ingest input alternatives are missing: %#v", ingest)
+	}
 	if !ingest.Mutating || !ingest.SupportsDryRun || !ingest.SupportsWait || len(ingest.Operations) < 3 {
 		t.Fatalf("knowledge-base.ingest metadata is incomplete: %#v", ingest)
 	}

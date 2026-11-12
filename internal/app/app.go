@@ -705,26 +705,15 @@ func (s *Service) KnowledgeBaseIngest(
 	if !fileInfo.Mode().IsRegular() {
 		return Result{}, result.New("input", "上传路径必须是普通文件")
 	}
-	preflight, err := s.WritePreflight(ctx, "knowledge_base.file.store", options)
+	preflight, base, err := s.prepareKnowledgeBaseIngest(ctx, identifier, wait.Wait && !dryRun, options)
 	if err != nil {
 		return Result{Meta: preflight.Meta()}, err
 	}
-	if err := requireCapability(preflight, "file.document.upload"); err != nil {
-		return Result{Meta: preflight.Meta()}, err
-	}
-	if err := requireCapability(preflight, "knowledge_base.get"); err != nil {
-		return Result{Meta: preflight.Meta()}, err
-	}
-	if wait.Wait && !dryRun {
-		if err := requireCapability(preflight, "task.get"); err != nil {
-			return Result{Meta: preflight.Meta()}, err
-		}
-	}
+	return s.ingestKnowledgeBaseFile(ctx, identifier, filename, fileInfo.Size(), parserPluginID, dryRun, wait, preflight, base)
+}
+
+func (s *Service) ingestKnowledgeBaseFile(ctx context.Context, identifier, filename string, size int64, parserPluginID string, dryRun bool, wait WaitOptions, preflight WritePreflight, base map[string]any) (Result, error) {
 	client, target := s.writeClient(preflight)
-	base, err := client.KnowledgeBase(ctx, target, identifier)
-	if err != nil {
-		return Result{Meta: preflight.Meta()}, err
-	}
 	if dryRun {
 		return Result{Data: map[string]any{
 			"operation":               "knowledge_base.ingest",
@@ -735,7 +724,7 @@ func (s *Service) KnowledgeBaseIngest(
 			"knowledge_base":          base,
 			"file": map[string]any{
 				"name":       filepath.Base(filename),
-				"size_bytes": fileInfo.Size(),
+				"size_bytes": size,
 			},
 		}, Meta: preflight.Meta()}, nil
 	}
@@ -2510,8 +2499,14 @@ func (s *Service) writePreflight(ctx context.Context, operation, permission stri
 	if permission != "" && !hasPermission(identity, permission) {
 		return WritePreflight{Connection: conn, Identity: identity}, result.New("permission", "当前 API Key 缺少 "+permission+" 权限")
 	}
-	if !hasPermission(identity, "resource.view") {
-		return WritePreflight{Connection: conn, Identity: identity}, result.New("permission", "当前 API Key 缺少写后回读所需的 resource.view 权限")
+	readPermission := "resource.view"
+	if operation == "workspace.sandbox.update" {
+		readPermission = "workspace.view"
+	} else if operation == "workspace.sandbox.check" || operation == "workspace.sandbox.test" {
+		readPermission = ""
+	}
+	if readPermission != "" && !hasPermission(identity, readPermission) {
+		return WritePreflight{Connection: conn, Identity: identity}, result.New("permission", "当前 API Key 缺少写后回读所需的 "+readPermission+" 权限")
 	}
 	capabilities, err := s.capabilities(ctx, conn)
 	if err != nil {
@@ -2531,6 +2526,8 @@ func (s *Service) writePreflight(ctx context.Context, operation, permission stri
 
 func readbackCapability(operation string) string {
 	switch {
+	case operation == "workspace.sandbox.update":
+		return "workspace.sandbox.get"
 	case strings.HasPrefix(operation, "bot."):
 		return "bot.get"
 	case operation == "pipeline.extensions.update":

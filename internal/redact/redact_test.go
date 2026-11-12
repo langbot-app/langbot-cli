@@ -6,6 +6,19 @@ import (
 	"testing"
 )
 
+func TestSandboxCredentialFlagIsVisibleButCredentialTextIsMasked(t *testing.T) {
+	for _, render := range []func(any, string) any{Value, Configuration} {
+		input := map[string]any{"e2b": map[string]any{"api_key_configured": true, "api_key": "private-e2b-key"}}
+		got := render(input, "").(map[string]any)["e2b"].(map[string]any)
+		if got["api_key_configured"] != true || got["api_key"] == "private-e2b-key" {
+			t.Fatalf("credential projection is unsafe or hides availability: %#v", got)
+		}
+		if render("private-e2b-key", "api_key_configured") == "private-e2b-key" {
+			t.Fatal("non-boolean availability flag leaked credential text")
+		}
+	}
+}
+
 func TestConfigurationRetainsOrdinaryFieldsAndMasksCredentials(t *testing.T) {
 	input := map[string]any{"port": 5300, "enabled": false, "max_tokens": 2048, "headers": map[string]any{"Content-Type": "application/json", "Authorization": "Bearer private-auth"}, "items": []any{map[string]any{"clientKey": "private-key", "temperature": 0.5}}, "url": "https://alice:private-password@example.com/api?api_key=private-query&limit=3"}
 	got := Configuration(input, "").(map[string]any)

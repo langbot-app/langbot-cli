@@ -100,6 +100,88 @@ func TestBotWriteCommandsDryRunConfirmAndReadBack(t *testing.T) {
 	}
 }
 
+func TestBotRoutingWriteReadback(t *testing.T) {
+	const binding = `[{"event_pattern":"message.received","target_type":"pipeline","target_uuid":"pipeline-a","enabled":true,"filters":[]}]`
+	const processor = `[{"processor_uuid":"processor-a","enabled":true}]`
+	for _, action := range []string{"create", "update"} {
+		for _, test := range []struct {
+			name, bindings, processors, mismatch string
+		}{
+			{name: "saved event binding", bindings: binding, processors: `[]`},
+			{name: "saved plugin processor", bindings: `[]`, processors: processor},
+			{name: "cleared lists", bindings: `[]`, processors: `[]`},
+			{name: "changed binding", bindings: binding, processors: processor, mismatch: "binding"},
+			{name: "changed processor", bindings: binding, processors: processor, mismatch: "processor"},
+			{name: "missing binding", bindings: binding, processors: processor, mismatch: "event_bindings"},
+			{name: "missing processor", bindings: binding, processors: processor, mismatch: "plugin_processors"},
+		} {
+			t.Run(action+"/"+test.name, func(t *testing.T) {
+				body := fmt.Sprintf(`{"name":"HTTP Bot","adapter":"http_bot","enable":true,"adapter_config":{"inbound_secret":"routing-test-private-secret"},"event_bindings":%s,"plugin_processors":%s}`, test.bindings, test.processors)
+				var bot map[string]any
+				if err := json.Unmarshal([]byte(body), &bot); err != nil {
+					t.Fatal(err)
+				}
+				bot["uuid"] = "bot-a"
+				for _, raw := range bot["event_bindings"].([]any) {
+					binding := raw.(map[string]any)
+					binding["id"], binding["priority"], binding["description"], binding["order"] = "binding-a", 0, "", 0
+				}
+				switch test.mismatch {
+				case "binding":
+					bot["event_bindings"].([]any)[0].(map[string]any)["target_uuid"] = "different-pipeline"
+				case "processor":
+					bot["plugin_processors"].([]any)[0].(map[string]any)["enabled"] = false
+				case "event_bindings", "plugin_processors":
+					delete(bot, test.mismatch)
+				}
+				var writes atomic.Int32
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					switch r.URL.Path {
+					case "/api/v1/system/context":
+						fmt.Fprint(w, `{"code":0,"data":{"instance_uuid":"instance-a","workspace_uuid":"workspace-a","api_key_id":"key-a","permissions":["resource.manage","resource.view"]}}`)
+					case "/api/v1/system/capabilities":
+						fmt.Fprint(w, capabilitiesJSON("bot.create", "bot.update", "bot.get"))
+					case "/api/v1/platform/bots", "/api/v1/platform/bots/bot-a":
+						if r.Method == http.MethodGet && r.URL.Path == "/api/v1/platform/bots/bot-a" {
+							_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": map[string]any{"bot": bot}})
+							return
+						}
+						if action == "create" && r.Method == http.MethodPost && r.URL.Path == "/api/v1/platform/bots" || action == "update" && r.Method == http.MethodPut && r.URL.Path == "/api/v1/platform/bots/bot-a" {
+							writes.Add(1)
+							fmt.Fprint(w, `{"code":0,"data":{"uuid":"bot-a"}}`)
+							return
+						}
+						writeCLIError(w, http.StatusMethodNotAllowed)
+					default:
+						writeCLIError(w, http.StatusNotFound)
+					}
+				}))
+				defer server.Close()
+				configPath := filepath.Join(t.TempDir(), "config.yaml")
+				configureWriteContext(t, configPath, server.URL, "BOT_KEY")
+				args := []string{"bot", action}
+				if action == "update" {
+					args = append(args, "bot-a")
+				}
+				got := run(t, configPath, map[string]string{"BOT_KEY": "workspace-private-key"}, body, append(args, "--file", "-")...)
+				if test.mismatch == "" {
+					requireSuccess(t, got)
+				} else if got.code == 0 || got.data["error"].(map[string]any)["type"] != "verification_failed" {
+					t.Fatalf("changed or missing routing was accepted: %s", got.out)
+				}
+				data := got.data["data"].(map[string]any)
+				verification := data["verification"].(map[string]any)
+				if data["uuid"] != "bot-a" || verification["observable_fields_match"] != (test.mismatch == "") || data["verified"] != false || writes.Load() != 1 {
+					t.Fatalf("incorrect write outcome or retried request: writes=%d output=%s", writes.Load(), got.out)
+				}
+				if strings.Contains(got.out, "routing-test-private-secret") {
+					t.Fatalf("routing readback exposed a credential: %s", got.out)
+				}
+			})
+		}
+	}
+}
+
 func TestPipelineApplyCreateUpdateAndPartialResult(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "config.yaml")
 	const key = "pipeline-write-key"
@@ -330,6 +412,84 @@ func TestKnowledgeBaseIngestAndTaskGetCommands(t *testing.T) {
 	taskData := task.data["data"].(map[string]any)["task"].(map[string]any)
 	if taskData["id"] != float64(17) || taskData["status"] != "succeeded" {
 		t.Fatalf("task output = %s", task.out)
+	}
+}
+
+func TestKnowledgeBatchIngestDirectoryAndRepeatedFileFlags(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	for _, name := range []string{"comma,name.txt", "second.md", "nested/third.txt", ".env"} {
+		path := filepath.Join(dir, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(name), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var uploads, submissions, identities atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if request.Header.Get("X-API-Key") != "batch-key" {
+			w.WriteHeader(401)
+			fmt.Fprint(w, `{"code":401,"data":null}`)
+			return
+		}
+		switch request.URL.Path {
+		case "/api/v1/system/context":
+			identities.Add(1)
+			fmt.Fprint(w, `{"code":0,"data":{"instance_uuid":"instance-a","workspace_uuid":"workspace-a","api_key_id":"key-a","permissions":["resource.manage","resource.view"]}}`)
+		case "/api/v1/system/capabilities":
+			fmt.Fprint(w, `{"code":0,"data":{"schema_version":1,"operations":{"knowledge_base.file.store":{"supported":true},"knowledge_base.get":{"supported":true},"file.document.upload":{"supported":true},"task.get":{"supported":true}}}}`)
+		case "/api/v1/knowledge/bases/kb-a":
+			fmt.Fprint(w, `{"code":0,"data":{"base":{"uuid":"kb-a","name":"KB"}}}`)
+		case "/api/v1/files/documents":
+			file, header, err := request.FormFile("file")
+			if err != nil {
+				t.Error(err)
+				w.WriteHeader(400)
+				return
+			}
+			_ = file.Close()
+			if header.Filename != "comma,name.txt" && header.Filename != "second.md" && header.Filename != "third.txt" {
+				t.Errorf("unexpected file: %s", header.Filename)
+			}
+			fmt.Fprintf(w, `{"code":0,"data":{"file_id":"file-%d"}}`, uploads.Add(1))
+		case "/api/v1/knowledge/bases/kb-a/files":
+			var body map[string]any
+			if err := json.NewDecoder(request.Body).Decode(&body); err != nil || body["parser_plugin_id"] != "parser-a" {
+				t.Errorf("body=%v err=%v", body, err)
+			}
+			fmt.Fprintf(w, `{"code":0,"data":{"task_id":%d}}`, submissions.Add(1))
+		default:
+			if strings.HasPrefix(request.URL.Path, "/api/v1/system/tasks/") {
+				fmt.Fprintf(w, `{"code":0,"data":{"id":%s,"task_type":"user","kind":"knowledge-operation","status":"succeeded","error":null,"result":null,"created_at":1}}`, strings.TrimPrefix(request.URL.Path, "/api/v1/system/tasks/"))
+				return
+			}
+			w.WriteHeader(404)
+		}
+	}))
+	defer server.Close()
+	configureWriteContext(t, configPath, server.URL, "BATCH_KEY")
+	env := map[string]string{"BATCH_KEY": "batch-key"}
+	dry := run(t, configPath, env, "", "knowledge-base", "ingest", "kb-a", "--dir", dir, "--dry-run")
+	requireSuccess(t, dry)
+	if data := dry.data["data"].(map[string]any); data["batch"] != true || len(data["files"].([]any)) != 3 || uploads.Load() != 0 {
+		t.Fatalf("dry-run did not plan directory without writes: %s", dry.out)
+	}
+	first, second := filepath.Join(dir, "comma,name.txt"), filepath.Join(dir, "second.md")
+	repeated := run(t, configPath, env, "batch-key\n", "knowledge-base", "ingest", "kb-a", "--file", first, "--file", second, "--file", first, "--parser-plugin-id", "parser-a", "--api-key-stdin")
+	requireSuccess(t, repeated)
+	if data := repeated.data["data"].(map[string]any); len(data["files"].([]any)) != 2 || data["summary"].(map[string]any)["submitted"] != float64(2) || uploads.Load() != 2 {
+		t.Fatalf("repeated --file did not preserve comma or deduplicate: %s", repeated.out)
+	}
+	waited := run(t, configPath, env, "", "knowledge-base", "ingest", "kb-a", "--dir", dir, "--parser-plugin-id", "parser-a", "--wait", "--wait-timeout", "1s")
+	requireSuccess(t, waited)
+	if data := waited.data["data"].(map[string]any); data["summary"].(map[string]any)["completed"] != float64(3) || uploads.Load() != 5 || submissions.Load() != 5 || identities.Load() != 3 {
+		t.Fatalf("directory did not wait for every file: %s", waited.out)
+	}
+	invalid := run(t, configPath, env, "", "knowledge-base", "ingest", "kb-a", "--file", first, "--file", filepath.Join(dir, "missing.txt"))
+	if invalid.code != 2 || uploads.Load() != 5 || identities.Load() != 3 {
+		t.Fatalf("invalid batch wrote data or queried the target: %s", invalid.out)
 	}
 }
 

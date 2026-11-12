@@ -270,6 +270,18 @@ lbctl knowledge-base delete <uuid> --yes
 lbctl knowledge-base ingest <uuid> --file ./document.pdf --wait
 ```
 
+可重复指定 `--file`，或用 `--dir` 递归导入整个目录；二者也可合用，重复路径只提交一次：
+
+```sh
+lbctl knowledge-base ingest <uuid> --file ./guide.pdf --file ./faq.md --wait
+lbctl knowledge-base ingest <uuid> --dir ./documents --dry-run
+lbctl knowledge-base ingest <uuid> --dir ./documents --wait
+```
+
+目录扫描跳过点开头的文件、目录和符号链接；每个文件受现有 10 MiB 上传限制约束（含请求元数据）。CLI 先检查全部本地路径，再按顺序上传和提交；`--wait` 逐个等待任务，`--wait-timeout` 对每个文件分别计时。JSON/YAML 的批量结果在 `files` 保留各文件的状态、文件 ID、任务 ID 和错误，并在 `summary` 汇总；人工输出显示同样的逐文件结论。不加 `--wait` 只表示任务已提交。
+
+已确认的单文件失败会继续处理其他文件；提交结果未知、等待未完成、鉴权或权限等目标级错误会停止后续提交，保留已完成和未开始项，并返回非零退出码。重复执行会重新上传，当前不做跨次去重或自动重试。ZIP 仍可按单文件方式提交，但 Core 只返回其中一个子任务 ID；批量 `--wait` 遇到 ZIP 会在上传前拒绝，请先解压后使用 `--dir`。
+
 ### Provider 与 Model
 
 ```sh
@@ -484,7 +496,34 @@ lbctl monitoring sessions --active true
 
 运行记录查询要求 `resource.view`。列表支持 `--limit 1..500` 和 `--offset`，Core 可进一步限制；`--start-time`、`--end-time` 使用 ISO 8601 时间。可用筛选条件见各命令 `--help`。
 
-## Sandbox 只读诊断
+## Sandbox 配置与诊断
+
+工作区沙箱配置使用 Core 的 `workspace.sandbox.get/update/check/test` 能力：
+
+```sh
+lbctl sandbox config get --refresh
+lbctl sandbox config update --file sandbox.yaml --dry-run
+lbctl sandbox config update --file sandbox.yaml --yes
+lbctl sandbox config check --file e2b.yaml --e2b-api-key-env E2B_API_KEY
+lbctl --timeout 2m sandbox config test --file e2b.yaml --e2b-api-key-env E2B_API_KEY --yes
+```
+
+`sandbox.yaml` 示例：
+
+```yaml
+backend: docker
+limits:
+  timeout_sec: 60
+  max_sessions: 2
+```
+
+保存请求支持 `backend: docker/e2b/nsjail`，以及可选的 `e2b` 和 `limits`。`e2b` 可填写 `api_url`、`sandbox_url`、`template` 和 `api_key`；推荐用 `--e2b-api-key-env` 注入密钥，或通过 `--file -` 从 stdin 提供请求体。不要同时从请求体和环境变量选项提供 E2B 密钥。Workspace 的 `--api-key-stdin` 仍然可用，但不能与 `--file -` 共用 stdin。查询只展示 `api_key_configured`，CLI 不把密钥写入 context。省略密钥时的保留规则及更换地址是否必须提供新密钥，由 Core 校验。
+
+`e2b.yaml` 的检查/测试请求形如 `{"e2b":{"api_url":"https://api.example.com","sandbox_url":"https://sandbox.example.com","template":"base"}}`；也可以省略文件，检查或测试服务端当前的 E2B 配置。`check` 不保存、不创建沙箱；显式 `test --yes` 会消耗 E2B 配额并可能计费，由 Core 创建临时沙箱、执行验证命令并清理。HTTP 200 不代表测试成功；创建、执行或清理未确认成功都会返回非零退出码并保留后端诊断。CLI 不自动重试这些操作。
+
+查询要求 `workspace.view`；保存、检查和测试要求 `workspace.update`，并沿用已保存且绑定 Workspace 的 context。保存还要求 `workspace.view` 和查询能力，以独立回读验证提交字段；隐藏密钥只确认是否已配置，不声称核对过实际值。保存仅影响新任务，既有任务和 MCP 连接保留原配置快照。
+
+限制字段包括 `timeout_sec`、`idle_ttl_sec`、`max_sessions`、`cpus`、`memory_mb`、`pids_limit`、`workspace_quota_mb`。先用 `config get` 查看 `limit_caps`、各后端的 `limit_capabilities` 和平台策略；CLI 按服务端上限及支持能力检查，最终配置语义由 Core 决定。`--dry-run` 不保存或创建测试沙箱，也不代表完整的服务端业务校验已通过。本功能要求具备对应接口的 Core 及配套 Box SDK/Runtime；旧版本会返回能力或兼容性错误。
 
 ```sh
 lbctl sandbox status

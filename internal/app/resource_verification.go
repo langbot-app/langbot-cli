@@ -3,6 +3,7 @@ package app
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/langbot-app/langbot-cli/internal/redact"
 )
@@ -35,7 +36,10 @@ func verifyResourceValue(expected, actual any, path string, checked, hidden *[]s
 	switch value := expected.(type) {
 	case map[string]any:
 		got, ok := actual.(map[string]any)
-		if !ok || (path != "" && len(value) != len(got)) {
+		// Core adds IDs and defaults to binding records. Nested configuration
+		// objects still use exact replacement semantics.
+		binding := (strings.HasPrefix(path, "event_bindings[") || strings.HasPrefix(path, "plugin_processors[")) && strings.IndexByte(path, ']') == len(path)-1
+		if !ok || (path != "" && !binding && len(value) != len(got)) {
 			return false
 		}
 		matched := true
