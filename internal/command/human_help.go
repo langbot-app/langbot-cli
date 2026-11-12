@@ -179,7 +179,9 @@ func configureExperience(root *cobra.Command, deps Dependencies, flags *globalFl
 			cmd.Long += "\n--dry-run 只执行该操作声明的检查，不写入；预检通过不代表业务校验或实际执行成功。"
 		}
 		configureListFilter(cmd, flags)
-		cmd.Example = commandExamples[name]
+		if example, exists := commandExamples[name]; exists {
+			cmd.Example = example
+		}
 		if strings.HasPrefix(name, "context.") && name != "context.add" && name != "context.list" {
 			cmd.ValidArgsFunction = contextNames
 		}

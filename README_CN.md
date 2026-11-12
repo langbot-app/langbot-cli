@@ -270,6 +270,18 @@ lbctl knowledge-base delete <uuid> --yes
 lbctl knowledge-base ingest <uuid> --file ./document.pdf --wait
 ```
 
+可重复指定 `--file`，或用 `--dir` 递归导入整个目录；二者也可合用，重复路径只提交一次：
+
+```sh
+lbctl knowledge-base ingest <uuid> --file ./guide.pdf --file ./faq.md --wait
+lbctl knowledge-base ingest <uuid> --dir ./documents --dry-run
+lbctl knowledge-base ingest <uuid> --dir ./documents --wait
+```
+
+目录扫描跳过点开头的文件、目录和符号链接；每个文件受现有 10 MiB 上传限制约束（含请求元数据）。CLI 先检查全部本地路径，再按顺序上传和提交；`--wait` 逐个等待任务，`--wait-timeout` 对每个文件分别计时。JSON/YAML 的批量结果在 `files` 保留各文件的状态、文件 ID、任务 ID 和错误，并在 `summary` 汇总；人工输出显示同样的逐文件结论。不加 `--wait` 只表示任务已提交。
+
+已确认的单文件失败会继续处理其他文件；提交结果未知、等待未完成、鉴权或权限等目标级错误会停止后续提交，保留已完成和未开始项，并返回非零退出码。重复执行会重新上传，当前不做跨次去重或自动重试。ZIP 仍可按单文件方式提交，但 Core 只返回其中一个子任务 ID；批量 `--wait` 遇到 ZIP 会在上传前拒绝，请先解压后使用 `--dir`。
+
 ### Provider 与 Model
 
 ```sh

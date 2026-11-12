@@ -705,26 +705,15 @@ func (s *Service) KnowledgeBaseIngest(
 	if !fileInfo.Mode().IsRegular() {
 		return Result{}, result.New("input", "上传路径必须是普通文件")
 	}
-	preflight, err := s.WritePreflight(ctx, "knowledge_base.file.store", options)
+	preflight, base, err := s.prepareKnowledgeBaseIngest(ctx, identifier, wait.Wait && !dryRun, options)
 	if err != nil {
 		return Result{Meta: preflight.Meta()}, err
 	}
-	if err := requireCapability(preflight, "file.document.upload"); err != nil {
-		return Result{Meta: preflight.Meta()}, err
-	}
-	if err := requireCapability(preflight, "knowledge_base.get"); err != nil {
-		return Result{Meta: preflight.Meta()}, err
-	}
-	if wait.Wait && !dryRun {
-		if err := requireCapability(preflight, "task.get"); err != nil {
-			return Result{Meta: preflight.Meta()}, err
-		}
-	}
+	return s.ingestKnowledgeBaseFile(ctx, identifier, filename, fileInfo.Size(), parserPluginID, dryRun, wait, preflight, base)
+}
+
+func (s *Service) ingestKnowledgeBaseFile(ctx context.Context, identifier, filename string, size int64, parserPluginID string, dryRun bool, wait WaitOptions, preflight WritePreflight, base map[string]any) (Result, error) {
 	client, target := s.writeClient(preflight)
-	base, err := client.KnowledgeBase(ctx, target, identifier)
-	if err != nil {
-		return Result{Meta: preflight.Meta()}, err
-	}
 	if dryRun {
 		return Result{Data: map[string]any{
 			"operation":               "knowledge_base.ingest",
@@ -735,7 +724,7 @@ func (s *Service) KnowledgeBaseIngest(
 			"knowledge_base":          base,
 			"file": map[string]any{
 				"name":       filepath.Base(filename),
-				"size_bytes": fileInfo.Size(),
+				"size_bytes": size,
 			},
 		}, Meta: preflight.Meta()}, nil
 	}
