@@ -126,6 +126,10 @@ var capabilityOperationIDs = []string{
 	"sandbox.status",
 	"sandbox.sessions",
 	"sandbox.errors",
+	"workspace.sandbox.get",
+	"workspace.sandbox.update",
+	"workspace.sandbox.check",
+	"workspace.sandbox.test",
 
 	"bot.list",
 	"bot.get",
@@ -1414,7 +1418,17 @@ func (c Client) doWithContentType(ctx context.Context, target Target, method, pa
 	parsed, parseErr := parseEnvelope(responseBody)
 	requestID := responseRequestID(resp.Header, parsed, target.APIKey)
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return response{}, httpError(resp.StatusCode, parsed.Code, requestID, target.APIKey)
+		failure := httpError(resp.StatusCode, parsed.Code, requestID, target.APIKey)
+		if strings.HasPrefix(path, workspaceSandboxPath) {
+			failure.Message = workspaceSandboxErrorMessage(parsed.Msg, failure.Message)
+			if resp.StatusCode == http.StatusBadRequest {
+				failure.Kind, failure.Type = "input", "input"
+				if strings.Contains(failure.Message, "Box SDK") {
+					failure.Kind, failure.Type = "incompatible", "incompatible"
+				}
+			}
+		}
+		return response{}, failure
 	}
 	if parseErr != nil {
 		return response{}, protocolError("服务返回的响应格式无效", resp.StatusCode, requestID)
@@ -1450,6 +1464,9 @@ func (c Client) doWithContentType(ctx context.Context, target Target, method, pa
 }
 
 func knownWritePath(method, path string) bool {
+	if method == http.MethodPut && path == workspaceSandboxPath || method == http.MethodPost && path == workspaceSandboxPath+"/test" {
+		return true
+	}
 	basePath, query, ok := splitWritePath(path)
 	if !ok {
 		return false
@@ -1600,6 +1617,9 @@ func safeNestedPath(path, base, suffix string, segments int) bool {
 
 func classifyWriteError(err error) error {
 	failure := result.AsError(err)
+	if failure.Kind == "incompatible" && failure.HTTPStatus >= http.StatusBadRequest && failure.HTTPStatus < http.StatusInternalServerError {
+		return err
+	}
 	if failure.HTTPStatus == http.StatusTooManyRequests ||
 		(failure.HTTPStatus >= http.StatusMultipleChoices && failure.HTTPStatus < http.StatusBadRequest) {
 		return err

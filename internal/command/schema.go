@@ -157,6 +157,14 @@ var schemaMetaByName = map[string]schemaCommandMeta{
 	"sandbox.status":                    readMeta(operationIDs("sandbox.status")...),
 	"sandbox.sessions":                  readMeta(operationIDs("sandbox.sessions")...),
 	"sandbox.errors":                    readMeta(operationIDs("sandbox.errors")...),
+	"sandbox.config.get":                readMeta(operationIDs("workspace.sandbox.get")...),
+	"sandbox.config.update":             writeMeta(operationIDs("workspace.sandbox.update"), schemaWriteOptions{SupportsDryRun: true, RequiresYes: true, RequiredFlags: []string{"file"}, Readbacks: []schemaOperation{readbackID("workspace.sandbox.get")}}),
+	"sandbox.config.check": func() schemaCommandMeta {
+		meta := readMeta(operationIDs("workspace.sandbox.check")...)
+		meta.RequiresSavedContext, meta.RequiresWorkspace = true, true
+		return meta
+	}(),
+	"sandbox.config.test": writeMeta(operationIDs("workspace.sandbox.test"), schemaWriteOptions{SupportsDryRun: true, RequiresYes: true}),
 
 	"schema":                {},
 	"completion":            {},

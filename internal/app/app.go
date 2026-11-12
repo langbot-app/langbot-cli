@@ -2499,8 +2499,14 @@ func (s *Service) writePreflight(ctx context.Context, operation, permission stri
 	if permission != "" && !hasPermission(identity, permission) {
 		return WritePreflight{Connection: conn, Identity: identity}, result.New("permission", "当前 API Key 缺少 "+permission+" 权限")
 	}
-	if !hasPermission(identity, "resource.view") {
-		return WritePreflight{Connection: conn, Identity: identity}, result.New("permission", "当前 API Key 缺少写后回读所需的 resource.view 权限")
+	readPermission := "resource.view"
+	if operation == "workspace.sandbox.update" {
+		readPermission = "workspace.view"
+	} else if operation == "workspace.sandbox.check" || operation == "workspace.sandbox.test" {
+		readPermission = ""
+	}
+	if readPermission != "" && !hasPermission(identity, readPermission) {
+		return WritePreflight{Connection: conn, Identity: identity}, result.New("permission", "当前 API Key 缺少写后回读所需的 "+readPermission+" 权限")
 	}
 	capabilities, err := s.capabilities(ctx, conn)
 	if err != nil {
@@ -2520,6 +2526,8 @@ func (s *Service) writePreflight(ctx context.Context, operation, permission stri
 
 func readbackCapability(operation string) string {
 	switch {
+	case operation == "workspace.sandbox.update":
+		return "workspace.sandbox.get"
 	case strings.HasPrefix(operation, "bot."):
 		return "bot.get"
 	case operation == "pipeline.extensions.update":

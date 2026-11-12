@@ -60,6 +60,11 @@ func Configuration(value any, field string) any {
 }
 
 func valueWithMask(value any, field, mask string) any {
+	if field == "api_key_configured" {
+		if _, ok := value.(bool); ok {
+			return value
+		}
+	}
 	secret := IsSecretField(field)
 	if mask == Mask {
 		// Result envelopes also contain protocol metadata (e.g. exit_codes.auth),

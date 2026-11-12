@@ -496,7 +496,34 @@ lbctl monitoring sessions --active true
 
 Runtime-record queries require `resource.view`. Lists support `--limit 1..500` and `--offset`, subject to Core's limits. `--start-time` and `--end-time` use ISO 8601. See each command's `--help` for filters.
 
-## Read-only Sandbox diagnostics
+## Sandbox configuration and diagnostics
+
+Workspace sandbox configuration uses Core's `workspace.sandbox.get/update/check/test` capabilities:
+
+```sh
+lbctl sandbox config get --refresh
+lbctl sandbox config update --file sandbox.yaml --dry-run
+lbctl sandbox config update --file sandbox.yaml --yes
+lbctl sandbox config check --file e2b.yaml --e2b-api-key-env E2B_API_KEY
+lbctl --timeout 2m sandbox config test --file e2b.yaml --e2b-api-key-env E2B_API_KEY --yes
+```
+
+Example `sandbox.yaml`:
+
+```yaml
+backend: docker
+limits:
+  timeout_sec: 60
+  max_sessions: 2
+```
+
+Updates accept `backend: docker/e2b/nsjail`, with optional `e2b` and `limits`. E2B fields are `api_url`, `sandbox_url`, `template`, and `api_key`. Prefer injecting the private key with `--e2b-api-key-env`, or supply the request body via `--file -`. Body and environment-key inputs cannot be combined. The Workspace `--api-key-stdin` remains available but cannot share stdin with `--file -`. Queries expose only `api_key_configured`; the CLI never stores the private key in its context. Core determines credential retention and when changed addresses require a new key.
+
+A check/test draft such as `e2b.yaml` contains `{"e2b":{"api_url":"https://api.example.com","sandbox_url":"https://sandbox.example.com","template":"base"}}`. Omit the file to use Core's current E2B configuration. `check` neither saves nor creates a sandbox. Explicit `test --yes` consumes E2B capacity and may incur charges: Core creates a temporary sandbox, executes a validation command, and cleans it up. HTTP 200 alone is not success; unconfirmed creation, execution, or cleanup exits nonzero with backend diagnostics retained. The CLI does not retry these operations automatically.
+
+Queries require `workspace.view`. Updates, checks, and tests require `workspace.update` and a saved, Workspace-bound context. Updates also require `workspace.view` and the get capability for independent readback verification. Hidden key values remain unverified; only their configured status is visible. Saved settings apply to new tasks; existing tasks and MCP connections retain their configuration snapshots.
+
+Limits include `timeout_sec`, `idle_ttl_sec`, `max_sessions`, `cpus`, `memory_mb`, `pids_limit`, and `workspace_quota_mb`. Inspect `limit_caps`, per-backend `limit_capabilities`, and deployment policy with `config get`. The CLI checks advertised support and upper bounds while Core remains authoritative for configuration semantics. `--dry-run` neither saves nor creates a test sandbox and does not guarantee full server-side validation. These commands require matching Core routes and Box SDK/Runtime support; older versions return capability or compatibility errors.
 
 ```sh
 lbctl sandbox status
