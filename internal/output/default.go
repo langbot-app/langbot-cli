@@ -1037,6 +1037,12 @@ func actionSummary(data map[string]any) string {
 		}
 		return "预检通过，尚未执行；仅确认所列检查，未确认服务端业务校验。"
 	}
+	switch data["operation"] {
+	case "workspace.sandbox.check":
+		return "E2B 连接检查通过；未保存配置，未创建沙箱。"
+	case "workspace.sandbox.test":
+		return "临时 E2B 沙箱创建、执行和清理已通过；未保存配置。"
+	}
 	if data["step"] == "completed" {
 		return "任务已完成，服务端结果如下。"
 	}
