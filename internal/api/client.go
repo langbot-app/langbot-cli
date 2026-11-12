@@ -1943,7 +1943,7 @@ func projectBot(value map[string]any, secret string) map[string]any {
 	projected := projectScalarFields(value, []string{
 		"uuid", "name", "description", "adapter", "enable", "use_pipeline_name", "use_pipeline_uuid", "created_at", "updated_at",
 	}, secret)
-	projectConfigFields(projected, value, secret, "adapter_config", "pipeline_routing_rules")
+	projectConfigFields(projected, value, secret, "adapter_config", "pipeline_routing_rules", "event_bindings", "plugin_processors")
 	return projected
 }
 

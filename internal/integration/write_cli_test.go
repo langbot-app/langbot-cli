@@ -100,6 +100,84 @@ func TestBotWriteCommandsDryRunConfirmAndReadBack(t *testing.T) {
 	}
 }
 
+func TestBotRoutingWriteReadback(t *testing.T) {
+	const binding = `[{"event_pattern":"message.received","target_type":"pipeline","target_uuid":"pipeline-a","enabled":true,"filters":[]}]`
+	const processor = `[{"processor_uuid":"processor-a","enabled":true}]`
+	for _, action := range []string{"create", "update"} {
+		for _, test := range []struct {
+			name, bindings, processors, mismatch string
+		}{
+			{name: "saved event binding", bindings: binding, processors: `[]`},
+			{name: "saved plugin processor", bindings: `[]`, processors: processor},
+			{name: "cleared lists", bindings: `[]`, processors: `[]`},
+			{name: "changed binding", bindings: binding, processors: processor, mismatch: "binding"},
+			{name: "changed processor", bindings: binding, processors: processor, mismatch: "processor"},
+			{name: "missing binding", bindings: binding, processors: processor, mismatch: "event_bindings"},
+			{name: "missing processor", bindings: binding, processors: processor, mismatch: "plugin_processors"},
+		} {
+			t.Run(action+"/"+test.name, func(t *testing.T) {
+				body := fmt.Sprintf(`{"name":"HTTP Bot","adapter":"http_bot","enable":true,"adapter_config":{"inbound_secret":"routing-test-private-secret"},"event_bindings":%s,"plugin_processors":%s}`, test.bindings, test.processors)
+				var bot map[string]any
+				if err := json.Unmarshal([]byte(body), &bot); err != nil {
+					t.Fatal(err)
+				}
+				bot["uuid"] = "bot-a"
+				switch test.mismatch {
+				case "binding":
+					bot["event_bindings"].([]any)[0].(map[string]any)["target_uuid"] = "different-pipeline"
+				case "processor":
+					bot["plugin_processors"].([]any)[0].(map[string]any)["enabled"] = false
+				case "event_bindings", "plugin_processors":
+					delete(bot, test.mismatch)
+				}
+				var writes atomic.Int32
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					switch r.URL.Path {
+					case "/api/v1/system/context":
+						fmt.Fprint(w, `{"code":0,"data":{"instance_uuid":"instance-a","workspace_uuid":"workspace-a","api_key_id":"key-a","permissions":["resource.manage","resource.view"]}}`)
+					case "/api/v1/system/capabilities":
+						fmt.Fprint(w, capabilitiesJSON("bot.create", "bot.update", "bot.get"))
+					case "/api/v1/platform/bots", "/api/v1/platform/bots/bot-a":
+						if r.Method == http.MethodGet && r.URL.Path == "/api/v1/platform/bots/bot-a" {
+							_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": map[string]any{"bot": bot}})
+							return
+						}
+						if action == "create" && r.Method == http.MethodPost && r.URL.Path == "/api/v1/platform/bots" || action == "update" && r.Method == http.MethodPut && r.URL.Path == "/api/v1/platform/bots/bot-a" {
+							writes.Add(1)
+							fmt.Fprint(w, `{"code":0,"data":{"uuid":"bot-a"}}`)
+							return
+						}
+						writeCLIError(w, http.StatusMethodNotAllowed)
+					default:
+						writeCLIError(w, http.StatusNotFound)
+					}
+				}))
+				defer server.Close()
+				configPath := filepath.Join(t.TempDir(), "config.yaml")
+				configureWriteContext(t, configPath, server.URL, "BOT_KEY")
+				args := []string{"bot", action}
+				if action == "update" {
+					args = append(args, "bot-a")
+				}
+				got := run(t, configPath, map[string]string{"BOT_KEY": "workspace-private-key"}, body, append(args, "--file", "-")...)
+				if test.mismatch == "" {
+					requireSuccess(t, got)
+				} else if got.code == 0 || got.data["error"].(map[string]any)["type"] != "verification_failed" {
+					t.Fatalf("changed or missing routing was accepted: %s", got.out)
+				}
+				data := got.data["data"].(map[string]any)
+				verification := data["verification"].(map[string]any)
+				if data["uuid"] != "bot-a" || verification["observable_fields_match"] != (test.mismatch == "") || data["verified"] != false || writes.Load() != 1 {
+					t.Fatalf("incorrect write outcome or retried request: writes=%d output=%s", writes.Load(), got.out)
+				}
+				if strings.Contains(got.out, "routing-test-private-secret") {
+					t.Fatalf("routing readback exposed a credential: %s", got.out)
+				}
+			})
+		}
+	}
+}
+
 func TestPipelineApplyCreateUpdateAndPartialResult(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "config.yaml")
 	const key = "pipeline-write-key"
