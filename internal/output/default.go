@@ -159,6 +159,19 @@ func renderDefaultData(w io.Writer, value any, command string) error {
 		return renderValue(w, value, "")
 	}
 	switch command {
+	case "plugin.permissions.get":
+		if err := renderFields(w, data, []string{"author", "plugin_name", "enabled", "pending_confirmation", "compatibility_mode", "can_confirm"}); err != nil {
+			return err
+		}
+		if permissions, ok := data["permissions"].([]any); ok {
+			if err := renderResourceList(w, "permissions", permissions); err != nil {
+				return err
+			}
+		}
+		if approval, exists := data["approval"]; exists {
+			return renderValue(w, approval, "审批")
+		}
+		return nil
 	case "context.add", "context.update", "context.use":
 		verb := map[string]string{"context.add": "已添加环境", "context.update": "已更新环境", "context.use": "已切换到环境"}[command]
 		if _, err := fmt.Fprintf(w, "%s %s（%s）\n", verb, displayCell(data["name"]), displayCell(data["endpoint"])); err != nil {
@@ -757,6 +770,8 @@ func resourceFields(key string) []string {
 		return []string{"name", "enable", "mode", "uuid"}
 	case "plugins":
 		return []string{"author", "name", "version", "enabled", "status"}
+	case "permissions":
+		return []string{"id", "category", "risk", "granted", "grantable"}
 	case "skills":
 		return []string{"name", "display_name", "description"}
 	case "operations":

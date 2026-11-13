@@ -21,13 +21,16 @@ func (s *Service) SandboxConfig(ctx context.Context, action string, body map[str
 		settings, err := client.WorkspaceSandbox(ctx, target, action, refresh, nil)
 		return Result{Data: settings, Meta: preflight.Meta()}, err
 	}
-	if action != "update" && action != "check" && action != "test" {
+	if action != "update" && action != "reset" && action != "check" && action != "test" {
 		return Result{}, result.New("input", "未知的沙箱配置操作")
 	}
 	if !dryRun && !confirmed && action != "check" {
 		message := "保存工作区沙箱配置需要 --yes；仅影响新任务，已有任务保留原配置快照"
 		if action == "test" {
 			message = "测试会创建、执行并删除临时 E2B 沙箱，消耗配额并可能计费；请显式提供 --yes"
+		}
+		if action == "reset" {
+			message = "恢复部署默认配置将清除工作区的后端、E2B 凭据和资源限制覆盖，需要 --yes"
 		}
 		return Result{}, result.New("input", message)
 	}
@@ -56,7 +59,7 @@ func (s *Service) SandboxConfig(ctx context.Context, action string, body map[str
 	if err != nil {
 		if result.AsError(err).Type == "result_unknown" {
 			data["server_write"] = "unknown"
-			if action == "update" {
+			if action == "update" || action == "reset" {
 				data["saved"] = "unknown"
 			} else if action == "test" {
 				data["executed"] = "unknown"
@@ -65,7 +68,7 @@ func (s *Service) SandboxConfig(ctx context.Context, action string, body map[str
 		return Result{Data: data, Meta: preflight.Meta()}, err
 	}
 	data["settings"] = settings
-	if action == "update" {
+	if action == "update" || action == "reset" {
 		data["server_write"], data["saved"] = true, true
 		readback, readErr := client.WorkspaceSandbox(ctx, target, "get", false, body)
 		if readErr != nil {
@@ -73,6 +76,11 @@ func (s *Service) SandboxConfig(ctx context.Context, action string, body map[str
 		}
 		data["settings"] = readback
 		expected, actual := sandboxVerification(body, readback)
+		if action == "reset" {
+			e2b, _ := readback["e2b"].(map[string]any)
+			expected = map[string]any{"backend": nil, "limits": map[string]any{}, "e2b_source": "deployment"}
+			actual = map[string]any{"backend": readback["backend"], "limits": readback["limits"], "e2b_source": e2b["source"]}
+		}
 		return verifyResourceWrite(preflight, data, expected, actual)
 	}
 	if action == "test" {
@@ -104,6 +112,9 @@ func (s *Service) SandboxConfig(ctx context.Context, action string, body map[str
 }
 
 func validateSandboxBody(action string, body map[string]any) error {
+	if action == "reset" {
+		return validateBodyFields(body)
+	}
 	fields := []string{"e2b"}
 	if action == "update" {
 		fields = append(fields, "backend", "limits")

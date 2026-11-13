@@ -35,7 +35,7 @@ func TestCompactSchemaAndExamplesStayOffline(t *testing.T) {
 func TestSandboxConfigurationSchemaIsOfflineAndSeparatesCheckFromTest(t *testing.T) {
 	result := executeSchemaForTest(t, "schema", "--command", "sandbox.config")
 	var envelope schemaEnvelope
-	if json.Unmarshal([]byte(result.output), &envelope) != nil || len(envelope.Data.Commands) != 5 {
+	if json.Unmarshal([]byte(result.output), &envelope) != nil || len(envelope.Data.Commands) != 6 {
 		t.Fatal("sandbox config group or children missing")
 	}
 	for _, command := range envelope.Data.Commands {
@@ -44,7 +44,7 @@ func TestSandboxConfigurationSchemaIsOfflineAndSeparatesCheckFromTest(t *testing
 			if command.Mutating || command.RequiresYes || !command.RequiresSavedContext || !command.RequiresWorkspaceBind || !strings.Contains(command.Examples, "--e2b-api-key-env") {
 				t.Fatalf("incorrect draft check contract: %#v", command)
 			}
-		case "sandbox.config.test", "sandbox.config.update":
+		case "sandbox.config.test", "sandbox.config.update", "sandbox.config.reset":
 			if !command.Mutating || !command.RequiresYes || !command.SupportsDryRun || !hasFlag(command.Flags, "yes", "local", false) {
 				t.Fatalf("confirmation or dry-run contract missing: %#v", command)
 			}

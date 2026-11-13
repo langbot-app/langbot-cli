@@ -158,6 +158,7 @@ var schemaMetaByName = map[string]schemaCommandMeta{
 	"sandbox.sessions":                  readMeta(operationIDs("sandbox.sessions")...),
 	"sandbox.errors":                    readMeta(operationIDs("sandbox.errors")...),
 	"sandbox.config.get":                readMeta(operationIDs("workspace.sandbox.get")...),
+	"sandbox.config.reset":              writeMeta(operationIDs("workspace.sandbox.reset"), schemaWriteOptions{SupportsDryRun: true, RequiresYes: true, Destructive: true, Readbacks: []schemaOperation{readbackID("workspace.sandbox.get")}}),
 	"sandbox.config.update":             writeMeta(operationIDs("workspace.sandbox.update"), schemaWriteOptions{SupportsDryRun: true, RequiresYes: true, RequiredFlags: []string{"file"}, Readbacks: []schemaOperation{readbackID("workspace.sandbox.get")}}),
 	"sandbox.config.check": func() schemaCommandMeta {
 		meta := readMeta(operationIDs("workspace.sandbox.check")...)
@@ -261,6 +262,7 @@ var schemaMetaByName = map[string]schemaCommandMeta{
 
 	"plugin.list":                readMeta(operationIDs("plugin.list")...),
 	"plugin.get":                 readMeta(operationIDs("plugin.get")...),
+	"plugin.permissions.get":     readMeta(operationIDs("plugin.permissions.get")...),
 	"plugin.config.get":          readMeta(operationIDs("plugin.config.get")...),
 	"plugin.config.update":       writeMeta(operationIDs("plugin.config.update"), schemaWriteOptions{SupportsDryRun: true, RequiredFlags: []string{"file"}, Readbacks: []schemaOperation{readbackID("plugin.config.get")}}),
 	"plugin.logs":                readMeta(operationIDs("plugin.logs")...),

@@ -36,6 +36,18 @@ func newSandboxConfigCommand(service *app.Service, deps Dependencies, flags *glo
 		}}
 	get.Flags().BoolVar(&refresh, "refresh", false, "刷新服务端后端可用性，不创建沙箱")
 	root.AddCommand(get)
+	var resetDryRun, resetYes bool
+	reset := &cobra.Command{Use: "reset", Short: "清除工作区沙箱覆盖，恢复部署默认配置", Args: cobra.NoArgs,
+		Long:    "清除工作区保存的后端、E2B 连接及凭据和资源限制，需要 --yes。后续任务继承部署默认配置，已有任务与 MCP 连接保留配置快照。",
+		Example: "  lbctl sandbox config reset --dry-run\n  lbctl sandbox config reset --yes",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return emitCall(deps, flags, func() (app.Result, error) {
+				return service.SandboxConfig(cmd.Context(), "reset", nil, false, resetDryRun, resetYes, connectionOptions(flags))
+			})
+		}}
+	reset.Flags().BoolVar(&resetYes, "yes", false, "确认清除工作区的后端、E2B 凭据和资源限制覆盖")
+	reset.Flags().BoolVar(&resetDryRun, "dry-run", false, "仅检查前置条件，保留当前配置")
+	root.AddCommand(reset)
 	for _, action := range []string{"update", "check", "test"} {
 		var file, keyEnv string
 		var dryRun, yes bool

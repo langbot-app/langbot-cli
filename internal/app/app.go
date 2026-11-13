@@ -1309,6 +1309,33 @@ func (s *Service) PluginGet(ctx context.Context, author, name string, options Ch
 	return Result{Data: map[string]any{"plugin": plugin}, Meta: preflight.Meta()}, nil
 }
 
+func (s *Service) PluginPermissionsGet(ctx context.Context, author, name string, options CheckOptions) (Result, error) {
+	if err := api.ValidateResourceID(author); err != nil {
+		return Result{}, err
+	}
+	if err := api.ValidateResourceID(name); err != nil {
+		return Result{}, err
+	}
+	preflight, err := s.readPreflight(ctx, "plugin.permissions.get", "resource.view", options)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	permissions, err := (api.Client{Transport: s.deps.Transport}).PluginPermissions(ctx, readTarget(preflight), author, name)
+	if err != nil {
+		return Result{Meta: preflight.Meta()}, err
+	}
+	permissions["author"], permissions["plugin_name"] = author, name
+	if permissions["pending_confirmation"] == true {
+		permissions["approval"] = map[string]any{
+			"url":                strings.TrimRight(preflight.Connection.Endpoint, "/") + "/home/extensions",
+			"workspace_uuid":     preflight.Identity.WorkspaceUUID,
+			"required_principal": "account",
+			"message":            "使用有权管理插件的网页登录账户，切换到此 Workspace，在插件页面审阅并确认权限，然后重新运行此命令查看状态。",
+		}
+	}
+	return Result{Data: permissions, Meta: preflight.Meta()}, nil
+}
+
 func (s *Service) PluginConfigGet(ctx context.Context, author, name string, options CheckOptions) (Result, error) {
 	if err := api.ValidateResourceID(author); err != nil {
 		return Result{}, err
@@ -1753,6 +1780,12 @@ func (s *Service) pluginInstall(ctx context.Context, operation string, body map[
 		"server_write":            false,
 		"preconditions_confirmed": true,
 		"business_validation":     "not_run",
+	}
+	if author, ok := body["plugin_author"].(string); ok {
+		data["author"] = author
+	}
+	if name, ok := body["plugin_name"].(string); ok {
+		data["plugin_name"] = name
 	}
 	if dryRun {
 		if filename != "" {
@@ -2500,7 +2533,7 @@ func (s *Service) writePreflight(ctx context.Context, operation, permission stri
 		return WritePreflight{Connection: conn, Identity: identity}, result.New("permission", "当前 API Key 缺少 "+permission+" 权限")
 	}
 	readPermission := "resource.view"
-	if operation == "workspace.sandbox.update" {
+	if operation == "workspace.sandbox.update" || operation == "workspace.sandbox.reset" {
 		readPermission = "workspace.view"
 	} else if operation == "workspace.sandbox.check" || operation == "workspace.sandbox.test" {
 		readPermission = ""
@@ -2526,7 +2559,7 @@ func (s *Service) writePreflight(ctx context.Context, operation, permission stri
 
 func readbackCapability(operation string) string {
 	switch {
-	case operation == "workspace.sandbox.update":
+	case operation == "workspace.sandbox.update" || operation == "workspace.sandbox.reset":
 		return "workspace.sandbox.get"
 	case strings.HasPrefix(operation, "bot."):
 		return "bot.get"

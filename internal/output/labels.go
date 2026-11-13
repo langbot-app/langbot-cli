@@ -2,6 +2,9 @@ package output
 
 // Labels apply only to human rendering. Protocol keys and resource names stay unchanged.
 var humanFieldLabels = map[string]string{
+	"pending_confirmation": "权限待确认", "compatibility_mode": "旧版兼容权限", "can_confirm": "当前身份可审批",
+	"category": "类别", "risk": "风险", "granted": "已授权", "grantable": "当前身份可授予",
+	"approval": "审批", "required_principal": "审批身份", "url": "页面地址", "message": "说明",
 	"backend": "已保存后端", "effective_backend": "当前生效后端", "backends": "后端可用性",
 	"e2b": "E2B 连接", "e2b_configurable": "允许自定义 E2B", "api_key_configured": "已配置 API Key",
 	"api_url": "API 地址", "sandbox_url": "沙箱地址", "template": "模板", "source": "配置来源",

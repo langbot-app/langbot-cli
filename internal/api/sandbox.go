@@ -23,6 +23,8 @@ func (c Client) WorkspaceSandbox(ctx context.Context, target Target, action stri
 		resp, err = c.do(ctx, target, http.MethodGet, path, nil, false)
 	case "update":
 		resp, err = c.write(ctx, target, http.MethodPut, workspaceSandboxPath, body)
+	case "reset":
+		resp, err = c.write(ctx, target, http.MethodDelete, workspaceSandboxPath, nil)
 	case "check":
 		resp, err = c.readPost(ctx, target, workspaceSandboxPath+"/check", body)
 	case "test":
@@ -47,6 +49,12 @@ func (c Client) WorkspaceSandbox(ctx context.Context, target Target, action stri
 		}
 		return nil, &failure
 	}
+	if action == "reset" {
+		if resp.Data["reset"] != true {
+			return nil, classifyWriteError(protocolError("服务端未确认沙箱配置重置结果", resp.StatusCode, ""))
+		}
+		return map[string]any{"reset": true}, nil
+	}
 	if resp.Data == nil {
 		err = protocolError("服务端未返回沙箱配置，操作结果需核查", resp.StatusCode, "")
 	} else if _, ok := resp.Data["backends"].([]any); !ok {
@@ -62,7 +70,7 @@ func (c Client) WorkspaceSandbox(ctx context.Context, target Target, action stri
 		}
 	}
 	if err != nil {
-		if action == "update" || action == "test" {
+		if action == "update" || action == "reset" || action == "test" {
 			err = classifyWriteError(err)
 		}
 		return nil, err

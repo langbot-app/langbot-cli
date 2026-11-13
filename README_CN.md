@@ -330,6 +330,8 @@ lbctl skill delete <name> --yes
 
 Skill 安装的 `--dry-run` 调用服务端预览，不产生安装。Plugin 安装、升级和删除可用 `--wait` 跟踪异步任务。
 
+使用 `lbctl plugin permissions get <author> <name>` 查看插件申请的权限、风险、授权情况和待确认状态。待确认时会显示目标 Workspace 和 WebUI 扩展页面入口，由有权管理插件的账户审阅。审批后再次运行命令确认状态。JSON/YAML 输出包含相同信息，需要 Core 的 `plugin.permissions.get` 能力。
+
 GitHub 插件安装请求包含 `owner`、`repo`、`release_tag`，以及 `release_id`/`asset_id` 或 `asset_url`。链接输入会由 CLI 查询 GitHub release 并转换成与 WebUI 一致的 ID 请求；GitHub 查询与 Workspace 鉴权分离，dry-run 执行前置检查。示例：
 
 ```yaml
@@ -498,15 +500,19 @@ lbctl monitoring sessions --active true
 
 ## Sandbox 配置与诊断
 
-工作区沙箱配置使用 Core 的 `workspace.sandbox.get/update/check/test` 能力：
+工作区沙箱配置使用 Core 的 `workspace.sandbox.get/update/reset/check/test` 能力。
 
 ```sh
 lbctl sandbox config get --refresh
+lbctl sandbox config reset --dry-run
+lbctl sandbox config reset --yes
 lbctl sandbox config update --file sandbox.yaml --dry-run
 lbctl sandbox config update --file sandbox.yaml --yes
 lbctl sandbox config check --file e2b.yaml --e2b-api-key-env E2B_API_KEY
 lbctl --timeout 2m sandbox config test --file e2b.yaml --e2b-api-key-env E2B_API_KEY --yes
 ```
+
+`reset --yes` 清除当前工作区保存的后端、E2B 连接及凭据和资源限制覆盖，随后独立回读验证。后续任务继承部署默认配置，需要 `workspace.update`、`workspace.view` 权限和 Core 的 `workspace.sandbox.reset/get` 能力。已有任务保留配置快照。
 
 `sandbox.yaml` 示例：
 

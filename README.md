@@ -330,6 +330,8 @@ lbctl skill delete <name> --yes
 
 Skill installation with `--dry-run` uses a server-side preview. Plugin installation, upgrade, and deletion support `--wait` to follow asynchronous tasks.
 
+Use `lbctl plugin permissions get <author> <name>` to review requested permissions, risk, grants, and approval status. Pending installations include the target Workspace and WebUI extensions page for an authorized account to review. Run the command again after approval to check the resulting state. JSON/YAML output includes the same information. Requires Core's `plugin.permissions.get` capability.
+
 GitHub plugin requests include `owner`, `repo`, `release_tag`, and either `release_id`/`asset_id` or `asset_url`. For URL input, the CLI queries the GitHub release and submits the same ID-based request as WebUI. GitHub metadata requests are separate from Workspace authentication; dry-run performs preflight checks. Example:
 
 ```yaml
@@ -498,15 +500,19 @@ Runtime-record queries require `resource.view`. Lists support `--limit 1..500` a
 
 ## Sandbox configuration and diagnostics
 
-Workspace sandbox configuration uses Core's `workspace.sandbox.get/update/check/test` capabilities:
+Workspace sandbox configuration uses Core's `workspace.sandbox.get/update/reset/check/test` capabilities:
 
 ```sh
 lbctl sandbox config get --refresh
+lbctl sandbox config reset --dry-run
+lbctl sandbox config reset --yes
 lbctl sandbox config update --file sandbox.yaml --dry-run
 lbctl sandbox config update --file sandbox.yaml --yes
 lbctl sandbox config check --file e2b.yaml --e2b-api-key-env E2B_API_KEY
 lbctl --timeout 2m sandbox config test --file e2b.yaml --e2b-api-key-env E2B_API_KEY --yes
 ```
+
+`reset --yes` removes this Workspace's saved backend, E2B connection credentials and resource limit overrides, then verifies the result with an independent read. Future tasks inherit deployment defaults. It requires `workspace.update`, `workspace.view` and Core's `workspace.sandbox.reset/get` capabilities. Existing tasks keep their snapshots.
 
 Example `sandbox.yaml`:
 

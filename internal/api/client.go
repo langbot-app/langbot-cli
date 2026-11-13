@@ -128,6 +128,7 @@ var capabilityOperationIDs = []string{
 	"sandbox.errors",
 	"workspace.sandbox.get",
 	"workspace.sandbox.update",
+	"workspace.sandbox.reset",
 	"workspace.sandbox.check",
 	"workspace.sandbox.test",
 
@@ -159,6 +160,7 @@ var capabilityOperationIDs = []string{
 	"plugin.install.local",
 	"plugin.upgrade",
 	"plugin.get",
+	"plugin.permissions.get",
 	"plugin.list",
 	"plugin.config.get",
 	"plugin.config.update",
@@ -603,6 +605,50 @@ func (c Client) Plugins(ctx context.Context, target Target) ([]map[string]any, e
 		items = append(items, projected)
 	}
 	return items, nil
+}
+
+func (c Client) PluginPermissions(ctx context.Context, target Target, author, name string) (map[string]any, error) {
+	path, err := pluginResourcePath(author, name, "/permissions")
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.fetch(ctx, target, http.MethodGet, path)
+	if err != nil {
+		return nil, err
+	}
+	for _, field := range []string{"can_manage", "can_confirm", "pending_confirmation", "compatibility_mode", "enabled"} {
+		if _, ok := resp.Data[field].(bool); !ok {
+			return nil, protocolError("服务端未返回完整的插件权限状态", resp.StatusCode, "")
+		}
+	}
+	rows, ok := resp.Data["permissions"].([]any)
+	if !ok {
+		return nil, protocolError("服务端未返回插件权限清单", resp.StatusCode, "")
+	}
+	projected := projectScalarFields(resp.Data, []string{"can_manage", "can_confirm", "installation_uuid", "compatibility_mode", "pending_confirmation", "enabled"}, target.APIKey)
+	permissions := make([]any, 0, len(rows))
+	for _, value := range rows {
+		row, ok := value.(map[string]any)
+		if !ok {
+			return nil, protocolError("服务端返回的插件权限格式无效", resp.StatusCode, "")
+		}
+		permission := projectScalarFields(row, []string{"id", "category", "risk", "granted", "grantable", "domain", "summary"}, target.APIKey)
+		for _, field := range []string{"id", "category", "risk"} {
+			if text, ok := permission[field].(string); !ok || strings.TrimSpace(text) == "" {
+				return nil, protocolError("服务端返回的插件权限缺少标识或风险信息", resp.StatusCode, "")
+			}
+		}
+		for _, field := range []string{"granted", "grantable"} {
+			if _, ok := permission[field].(bool); !ok {
+				return nil, protocolError("服务端返回的插件权限缺少授权状态", resp.StatusCode, "")
+			}
+		}
+		projectConfigFields(permission, row, target.APIKey, "label", "required_permissions")
+		permissions = append(permissions, permission)
+	}
+	projected["permissions"] = permissions
+	projectConfigFields(projected, resp.Data, target.APIKey, "grants", "domains")
+	return projected, nil
 }
 
 func (c Client) PluginConfig(ctx context.Context, target Target, author, name string) (any, error) {
@@ -1464,7 +1510,7 @@ func (c Client) doWithContentType(ctx context.Context, target Target, method, pa
 }
 
 func knownWritePath(method, path string) bool {
-	if method == http.MethodPut && path == workspaceSandboxPath || method == http.MethodPost && path == workspaceSandboxPath+"/test" {
+	if (method == http.MethodPut || method == http.MethodDelete) && path == workspaceSandboxPath || method == http.MethodPost && path == workspaceSandboxPath+"/test" {
 		return true
 	}
 	basePath, query, ok := splitWritePath(path)
@@ -1717,7 +1763,7 @@ func knownGetPath(path string) bool {
 	}
 	if strings.HasPrefix(path, pluginsPath+"/") {
 		value := strings.TrimPrefix(path, pluginsPath+"/")
-		for _, suffix := range []string{"/config", "/logs"} {
+		for _, suffix := range []string{"/config", "/logs", "/permissions"} {
 			if strings.HasSuffix(value, suffix) {
 				return strings.Count(strings.TrimSuffix(value, suffix), "/") == 1
 			}

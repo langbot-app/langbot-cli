@@ -129,6 +129,9 @@ func resolveGetOperation(path string) (Operation, bool) {
 	if nestedPath(path, pluginsPath, 2, "config") {
 		return Operation{ID: "plugin.config.get", Method: http.MethodGet, Path: path, ReadOnly: true, Permission: "resource.view"}, true
 	}
+	if nestedPath(path, pluginsPath, 2, "permissions") {
+		return Operation{ID: "plugin.permissions.get", Method: http.MethodGet, Path: path, ReadOnly: true, Permission: "resource.view"}, true
+	}
 	if nestedPath(path, pluginsPath, 2, "logs") {
 		return Operation{ID: "plugin.logs", Method: http.MethodGet, Path: path, ReadOnly: true, Permission: "audit.view"}, true
 	}

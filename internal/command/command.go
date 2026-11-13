@@ -649,6 +649,16 @@ func newPluginCommand(service *app.Service, deps Dependencies, flags *globalFlag
 		})
 	}})
 	configCommand := &cobra.Command{Use: "config", Short: "管理 Plugin 配置", Args: cobra.NoArgs}
+	permissions := &cobra.Command{Use: "permissions", Short: "查看 Plugin 权限申请与授权状态", Args: cobra.NoArgs}
+	permissions.AddCommand(&cobra.Command{Use: "get <author> <name>", Short: "查看权限清单、风险和账户审批入口", Args: cobra.ExactArgs(2),
+		Long:    "查询插件申请的权限、已授权状态和当前身份的审批能力。待确认的权限由有权管理插件的网页登录账户审阅，输出包含目标 Workspace 和插件页面入口。",
+		Example: "  lbctl plugin permissions get langbot-team LangRAG\n  lbctl -o json plugin permissions get langbot-team LangRAG",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return emitCall(deps, flags, func() (app.Result, error) {
+				return service.PluginPermissionsGet(cmd.Context(), args[0], args[1], connectionOptions(flags))
+			})
+		}})
+	command.AddCommand(permissions)
 	configCommand.AddCommand(&cobra.Command{Use: "get <author> <name>", Short: "读取 Plugin 配置", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
 		return emitCall(deps, flags, func() (app.Result, error) {
 			return service.PluginConfigGet(cmd.Context(), args[0], args[1], connectionOptions(flags))
@@ -1712,6 +1722,26 @@ func enrichResult(deps Dependencies, flags *globalFlags, value app.Result, err e
 			add("检查所选实例", base, "status")
 		case "context.remove":
 			add("查看剩余环境", base, "context", "list")
+		case "plugin.get":
+			plugin, _ := data["plugin"].(map[string]any)
+			if plugin["status"] == "pending_confirmation" {
+				author, _ := plugin["author"].(string)
+				name, _ := plugin["name"].(string)
+				add("查看待确认的插件权限", connect, "plugin", "permissions", "get", author, name)
+			}
+		case "plugin.install.github", "plugin.install.marketplace", "plugin.install.local", "plugin.upgrade":
+			if data["step"] == "completed" {
+				author, _ := data["author"].(string)
+				name, _ := data["plugin_name"].(string)
+				if name == "" {
+					name, _ = data["name"].(string)
+				}
+				if author != "" && name != "" {
+					add("查看安装后的权限与审批状态", connect, "plugin", "permissions", "get", author, name)
+				} else {
+					add("查看插件状态，待确认的插件需审阅权限", connect, "plugin", "list")
+				}
+			}
 		}
 		if data["submitted"] == true && data["step"] != "completed" {
 			if id, ok := data["task_id"].(string); ok && id != "" {
