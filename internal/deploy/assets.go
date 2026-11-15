@@ -172,7 +172,7 @@ func NewInstallAssets(dir, version, profile string, port int, network InstallNet
 	if profile == "all" {
 		boxEnabled = "true"
 	}
-	environment := []byte(fmt.Sprintf("LANGBOT_PLUGIN_RUNTIME_CONTROL_TOKEN=%s\nLANGBOT_BOX_CONTROL_TOKEN=%s\nLANGBOT_BOX_ENABLED=%s\n", pluginToken, boxToken, boxEnabled))
+	environment := deployEnvironment([]byte(fmt.Sprintf("LANGBOT_PLUGIN_RUNTIME_CONTROL_TOKEN=%s\nLANGBOT_BOX_CONTROL_TOKEN=%s\nLANGBOT_BOX_ENABLED=%s\n", pluginToken, boxToken, boxEnabled)), "dev")
 	return InstallAssets{
 		Dir: resolved, Version: version, Profile: profile, Image: image, Port: port, Project: project, Ports: ports,
 		ComposeFile: filepath.Join(resolved, "compose.yaml"), EnvFile: filepath.Join(resolved, ".env"), DataDir: filepath.Join(resolved, "data"),
@@ -316,6 +316,8 @@ func renderCompose(image string, port int, boxRoot string, ports InstallPorts) s
     restart: on-failure
     environment:
       TZ: Asia/Shanghai
+      LANGBOT_DEPLOY_SOURCE: ${LANGBOT_DEPLOY_SOURCE}
+      LANGBOT_DEPLOY_TOOL_VERSION: ${LANGBOT_DEPLOY_TOOL_VERSION}
       LANGBOT_PLUGIN_RUNTIME_CONTROL_TOKEN: ${LANGBOT_PLUGIN_RUNTIME_CONTROL_TOKEN}
       LANGBOT_BOX_CONTROL_TOKEN: ${LANGBOT_BOX_CONTROL_TOKEN}
 %s      BOX__ENABLED: ${LANGBOT_BOX_ENABLED}

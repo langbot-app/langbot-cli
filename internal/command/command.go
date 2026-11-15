@@ -15,6 +15,7 @@ import (
 
 	"github.com/langbot-app/langbot-cli/internal/api"
 	"github.com/langbot-app/langbot-cli/internal/app"
+	"github.com/langbot-app/langbot-cli/internal/clientidentity"
 	"github.com/langbot-app/langbot-cli/internal/config"
 	"github.com/langbot-app/langbot-cli/internal/deploy"
 	"github.com/langbot-app/langbot-cli/internal/output"
@@ -129,6 +130,8 @@ func newRoot(deps Dependencies, flags *globalFlags, service *app.Service) *cobra
 	persistent.BoolVar(&flags.apiKeyStdin, "api-key-stdin", false, "从 stdin 读取本次请求的 API Key，等待上限由 --timeout 控制")
 	persistent.StringVarP(&flags.output, "output", "o", "", "输出格式：json 或 yaml；默认简洁模式（schema 默认 JSON）")
 	root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
+		commandPath := strings.ReplaceAll(strings.TrimPrefix(cmd.CommandPath(), "lbctl "), " ", ".")
+		cmd.SetContext(clientidentity.WithContext(cmd.Context(), deps.Version, commandPath))
 		selectOutput(cmd, flags)
 		flags.configSet = cmd.InheritedFlags().Changed("config")
 		if flags.configSet && strings.TrimSpace(flags.config) == "" {

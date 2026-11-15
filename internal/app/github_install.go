@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/langbot-app/langbot-cli/internal/clientidentity"
 	"github.com/langbot-app/langbot-cli/internal/result"
 )
 
@@ -32,7 +33,7 @@ func resolveGitHubPluginAsset(ctx context.Context, transport http.RoundTripper, 
 		return nil, result.New("input", "GitHub release 参数无效")
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("User-Agent", "LangBot-CLI")
+	req.Header.Set("User-Agent", clientidentity.UserAgent(ctx))
 	client := &http.Client{Transport: transport, Timeout: 30 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
 	resp, err := client.Do(req)
 	if err != nil {

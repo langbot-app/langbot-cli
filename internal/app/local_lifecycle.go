@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/langbot-app/langbot-cli/internal/api"
+	"github.com/langbot-app/langbot-cli/internal/clientidentity"
 	"github.com/langbot-app/langbot-cli/internal/config"
 	"github.com/langbot-app/langbot-cli/internal/deploy"
 	endpointutil "github.com/langbot-app/langbot-cli/internal/endpoint"
@@ -92,6 +93,7 @@ func (s *Service) Install(ctx context.Context, options InstallOptions) (Result, 
 	if err != nil {
 		return Result{}, result.New("input", err.Error())
 	}
+	assets.SetDeployIdentity(s.deps.Version)
 	runner := s.localRunner()
 	checks, preflightErr := deploy.PreflightInstall(operationCtx, assets, runner)
 	plan := installPlanData(assets, checks)
@@ -519,7 +521,7 @@ func (s *Service) latestRelease(ctx context.Context) (string, error) {
 		return "", result.New("internal", "创建 Release 请求失败")
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("User-Agent", "lbctl")
+	req.Header.Set("User-Agent", clientidentity.UserAgent(ctx))
 	client := &http.Client{Timeout: 15 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {

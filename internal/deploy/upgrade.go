@@ -82,11 +82,23 @@ func ComposeForUpgrade(record Record, dir, version string) ([]byte, string, erro
 	if !releaseVersionPattern.MatchString(version) {
 		return nil, "", errors.New("版本必须为 vX.Y.Z 形式的稳定 Release tag")
 	}
+	if !IsAdoptedLayout(record) {
+		ports := defaultInstallPorts()
+		if record.InstallPorts != nil {
+			ports = *record.InstallPorts
+		}
+		updated := []byte(renderCompose(DefaultImageRepository+":"+version, record.Port, filepath.Join(dir, "data", "box"), ports))
+		return updated, fileDigest(updated), nil
+	}
 	content, err := os.ReadFile(record.ComposeFile)
 	if err != nil {
 		return nil, "", err
 	}
 	updated, err := replaceComposeImages(content, DefaultImageRepository+":"+version)
+	if err != nil {
+		return nil, "", err
+	}
+	updated, err = addDeployEnvironment(updated)
 	if err != nil {
 		return nil, "", err
 	}
@@ -133,7 +145,8 @@ func ValidateOwnedLayout(record Record, dir string) error {
 	}
 	current := []byte(renderCompose(record.Asset.Name, record.Port, filepath.Join(dir, "data", "box"), ports))
 	actual, err := os.ReadFile(record.ComposeFile)
-	if err != nil || !equalDigest(actual, current) {
+	legacy := []byte(strings.Replace(string(current), deployComposeEnvironment, "", 1))
+	if err != nil || (!equalDigest(actual, current) && !equalDigest(actual, legacy)) {
 		return errors.New("Compose 资产已变更")
 	}
 	return nil

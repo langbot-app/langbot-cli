@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/langbot-app/langbot-cli/internal/clientidentity"
 	"github.com/langbot-app/langbot-cli/internal/endpoint"
 	"github.com/langbot-app/langbot-cli/internal/redact"
 	"github.com/langbot-app/langbot-cli/internal/result"
@@ -1376,6 +1377,7 @@ func (c Client) doWithContentType(ctx context.Context, target Target, method, pa
 	if target.APIKey != "" {
 		request.Header.Set("X-API-Key", target.APIKey)
 	}
+	clientidentity.Apply(request)
 	if requestBody != nil && contentType != "" {
 		request.Header.Set("Content-Type", contentType)
 	}
