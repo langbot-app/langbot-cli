@@ -261,6 +261,11 @@ func TestReminderCachesResultsAndRetriesFailures(t *testing.T) {
 	if calls.Load() != 1 || u.Reminder(context.Background(), "v0.4.2").UpdateAvailable {
 		t.Fatal("fresh cache was not reused or prompted the current version")
 	}
+	for _, current := range []string{"v0.4.2-rc.1", "v0.4.1+build.1"} {
+		if !u.Reminder(context.Background(), current).UpdateAvailable {
+			t.Fatalf("release build lost its update notice: %s", current)
+		}
+	}
 	path := filepath.Join(u.CacheDir, "update-check.json")
 	data, _ := json.Marshal(checkCache{CheckedAt: time.Now().Add(-25 * time.Hour), Latest: "v0.4.2"})
 	if err := os.WriteFile(path, data, 0o600); err != nil {

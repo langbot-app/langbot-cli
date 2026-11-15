@@ -368,7 +368,9 @@ type checkCache struct {
 
 // Reminder is best-effort and bounds the first human-facing check to one second.
 func (u Updater) Reminder(ctx context.Context, current string) Info {
-	if _, err := deploy.CompareReleaseVersions(current, current); err != nil {
+	currentCore := strings.SplitN(current, "+", 2)[0]
+	currentCore = strings.SplitN(currentCore, "-", 2)[0]
+	if _, err := deploy.CompareReleaseVersions(currentCore, currentCore); err != nil {
 		return Info{}
 	}
 	dir := u.CacheDir
