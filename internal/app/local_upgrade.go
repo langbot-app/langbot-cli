@@ -198,6 +198,9 @@ func (s *Service) Upgrade(ctx context.Context, options UpgradeOptions) (Result, 
 		if err := deploy.WriteUpgradeCompose(current, compose); err != nil {
 			return fail("compose_switch", "替换 Compose 资产失败")
 		}
+		if err := deploy.WriteDeployIdentity(current, s.deps.Version); err != nil {
+			return fail("environment_switch", "更新部署来源环境变量失败")
+		}
 		if err := update("compose_switched"); err != nil {
 			return err
 		}

@@ -379,6 +379,10 @@ lbctl task get <task-id> --wait --wait-timeout 10m
 
 Local waiting and server-side task lifecycles are independent; continue checking with `task get`.
 
+## Privacy
+
+lbctl does not report any data or send telemetry requests. Existing requests to your own LangBot include a client identifier (`lbctl/<version> (<os>/<arch>)`) and the canonical command path, without arguments or flag values. Managed deployments record `LANGBOT_DEPLOY_SOURCE=lbctl` and the CLI version in `LANGBOT_DEPLOY_TOOL_VERSION`; upgrades refresh these values while preserving your other environment settings. Core-side telemetry is controlled centrally by `space.disable_telemetry`.
+
 ## Controlled API access
 
 `api get/post` calls operations registered in the built-in registry:

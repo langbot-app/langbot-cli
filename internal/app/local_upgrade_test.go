@@ -230,6 +230,10 @@ func TestUpgradeDryRunDoesNotStopOrPull(t *testing.T) {
 
 func TestUpgradeCompletesAfterBackupAndVersionReadback(t *testing.T) {
 	service, runner, record, dir := upgradeServiceFixture(t, false)
+	service.deps.Version = "0.4.2"
+	if err := os.WriteFile(record.EnvFile, []byte("CUSTOM_VALUE=keep\nLANGBOT_DEPLOY_TOOL_VERSION=0.4.1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	response, err := service.Upgrade(context.Background(), UpgradeOptions{
 		CheckOptions: CheckOptions{Endpoint: record.Endpoint, EndpointSet: true}, Version: "v4.10.10", Yes: true,
 	})
@@ -249,6 +253,10 @@ func TestUpgradeCompletesAfterBackupAndVersionReadback(t *testing.T) {
 	}
 	if !runner.running {
 		t.Fatal("升级后服务未运行")
+	}
+	environment, err := os.ReadFile(record.EnvFile)
+	if err != nil || string(environment) != "CUSTOM_VALUE=keep\nLANGBOT_DEPLOY_TOOL_VERSION=0.4.2\nLANGBOT_DEPLOY_SOURCE=lbctl\n" {
+		t.Fatalf("upgrade environment = %s, %v", environment, err)
 	}
 }
 

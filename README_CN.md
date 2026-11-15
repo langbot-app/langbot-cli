@@ -379,6 +379,10 @@ lbctl task get <task-id> --wait --wait-timeout 10m
 
 本地等待与服务端任务生命周期独立，可通过 `task get` 继续查询。
 
+## 隐私
+
+lbctl 不上报任何数据，也不发送遥测请求。它只在调用你自己的 LangBot 的现有请求中附带客户端标识（`lbctl/<版本> (<系统>/<架构>)`）和规范命令路径，不包含参数或 flag 值。受管部署会写入 `LANGBOT_DEPLOY_SOURCE=lbctl` 和 `LANGBOT_DEPLOY_TOOL_VERSION`，升级时更新 CLI 版本并保留其他自定义环境变量。Core 侧遥测由 `space.disable_telemetry` 统一控制。
+
 ## 受控 API 入口
 
 `api get/post` 调用内置 registry 已登记的操作：

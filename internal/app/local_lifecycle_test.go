@@ -115,6 +115,7 @@ func TestInstallAndLifecycleCommands(t *testing.T) {
 	runner := &lifecycleTestRunner{state: "stopped", port: port}
 	service := New(Dependencies{
 		LocalDir: dir, LocalLocatorPath: filepath.Join(root, "locator.yaml"), LocalRunner: runner,
+		Version:   "0.4.1",
 		Transport: lifecycleTransport{runner: runner}, LocalHTTP: &http.Client{Transport: lifecycleTransport{runner: runner}},
 		LatestRelease:     func(context.Context) (string, error) { return "v4.10.10", nil },
 		DefaultConfigPath: func() (string, error) { return filepath.Join(root, "config.yaml"), nil },
@@ -129,6 +130,10 @@ func TestInstallAndLifecycleCommands(t *testing.T) {
 	}
 	if data, _ := os.ReadFile(record.ComposeFile); strings.Contains(string(data), ":latest") {
 		t.Fatal("compose 不应该使用 latest")
+	}
+	environment, err := os.ReadFile(record.EnvFile)
+	if err != nil || !strings.Contains(string(environment), "LANGBOT_DEPLOY_SOURCE=lbctl\nLANGBOT_DEPLOY_TOOL_VERSION=0.4.1\n") {
+		t.Fatalf("install environment = %s, %v", environment, err)
 	}
 	options := LifecycleOptions{CheckOptions: CheckOptions{Endpoint: record.Endpoint, EndpointSet: true}}
 	stopped, err := service.Stop(context.Background(), options)

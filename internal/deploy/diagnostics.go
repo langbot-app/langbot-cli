@@ -15,6 +15,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/langbot-app/langbot-cli/internal/clientidentity"
 )
 
 type Problem struct {
@@ -361,6 +363,7 @@ func (d Diagnostics) probeHTTP(ctx context.Context, record Record) (map[string]a
 	if err != nil {
 		return map[string]any{"reachable": false, "endpoint": endpoint}, err
 	}
+	clientidentity.Apply(req)
 	resp, err := client.Do(req)
 	if err != nil {
 		return map[string]any{"reachable": false, "endpoint": endpoint}, err

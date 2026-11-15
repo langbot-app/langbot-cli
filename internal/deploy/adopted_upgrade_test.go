@@ -29,6 +29,7 @@ func TestAdoptedUpgradePreservesComposeBytesAndSupportsNextUpgrade(t *testing.T)
 		t.Fatal(err)
 	}
 	expected := strings.Replace(content, "rockchin/langbot:latest", "rockchin/langbot:v4.10.10", 3)
+	expected = strings.Replace(expected, "environment: {KEEP:", `environment: {LANGBOT_DEPLOY_SOURCE: "${LANGBOT_DEPLOY_SOURCE}", LANGBOT_DEPLOY_TOOL_VERSION: "${LANGBOT_DEPLOY_TOOL_VERSION}", KEEP:`, 1)
 	if string(updated) != expected {
 		t.Fatalf("unrelated Compose bytes changed:\n%s", updated)
 	}
