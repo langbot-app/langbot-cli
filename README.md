@@ -63,6 +63,15 @@ The installer selects the binary for your platform and verifies SHA-256. The she
 
 Cloudflare Workers serves the download mirror for installers, binaries, and checksums. Releases are synchronized from [GitHub Releases](https://github.com/langbot-app/langbot-cli/releases), where the original files are also available. Set `LBCTL_VERSION` to install a specific published version.
 
+### Update lbctl
+
+```sh
+lbctl self update --check
+lbctl self update
+```
+
+`self update` downloads the latest stable release, checks its SHA-256 and reported version, then replaces the current executable. Automatic notices appear on stderr in human terminals. Successful checks are cached for 24 hours, failed checks retry after 10 minutes, and network checks time out after one second. Set `LBCTL_NO_UPDATE_CHECK=1` to disable automatic notices. This feature ships with the next lbctl release. Existing releases need one installer-based upgrade to obtain it.
+
 <a id="source"></a>
 
 ## Build from source

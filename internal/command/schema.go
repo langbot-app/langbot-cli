@@ -201,6 +201,15 @@ var schemaMetaByName = map[string]schemaCommandMeta{
 		Reason:   "logs --follow 不支持 YAML 输出",
 	}}},
 	"version": {Operations: []schemaOperation{conditionalOperation("system.info", flagEquals("server", true))}, FlagApplicability: serverOnlyConnectionFlags()},
+	"self":    {},
+	"self.update": {
+		Mutating: true,
+		FlagApplicability: map[string]schemaFlagApplicability{
+			"context":       {Status: "rejected", Reason: "self update 升级 lbctl 工具自身"},
+			"endpoint":      {Status: "rejected", Reason: "self update 使用官方 Release"},
+			"api-key-stdin": {Status: "rejected", Reason: "self update 使用公开发行文件"},
+		},
+	},
 	"raw": func() schemaCommandMeta {
 		meta := readMeta(operationIDs("system.info")...)
 		meta.ArgumentMin, meta.ArgumentMax, meta.ArgumentAllowed = intPointer(0), intPointer(2), []int{0, 2}

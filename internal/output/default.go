@@ -33,6 +33,23 @@ func renderDefault(w io.Writer, value any, command string) error {
 		}
 	}
 	data := envelope["data"]
+	if command == "self.update" && envelope["ok"] == true {
+		info, ok := data.(map[string]any)
+		if ok {
+			current, latest := displayCell(info["current_version"]), displayCell(info["latest_version"])
+			switch {
+			case info["updated"] == true:
+				_, err := fmt.Fprintf(w, "lbctl 已升级 %s → %s\n", current, latest)
+				return err
+			case info["update_available"] == true:
+				_, err := fmt.Fprintf(w, "发现 lbctl 新版本 %s → %s\n运行 lbctl self update 升级\n", current, latest)
+				return err
+			default:
+				_, err := fmt.Fprintf(w, "lbctl 无需升级（当前 %s，最新稳定版本 %s）\n", current, latest)
+				return err
+			}
+		}
+	}
 	if command == "version" && envelope["ok"] == true {
 		if info, ok := data.(map[string]any); ok {
 			if _, server := info["server_version"]; !server {

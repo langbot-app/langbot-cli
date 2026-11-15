@@ -20,6 +20,7 @@ import (
 	"github.com/langbot-app/langbot-cli/internal/output"
 	"github.com/langbot-app/langbot-cli/internal/requestbody"
 	"github.com/langbot-app/langbot-cli/internal/result"
+	"github.com/langbot-app/langbot-cli/internal/selfupdate"
 	"github.com/spf13/cobra"
 )
 
@@ -38,28 +39,31 @@ type Dependencies struct {
 	LocalDir          string
 	LocalLocatorPath  string
 	LatestRelease     func(context.Context) (string, error)
+	SelfUpdate        *selfupdate.Updater
 }
 
 type globalFlags struct {
-	listView    listViewOptions
-	config      string
-	configSet   bool
-	context     string
-	endpoint    string
-	timeout     string
-	apiKeyStdin bool
-	output      string
-	outputSet   bool
-	commandPath string
-	contextSet  bool
-	endpointSet bool
-	timeoutSet  bool
-	exitCode    int
+	listView     listViewOptions
+	config       string
+	configSet    bool
+	context      string
+	endpoint     string
+	timeout      string
+	apiKeyStdin  bool
+	output       string
+	outputSet    bool
+	commandPath  string
+	contextSet   bool
+	endpointSet  bool
+	timeoutSet   bool
+	exitCode     int
+	finishNotice func()
 }
 
 func Execute(ctx context.Context, args []string, deps Dependencies) int {
 	deps = normalizeDependencies(deps)
-	flags := &globalFlags{}
+	flags := &globalFlags{finishNotice: func() {}}
+	defer func() { flags.finishNotice() }()
 	service := app.New(app.Dependencies{
 		In: deps.In, LookupEnv: deps.LookupEnv, DefaultConfigPath: func() (string, error) {
 			if flags.config != "" {
@@ -80,7 +84,8 @@ func Execute(ctx context.Context, args []string, deps Dependencies) int {
 		if !errors.As(err, &typed) {
 			err = commandInputError(executed)
 		}
-		return emit(deps, flags, app.Result{}, err)
+		flags.exitCode = emit(deps, flags, app.Result{}, err)
+		return flags.exitCode
 	}
 	return flags.exitCode
 }
@@ -101,6 +106,10 @@ func normalizeDependencies(deps Dependencies) Dependencies {
 	if deps.DefaultConfigPath == nil {
 		deps.DefaultConfigPath = config.DefaultPath
 	}
+	if deps.SelfUpdate == nil {
+		deps.SelfUpdate = &selfupdate.Updater{}
+	}
+	deps.SelfUpdate.Cleanup()
 	return deps
 }
 
@@ -142,6 +151,7 @@ func newRoot(deps Dependencies, flags *globalFlags, service *app.Service) *cobra
 				return result.New("input", "输出格式无效，请使用 json 或 yaml")
 			}
 		}
+		flags.finishNotice = startUpdateNotice(cmd.Context(), cmd, deps, flags)
 		return nil
 	}
 	root.AddCommand(newContextCommand(service, deps, flags))
@@ -156,6 +166,7 @@ func newRoot(deps Dependencies, flags *globalFlags, service *app.Service) *cobra
 	root.AddCommand(newUninstallCommand(service, deps, flags))
 	root.AddCommand(newLocalLogsCommand(service, deps, flags))
 	root.AddCommand(newVersionCommand(service, deps, flags))
+	root.AddCommand(newSelfCommand(deps, flags))
 	root.AddCommand(newRawCommand(service, deps, flags))
 	root.AddCommand(newAPICommand(service, deps, flags))
 	root.AddCommand(newSchemaCommand(deps, flags))
@@ -1638,7 +1649,7 @@ func applyListView(value app.Result, options listViewOptions) (app.Result, error
 }
 
 func enrichResult(deps Dependencies, flags *globalFlags, value app.Result, err error) app.Result {
-	if flags.commandPath == "schema" || flags.commandPath == "version" || strings.HasPrefix(flags.commandPath, "completion") {
+	if flags.commandPath == "schema" || flags.commandPath == "version" || strings.HasPrefix(flags.commandPath, "completion") || strings.HasPrefix(flags.commandPath, "self.") {
 		return value
 	}
 	meta := map[string]any{}
@@ -1735,12 +1746,7 @@ func hasEnvironmentConfig(deps Dependencies) bool {
 
 // Human waiting feedback is terminal-only; redirected and machine output stay quiet.
 func startProgress(deps Dependencies, flags *globalFlags) func() {
-	file, ok := deps.Err.(*os.File)
-	if !ok || flags.outputSet || flags.commandPath == "schema" {
-		return func() {}
-	}
-	info, err := file.Stat()
-	if err != nil || info.Mode()&os.ModeCharDevice == 0 {
+	if !terminalWriter(deps.Err) || flags.outputSet || flags.commandPath == "schema" {
 		return func() {}
 	}
 	done, exited := make(chan struct{}), make(chan struct{})

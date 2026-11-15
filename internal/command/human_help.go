@@ -146,7 +146,7 @@ var helpGroups = []struct {
 	{"资源与内容", []string{"bot", "pipeline", "provider", "model", "knowledge-base", "knowledge-engine", "knowledge-parser", "plugin", "skill", "mcp-server"}},
 	{"运行与排查", []string{"monitoring", "sandbox", "task", "logs"}},
 	{"本机部署", []string{"install", "adopt", "start", "stop", "restart", "upgrade", "uninstall"}},
-	{"工具与自动化", []string{"schema", "api", "raw", "completion", "version", "help"}},
+	{"工具与自动化", []string{"self", "schema", "api", "raw", "completion", "version", "help"}},
 }
 
 func configureExperience(root *cobra.Command, deps Dependencies, flags *globalFlags) {

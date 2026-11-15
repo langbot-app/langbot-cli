@@ -63,6 +63,15 @@ irm https://download.langbot.app/install.ps1 | iex
 
 下载域名由 Cloudflare Workers 分发，安装脚本、二进制和校验文件均从镜像获取。发行包同步自 [GitHub Releases](https://github.com/langbot-app/langbot-cli/releases)，也可以在那里直接下载原始文件。设置 `LBCTL_VERSION` 可安装指定的已发布版本。
 
+### 升级 lbctl
+
+```sh
+lbctl self update --check
+lbctl self update
+```
+
+`self update` 下载并校验最新稳定版本，验证二进制版本后替换当前工具。自动提醒显示在人工终端的 stderr，成功的版本检查缓存 24 小时，检查失败后 10 分钟再试，网络检查超时为 1 秒。设置 `LBCTL_NO_UPDATE_CHECK=1` 可关闭自动提醒。此功能随下一版 lbctl 提供，现有旧版本需要先通过安装脚本升级一次。
+
 <a id="source"></a>
 
 ## 源码构建
