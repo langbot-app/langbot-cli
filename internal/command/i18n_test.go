@@ -8,7 +8,27 @@ import (
 	"strings"
 	"testing"
 	"unicode"
+
+	"github.com/langbot-app/langbot-cli/internal/app"
 )
+
+func TestNoBrandPreservesCommandOutput(t *testing.T) {
+	for _, setting := range []string{"", "0", "1"} {
+		for _, command := range []string{"install", "upgrade"} {
+			var out, diagnostic bytes.Buffer
+			deps := Dependencies{Out: &out, Err: &diagnostic, DefaultConfigPath: func() (string, error) { return filepath.Join(t.TempDir(), "config.yaml"), nil }, LookupEnv: func(key string) (string, bool) {
+				return setting, key == "LBCTL_NO_BRAND"
+			}}
+			flags := &globalFlags{commandPath: command}
+			err := emitCall(deps, flags, func() (app.Result, error) {
+				return app.Result{Data: map[string]any{"action": "install", "changed": true, "status": map[string]any{"status": "running"}, "version": "v4.11.8", "endpoint": "http://127.0.0.1:5300"}}, nil
+			})
+			if err != nil || strings.Contains(diagnostic.String(), "LangBot") != (setting != "1") || !strings.Contains(out.String(), "http://127.0.0.1:5300") {
+				t.Fatalf("%s/%s: %v %s %s", command, setting, err, &out, &diagnostic)
+			}
+		}
+	}
+}
 
 func TestLocalizedCommandAndStableMachineOutput(t *testing.T) {
 	for _, args := range [][]string{{"version"}, {"--help"}, {"bot", "update", "--help"}, {"context", "use"}, {"schema"}, {"context", "use", "--output", "json"}, {"help", "unknown", "--output", "json"}, {"--context", "--help", "status", "--output", "json"}} {

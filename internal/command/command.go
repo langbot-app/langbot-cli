@@ -1648,7 +1648,8 @@ func emitCommand(deps Dependencies, flags *globalFlags, value app.Result, err er
 }
 
 func emitCall(deps Dependencies, flags *globalFlags, call func() (app.Result, error)) error {
-	if flags.output != "json" && flags.output != "yaml" && (flags.commandPath == "install" || flags.commandPath == "upgrade") {
+	noBrand, _ := deps.LookupEnv("LBCTL_NO_BRAND")
+	if noBrand != "1" && flags.output != "json" && flags.output != "yaml" && (flags.commandPath == "install" || flags.commandPath == "upgrade") {
 		progress.Brand(deps.Err)
 	}
 	showNotice(deps, flags)
