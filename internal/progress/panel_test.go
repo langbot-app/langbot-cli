@@ -47,8 +47,11 @@ func TestPanelDisplayWidths(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, line := range strings.Split(strings.TrimSpace(out.String()), "\n") {
-			if width := Width(line); width != min(columns-2, 76) {
+			if width := Width(line); width > min(columns-2, 76) {
 				t.Fatalf("columns=%d width=%d: %q", columns, width, line)
+			}
+			if strings.ContainsAny(line, "╮╯") || strings.HasSuffix(strings.TrimRight(line, "\x1b[0m"), "│") {
+				t.Fatalf("right border must stay open: %q", line)
 			}
 		}
 	}

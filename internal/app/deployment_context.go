@@ -11,7 +11,7 @@ import (
 )
 
 func (s *Service) deploymentContext(ctx context.Context, record deploy.Record, dir, requestedRegion string) {
-	source := i18n.Human("Cloudflare exit-IP detection; global fallback")
+	source := i18n.Human("auto-detected")
 	if requestedRegion == "stored" {
 		source = i18n.Human("Saved deployment settings")
 	} else if requestedRegion != "" && requestedRegion != "auto" {

@@ -71,13 +71,15 @@ func renderPanel(out io.Writer, lines []string, width int, color bool) error {
 	}
 	width = min(width-2, 76)
 	title := fit(lines[0], width-6)
-	if _, err := fmt.Fprintln(out, "\x1b[36m╭─ \x1b[1m"+title+"\x1b[22m "+strings.Repeat("─", width-5-Width(title))+"╮\x1b[0m"); err != nil {
+	// The frame is open on the right: box-drawing and middle-dot glyphs are
+	// East Asian ambiguous width, so CJK fonts and legacy consoles may draw
+	// them double-width and a closed right border would drift.
+	if _, err := fmt.Fprintln(out, "\x1b[36m╭─ \x1b[1m"+title+"\x1b[22m\x1b[0m"); err != nil {
 		return err
 	}
 	for _, line := range append([]string{""}, lines[1:]...) {
 		for {
 			part := fit(line, width-6)
-			cells := Width(part)
 			color := ""
 			if strings.HasPrefix(line, "WebUI") {
 				color = "\x1b[1;36m"
@@ -86,7 +88,7 @@ func renderPanel(out io.Writer, lines []string, width int, color bool) error {
 			} else if strings.HasPrefix(strings.TrimSpace(line), "docs.langbot.app") {
 				color = "\x1b[2m"
 			}
-			if _, err := fmt.Fprintf(out, "\x1b[36m│\x1b[0m  %s%s\x1b[0m%s  \x1b[36m│\x1b[0m\n", color, part, strings.Repeat(" ", width-6-cells)); err != nil {
+			if _, err := fmt.Fprintf(out, "\x1b[36m│\x1b[0m  %s%s\x1b[0m\n", color, part); err != nil {
 				return err
 			}
 			if len(part) >= len(line) || part == "" {
@@ -95,7 +97,7 @@ func renderPanel(out io.Writer, lines []string, width int, color bool) error {
 			line = line[len(part):]
 		}
 	}
-	_, err := fmt.Fprintln(out, "\x1b[36m╰"+strings.Repeat("─", width-2)+"╯\x1b[0m")
+	_, err := fmt.Fprintln(out, "\x1b[36m╰─\x1b[0m")
 	return err
 }
 
