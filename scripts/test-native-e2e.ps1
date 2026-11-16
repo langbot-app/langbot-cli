@@ -9,7 +9,8 @@ $installed = $false
 
 function Invoke-Lbctl {
     param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments)
-    $output = & lbctl @Arguments --dir $instanceDir --output json
+    $target = if ($Arguments[0] -in @('install', 'autostart')) { @('--dir', $instanceDir) } else { @('--endpoint', $endpoint) }
+    $output = & lbctl @Arguments @target --output json
     if ($LASTEXITCODE -ne 0) { throw "lbctl $Arguments failed: $output" }
     $envelope = ($output -join "`n") | ConvertFrom-Json
     if (-not $envelope.ok) { throw "lbctl $Arguments returned an error" }
@@ -112,6 +113,6 @@ try {
     Write-Host 'Windows native lifecycle, login console, PID/lock and registry checks passed'
 } finally {
     if ($installed) {
-        & lbctl uninstall --dir $instanceDir --yes --output json
+        & lbctl uninstall --endpoint $endpoint --yes --output json
     }
 }
