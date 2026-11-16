@@ -492,6 +492,9 @@ func renderLocalAction(w io.Writer, data map[string]any) error {
 			}
 		}
 		language := "en"
+		if data["autostart_note"] == "loginctl enable-linger" {
+			lines = append(lines, i18n.T("Run loginctl enable-linger to keep LangBot running after logout."))
+		}
 		if i18n.Current() == i18n.Chinese {
 			language = "zh"
 		}

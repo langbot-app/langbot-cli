@@ -192,10 +192,10 @@ func (s *Service) installNative(ctx context.Context, options InstallOptions) (Re
 				return err
 			}
 			if record.ServiceManager == "systemd-user" {
-				fmt.Fprintln(s.nativeOutput(), i18n.Human("Run loginctl enable-linger to keep LangBot running after logout."))
+				fmt.Fprintln(progress.Output(ctx, s.nativeOutput()), i18n.Human("Run loginctl enable-linger to keep LangBot running after logout."))
 			}
 			for _, check := range deploy.NativeCapabilities() {
-				fmt.Fprintf(s.nativeOutput(), "%s: %s (%s)\n", check.Name, check.Status, check.Reason)
+				fmt.Fprintf(progress.Output(ctx, s.nativeOutput()), "%s: %s (%s)\n", check.Name, check.Status, i18n.Human(check.Reason))
 			}
 			return nil
 		})
