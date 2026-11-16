@@ -7,15 +7,87 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestNativeEnvironmentPreservesWebhookConfiguration(t *testing.T) {
+	_, record := nativeFixture(t)
+	record.Endpoint = "http://127.0.0.1:15300"
+	record.Port = 15300
+	readEnvironment := func() map[string]string {
+		env := map[string]string{}
+		for _, entry := range NativeEnvironment(record) {
+			name, value, _ := strings.Cut(entry, "=")
+			env[name] = value
+		}
+		return env
+	}
+	if got := readEnvironment()["API__WEBHOOK_PREFIX"]; got != record.Endpoint {
+		t.Fatalf("initial webhook = %q", got)
+	}
+	if err := os.WriteFile(filepath.Join(record.DataDir, "config.yaml"), []byte("api:\n  webhook_prefix: https://bot.example.com\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := readEnvironment()["API__WEBHOOK_PREFIX"]; exists {
+		t.Fatal("restart overrides user webhook")
+	}
+	if got := readEnvironment()["API__PORT"]; got != "15300" {
+		t.Fatalf("managed API port = %q", got)
+	}
+}
+
+func TestNativePortsRejectRuntimeConflicts(t *testing.T) {
+	for _, port := range []int{5401, 5410} {
+		t.Run(fmt.Sprint(port), func(t *testing.T) {
+			listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer listener.Close()
+			err = CheckNativePorts(Record{Port: 0})
+			if err == nil || !strings.Contains(err.Error(), fmt.Sprint(port)) || !strings.Contains(err.Error(), "Docker") {
+				t.Fatalf("missing conflict diagnostic: %v", err)
+			}
+		})
+	}
+	for _, port := range []int{5401, 5410} {
+		if err := CheckNativePorts(Record{Port: port}); err == nil {
+			t.Fatalf("HTTP overlaps runtime port %d", port)
+		}
+	}
+	if err := CheckNativePorts(Record{Port: 0}); err != nil {
+		t.Fatalf("ports not released: %v", err)
+	}
+}
+
+func TestNativeExecutablePreservesStableSymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink requires Windows privileges")
+	}
+	binary, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	link := filepath.Join(dir, "lbctl")
+	if err := os.Symlink(binary, link); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+	got, err := nativeExecutable()
+	if err != nil || got != link {
+		t.Fatalf("stable executable = %q, %v", got, err)
+	}
+}
 
 func nativeFixture(t *testing.T) (string, Record) {
 	t.Helper()

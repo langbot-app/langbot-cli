@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"os"
 	"path/filepath"
 	"time"
@@ -75,11 +74,9 @@ func (s *Service) installNative(ctx context.Context, options InstallOptions) (Re
 		return Result{}, result.New("precondition", err.Error())
 	}
 	if !deploy.NativeRunning(dir) {
-		listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", record.Port))
-		if err != nil {
-			return Result{}, result.New("precondition", "port is occupied; choose another --port")
+		if err := deploy.CheckNativePorts(record); err != nil {
+			return Result{}, result.New("precondition", err.Error())
 		}
-		listener.Close()
 	}
 	data := map[string]any{"action": "install", "url": record.Endpoint, "driver": record.Driver, "instance_dir": dir, "version": version,
 		"name": record.Name, "region": record.Region, "service_manager": record.ServiceManager, "checks": deploy.NativeCapabilities(), "record": record}
@@ -106,6 +103,7 @@ func (s *Service) installNative(ctx context.Context, options InstallOptions) (Re
 			if err := (deploy.Store{Dir: dir}).Write(ctx, record); err != nil {
 				return err
 			}
+			data["changed"] = true
 			if err := locator.Write(dir); err != nil {
 				return err
 			}
@@ -136,6 +134,12 @@ func (s *Service) installNative(ctx context.Context, options InstallOptions) (Re
 	if saved, readErr := (deploy.Store{Dir: dir}).Read(); readErr == nil {
 		data["record"] = saved
 	}
+	if err == nil {
+		data["changed"] = true
+		data["status"] = map[string]any{"status": "running"}
+	} else {
+		data["step"] = "install_failed"
+	}
 	return Result{Data: data}, nativeMutationError(err)
 }
 
@@ -163,7 +167,16 @@ func (s *Service) nativeLifecycle(ctx context.Context, diagnostics deploy.Diagno
 		}
 		return nil
 	})
-	return Result{Data: map[string]any{"action": action, "record": record}}, nativeMutationError(err)
+	data := map[string]any{"action": action, "record": record}
+	if err == nil {
+		state := "running"
+		if action == "stop" {
+			state = "stopped"
+		}
+		data["changed"] = true
+		data["status"] = map[string]any{"status": state}
+	}
+	return Result{Data: data}, nativeMutationError(err)
 }
 
 func nativeMutationError(err error) error {

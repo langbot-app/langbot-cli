@@ -142,7 +142,7 @@ Install the latest stable Core with an isolated, automatically provisioned Pytho
 
 ```sh
 lbctl install
-lbctl install --driver native --name second --port 5301 --region cn --yes
+lbctl install --driver native --name mybot --port 5301 --region cn --yes
 lbctl install --driver docker --name container --port 5302
 lbctl upgrade --yes
 lbctl update --check
@@ -156,6 +156,8 @@ New instances use `$LANGBOT_HOME/instances/<name>` (`--name default`). `LANGBOT_
 Native services use systemd (user units for non-root), launchd LaunchAgents, or Windows ONLOGON scheduled tasks, with a pidfile-backed process fallback where these managers are unavailable. For systemd user units, run `loginctl enable-linger` to retain the service after logout. Logs are stored in `instances/<name>/logs` with three rotated files and a 10 MiB limit per file. `start`, `stop`, `restart`, `status`, `logs -f`, `doctor`, `upgrade`, and `uninstall` select the recorded driver. `doctor` reports missing Box sandbox, stdio MCP, and audio capabilities (Docker/Podman/nsjail, node+npx, and ffmpeg respectively).
 
 Native upgrades prepare a new venv before stopping the service, back up data while excluding rebuildable caches/venvs, and check `/healthz` after switching. A failed health check restores the previous version and data. The newest three backups are retained. Uninstall preserves data and backups unless `--purge-data` is explicitly passed.
+
+Core 4.11.x native deployments require exclusive runtime ports 5401 (plugin debugging) and 5410 (Box). Installation and startup reject occupied ports, including an HTTP port overlapping either runtime port. Use Docker for concurrently running multiple instances. The HTTP port is managed by lbctl: select `--port` during installation; for an existing deployment, stop it, update `port` and `endpoint` in `deployment.yaml`, then run `lbctl start`. Editing `api.port` in Core's config alone does not change the managed port. The webhook URL is initialized only before the first `data/config.yaml` exists; subsequent starts preserve a public `api.webhook_prefix` configured by the user.
 
 `--region auto|cn|global` uses `LANGBOT_REGION` first, then a two-second country probe. `cn` selects npmmirror for Python, Aliyun PyPI (Tsinghua fallback), the same index for plugin dependencies, and `docker.langbot.app/rockchin/langbot` for Docker. A missing LangBot wheel can be obtained from PyPI while dependencies keep the configured mirror. Override with `--pypi-index`, `--python-mirror`, or `--image-repository`; these settings persist for upgrades. The uv mirror is preferred in `cn`, with GitHub fallback.
 

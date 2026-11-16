@@ -383,7 +383,7 @@ func renderLocalAction(w io.Writer, data map[string]any) error {
 		} else if state != "running" || data["step"] != nil {
 			line = "安装已执行，运行状态待确认：" + endpoint
 		} else {
-			line = "已安装 LangBot " + version + "：" + endpoint
+			line = "已安装 LangBot " + version + " → " + endpoint
 		}
 	case "adopt":
 		line = "已接管本机部署：" + endpoint
@@ -429,6 +429,10 @@ func renderLocalAction(w io.Writer, data map[string]any) error {
 		if _, err := fmt.Fprintln(w, line); err != nil {
 			return err
 		}
+	}
+	if action == "install" && data["dry_run"] != true && data["changed"] == true && state == "running" && data["step"] == nil {
+		_, err := fmt.Fprintln(w, "下一步：lbctl status · lbctl logs · lbctl upgrade --yes")
+		return err
 	}
 	if data["dry_run"] == true || (action == "install" && data["changed"] != true) {
 		if action == "install" {
@@ -606,9 +610,14 @@ func lifecycleLabel(info map[string]any) string {
 			driver = "Docker Compose"
 		} else if driver == "native_process" {
 			driver = "本机进程"
+		} else if driver == "native" {
+			driver = "原生部署"
 		}
 		if status := formatCell(info["status"]); status != "" {
 			return driver + " · " + localStatusLabel(status)
+		}
+		if info["driver"] == "native" {
+			return driver + " · lbctl 管理"
 		}
 		return driver + " · 已接管"
 	case "unbound":

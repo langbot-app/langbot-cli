@@ -154,7 +154,26 @@ func ValidateOwnedLayout(record Record, dir string) error {
 	return nil
 }
 
-func InspectUpgradeData(record Record) (int64, uint64, error) {
+func InspectUpgradeData(record Record) (dataBytes int64, freeBytes uint64, err error) {
+	defer func() {
+		if errors.Is(err, fs.ErrPermission) {
+			err = fmt.Errorf("升级备份权限不足：%w；请使用 sudo 执行，或先用 chown 调整数据及备份目录属主", err)
+		}
+	}()
+	backupRoot := filepath.Join(filepath.Dir(record.DataDir), "backups")
+	if _, statErr := os.Stat(backupRoot); os.IsNotExist(statErr) {
+		backupRoot = filepath.Dir(backupRoot)
+	} else if statErr != nil {
+		return 0, 0, statErr
+	}
+	probe, err := os.CreateTemp(backupRoot, ".lbctl-write-check-*")
+	if err != nil {
+		return 0, 0, err
+	}
+	probe.Close()
+	if err := os.Remove(probe.Name()); err != nil {
+		return 0, 0, err
+	}
 	configPath := filepath.Join(record.DataDir, "config.yaml")
 	if !regularFile(configPath) {
 		return 0, 0, errors.New("缺少可读取的本地配置，无法确认备份范围")
@@ -197,6 +216,13 @@ func InspectUpgradeData(record Record) (int64, uint64, error) {
 			return fmt.Errorf("数据目录包含不支持的路径: %s", path)
 		}
 		if info.Mode().IsRegular() {
+			file, err := os.Open(path)
+			if err != nil {
+				return err
+			}
+			if err := file.Close(); err != nil {
+				return err
+			}
 			total += info.Size()
 		}
 		return nil

@@ -30,21 +30,29 @@ failure restores v4.11.8, the original marker, and WebUI HTTP 200. It also check
 follow-log cancellation and uninstalls. This is a failure-injection test, not a
 test of a published v4.11.9 release. Use only a disposable container.
 
+`scripts/test-native-review.sh` checks human lifecycle output, public webhook
+preservation through restart and upgrade, runtime-port conflict rejection before
+writing a second deployment, and native doctor capability warnings. Run in the
+same disposable container setup. Remove `/.dockerenv` inside the test container
+to simulate bare-metal runtime selection; do not remove it on production hosts.
+
 ## Integration requirements
 
-- Publish all six pinned uv 0.9.11 assets beneath
+- The landing download sync publishes all six pinned uv 0.9.11 assets beneath
   `download.langbot.app/tools/uv/0.9.11/`. Exact filenames and SHA-256 values are
   in `internal/deploy/native_runtime.go`. An unavailable mirror falls back to
-  GitHub; a mainland run is not mirror-only until these assets are available.
+  GitHub.
 - Core 4.11.x detects `/.dockerenv` and chooses external WebSocket plugin/Box
-  runtimes. Container-based native tests verify the WebUI and lifecycle, not
-  embedded plugin/Box functionality. Supporting embedded runtimes inside
-  containers requires a Core transport override; lbctl does not patch installed
-  Python packages or remove container markers.
+  runtimes. Bare-metal native deployments launch both runtimes over stdio.
+  Core 4.11.x fixes the embedded Box relay at 5410; lbctl rejects conflicts
+  on 5401 and 5410 rather than starting a partly functional second instance.
+  Container tests must simulate bare metal explicitly as described above;
+  lbctl does not patch Python packages or remove container markers.
 - Docker-created data can be owned by root, including migration backup
   directories. A non-root operator without read access cannot back up or upgrade
-  that data. Run the regression with an operator that can read the deployment
-  data; lbctl does not change ownership automatically.
+  that data. Preflight checks data readability and backup-directory writability
+  before stopping Core and advises sudo or chown on permission failures;
+  lbctl does not change ownership automatically.
 - Cross-builds verify compilation, not actual launchd or Windows scheduled-task
   behavior. Validate those managers on their respective operating systems before
   release.

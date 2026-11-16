@@ -85,8 +85,23 @@ func xmlText(value string) string {
 	return text.String()
 }
 
-func InstallNativeService(ctx context.Context, dir string, record Record) error {
+func nativeExecutable() (string, error) {
 	binary, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+	if candidate, err := exec.LookPath("lbctl"); err == nil {
+		currentInfo, currentErr := os.Stat(binary)
+		candidateInfo, candidateErr := os.Stat(candidate)
+		if currentErr == nil && candidateErr == nil && os.SameFile(currentInfo, candidateInfo) {
+			return filepath.Abs(candidate)
+		}
+	}
+	return binary, nil
+}
+
+func InstallNativeService(ctx context.Context, dir string, record Record) error {
+	binary, err := nativeExecutable()
 	if err != nil {
 		return err
 	}
@@ -141,6 +156,9 @@ func nativeSystemctl(ctx context.Context, record Record, args ...string) error {
 func NativeStart(ctx context.Context, dir string, record Record) error {
 	if NativeRunning(dir) {
 		return nil
+	}
+	if err := CheckNativePorts(record); err != nil {
+		return err
 	}
 	if err := os.Remove(filepath.Join(dir, "native.stop")); err != nil && !os.IsNotExist(err) {
 		return err
@@ -304,6 +322,9 @@ func NativeServe(ctx context.Context, dir string) error {
 		return fmt.Errorf("native instance already running")
 	}
 	defer lock.Unlock()
+	if err := CheckNativePorts(record); err != nil {
+		return err
+	}
 	if err := os.Remove(filepath.Join(dir, "native.stop")); err != nil && !os.IsNotExist(err) {
 		return err
 	}

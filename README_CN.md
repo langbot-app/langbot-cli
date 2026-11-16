@@ -142,7 +142,7 @@ lbctl context remove dev --yes
 
 ```sh
 lbctl install
-lbctl install --driver native --name second --port 5301 --region cn --yes
+lbctl install --driver native --name mybot --port 5301 --region cn --yes
 lbctl install --driver docker --name container --port 5302
 lbctl upgrade --yes
 lbctl update --check
@@ -156,6 +156,8 @@ lbctl update
 原生服务由 systemd（非 root 使用 user unit）、launchd LaunchAgent 或 Windows ONLOGON 计划任务托管，不可用时退回后台进程和 pidfile。systemd user 模式可执行 `loginctl enable-linger` 保持退出登录后运行。日志存于 `instances/<name>/logs`，单文件上限 10 MiB，保留三份轮转日志。`start`、`stop`、`restart`、`status`、`logs -f`、`doctor`、`upgrade`、`uninstall` 按部署记录的 driver 分发。`doctor` 报告 Box 沙箱、stdio MCP 和音频能力所需工具是否缺失（分别为 Docker/Podman/nsjail、node+npx、ffmpeg）。
 
 原生升级先准备新 venv，再停服备份数据（排除可重建的缓存和 venv），切换版本后检查 `/healthz`；检查失败自动恢复旧版本及数据。只保留最近三份备份。卸载默认保留数据和备份；显式 `--purge-data` 才删除数据。
+
+Core 4.11.x 原生部署需要独占运行时端口 5401（插件调试）和 5410（Box）；安装和启动会拒绝端口冲突，包括 HTTP 端口与运行时端口重叠。多个实例同时运行请使用 Docker。HTTP 端口由 lbctl 管理：安装时通过 `--port` 指定；已有部署先执行 `lbctl stop`，修改 `deployment.yaml` 中的 `port` 和 `endpoint`，再执行 `lbctl start`。仅修改 Core 配置中的 `api.port` 不会改变受管端口。Webhook 地址只在首次生成 `data/config.yaml` 前初始化；之后启动保留用户配置的公网 `api.webhook_prefix`。
 
 `--region auto|cn|global` 优先读取 `LANGBOT_REGION`，否则进行两秒超时的地区探测。`cn` 使用 npmmirror 下载 Python、阿里云 PyPI（备用清华）、同一 PyPI 源安装插件依赖，Docker 默认 `docker.langbot.app/rockchin/langbot`。镜像缺少 LangBot wheel 时可单独从 PyPI 获取，依赖仍走配置的镜像。`--pypi-index`、`--python-mirror`、`--image-repository` 可覆盖默认值，设置随记录保存并用于后续升级。大陆模式优先 uv 镜像，失败回退 GitHub。
 

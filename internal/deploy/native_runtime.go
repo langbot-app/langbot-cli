@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -149,7 +150,9 @@ func NativeEnvironment(record Record) []string {
 	env["LANGBOT_DATA_ROOT"] = record.DataDir
 	env["LANGBOT_PLUGIN_PYPI_INDEX_URL"] = record.PyPIIndex
 	env["API__PORT"] = fmt.Sprint(record.Port)
-	env["API__WEBHOOK_PREFIX"] = record.Endpoint
+	if _, err := os.Stat(filepath.Join(record.DataDir, "config.yaml")); os.IsNotExist(err) {
+		env["API__WEBHOOK_PREFIX"] = record.Endpoint
+	}
 	venv := filepath.Join(filepath.Dir(record.DataDir), "venvs", record.CoreVersion)
 	env["VIRTUAL_ENV"] = venv
 	env["PATH"] = filepath.Dir(NativePython(filepath.Dir(record.DataDir), record.CoreVersion)) + string(os.PathListSeparator) + env["PATH"]
@@ -162,6 +165,27 @@ func NativeEnvironment(record Record) []string {
 		result = append(result, name+"="+value)
 	}
 	return result
+}
+
+func CheckNativePorts(record Record) error {
+	ports := []struct {
+		name string
+		port int
+	}{{"HTTP", record.Port}, {"Plugin Runtime 调试", 5401}, {"Box", 5410}}
+	listeners := []net.Listener{}
+	defer func() {
+		for _, listener := range listeners {
+			listener.Close()
+		}
+	}()
+	for _, item := range ports {
+		listener, err := net.Listen("tcp", fmt.Sprintf(":%d", item.port))
+		if err != nil {
+			return fmt.Errorf("%s 端口 %d 不可用：%w；Core 4.11.x 原生部署需要独占 5401 和 5410，请停止冲突服务，或使用 Docker 部署多实例", item.name, item.port, err)
+		}
+		listeners = append(listeners, listener)
+	}
+	return nil
 }
 
 func PrepareNative(ctx context.Context, dir string, record Record, out io.Writer) error {

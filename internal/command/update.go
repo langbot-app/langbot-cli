@@ -16,7 +16,7 @@ import (
 
 func newUpdateCommand(deps Dependencies, flags *globalFlags) *cobra.Command {
 	var check bool
-	cmd := &cobra.Command{Use: "update", Aliases: []string{"self-update"}, Short: "Update lbctl", Args: cobra.NoArgs,
+	cmd := &cobra.Command{Use: "update", Aliases: []string{"self-update"}, Short: "更新 lbctl", Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 3*time.Minute)
 			defer cancel()
@@ -27,7 +27,7 @@ func newUpdateCommand(deps Dependencies, flags *globalFlags) *cobra.Command {
 			return emitCommand(deps, flags, app.Result{Data: value}, err)
 		},
 	}
-	cmd.Flags().BoolVar(&check, "check", false, "Check without installing")
+	cmd.Flags().BoolVar(&check, "check", false, "仅检查更新，不安装")
 	return cmd
 }
 

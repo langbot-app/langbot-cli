@@ -28,9 +28,9 @@ func NativeCapabilities() []Check {
 		name, reason string
 		ok           bool
 	}{
-		{"box_sandbox", "Box sandbox requires Docker, Podman or nsjail", available("docker", "podman", "nsjail")},
-		{"stdio_mcp", "stdio MCP requires node and npx", available("node") && available("npx")},
-		{"audio", "Audio processing requires ffmpeg", available("ffmpeg")},
+		{"box_sandbox", "Box 沙箱需要 Docker、Podman 或 nsjail", available("docker", "podman", "nsjail")},
+		{"stdio_mcp", "stdio MCP 需要 node 和 npx", available("node") && available("npx")},
+		{"audio", "音频处理需要 ffmpeg", available("ffmpeg")},
 	} {
 		status := "ok"
 		if !item.ok {

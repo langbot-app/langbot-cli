@@ -95,7 +95,7 @@ func (s *Service) Doctor(ctx context.Context, options CheckOptions) (Result, err
 	checks := environmentChecks(resolved.Environment)
 	data := map[string]any{"environment": resolved.Environment, "checks": checks}
 	var localErr error
-	if !resolved.LocalMatch || resolved.Environment.Runtime.Driver != deploy.DriverDockerCompose {
+	if !resolved.LocalMatch || (resolved.Environment.Runtime.Driver != deploy.DriverDockerCompose && resolved.Environment.Runtime.Driver != deploy.DriverNative) {
 		return Result{Data: data, Meta: connectionMeta(resolved.Connection)}, discoverErr
 	}
 	localCtx, cancel := context.WithTimeout(ctx, resolved.Connection.Timeout)

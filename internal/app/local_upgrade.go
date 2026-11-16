@@ -52,7 +52,8 @@ func (s *Service) Upgrade(ctx context.Context, options UpgradeOptions) (Result, 
 	}
 	var response Result
 	if record.Driver == deploy.DriverNative {
-		data := map[string]any{"action": "upgrade", "version": targetVersion, "driver": record.Driver, "dry_run": options.DryRun}
+		data := map[string]any{"action": "upgrade", "version": targetVersion, "driver": record.Driver, "dry_run": options.DryRun,
+			"source_version": record.CoreVersion, "target_version": targetVersion}
 		if options.DryRun {
 			return Result{Data: data}, nil
 		}
@@ -66,6 +67,7 @@ func (s *Service) Upgrade(ctx context.Context, options UpgradeOptions) (Result, 
 			}
 			backup, err := deploy.UpgradeNative(operationCtx, diagnostics.Dir, current, targetVersion, s.nativeOutput(), s.deps.LocalHTTP)
 			data["backup_dir"] = backup
+			data["completed"] = err == nil
 			return err
 		})
 		return Result{Data: data}, nativeMutationError(err)
