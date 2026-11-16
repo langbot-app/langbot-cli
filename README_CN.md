@@ -33,7 +33,7 @@
 
 ---
 
-LangBot 的独立命令行工具，二进制名为 `lbctl`。它通过 HTTP 管理 Workspace 资源，支持多 context、身份与能力发现、资源管理、RAG 配置发现、Pipeline 扩展与试运行、运行记录和 Sandbox 诊断、异步任务等待，以及本机 Docker Compose 部署的安装、接管、启停和升级。
+LangBot 的独立命令行工具，二进制名为 `lbctl`。它通过 HTTP 管理 Workspace 资源，支持多 context、身份与能力发现、资源管理、RAG 配置发现、Pipeline 扩展与试运行、运行记录和 Sandbox 诊断、异步任务等待，以及原生 Python 和 Docker Compose 部署的安装、接管、启停和升级。
 
 当前源码需配套包含以下能力的 LangBot Core：
 
@@ -73,7 +73,7 @@ make build
 ./bin/lbctl --help
 ```
 
-Go 基线为 1.26。编译后的二进制可直接运行；本机部署管理使用 Docker Compose。
+Go 基线为 1.26。编译后的二进制可直接运行；本机部署管理支持原生 Python 和 Docker Compose。
 
 <a id="connection"></a>
 
@@ -138,6 +138,29 @@ lbctl context remove dev --yes
 
 ## 本机部署与升级
 
+自动配置隔离的 Python 3.12 环境并安装最新稳定版 Core：
+
+```sh
+lbctl install
+lbctl install --driver native --name second --port 5301 --region cn --yes
+lbctl install --driver docker --name container --port 5302
+lbctl upgrade --yes
+lbctl update --check
+lbctl update
+```
+
+默认使用原生运行，非交互安装也一样。终端内检测到 Docker Compose v2 和可连接的 daemon 时，向导提供「原生运行（推荐）」和 Docker 两个选项，回车选择原生；`--yes` 跳过提示。HTTP 端口被占用时会提供下一个空闲端口，提示文字随 `LANG` 切换中英文。`--version vX.Y.Z` 固定 Core 版本；`upgrade` 要求 `--yes`，不传版本时从 LangBot Space 查询最新稳定版，失败再查 GitHub。`update`（别名 `self-update`）更新的是 **lbctl**，不是 Core；包管理器安装的 lbctl 只提示对应升级命令。
+
+新实例放在 `$LANGBOT_HOME/instances/<name>`，默认 `--name default`。`LANGBOT_HOME` 默认普通用户 `~/.langbot`、root `/opt/langbot`、Windows `%LOCALAPPDATA%\LangBot`。locator 中原有部署（包括 `~/.config/langbot/deployment`）继续可管理，不强制迁移。原生部署使用经过 SHA-256 校验的 uv 0.9.11，存于 `tools/uv/0.9.11`；受管 Python 存于 `tools/python`，Core 各版本独立放在 `venvs/vX.Y.Z`，不依赖或修改系统 uv/Python。可选依赖通过 `--extra seekdb,milvus,valkey` 安装。
+
+原生服务由 systemd（非 root 使用 user unit）、launchd LaunchAgent 或 Windows ONLOGON 计划任务托管，不可用时退回后台进程和 pidfile。systemd user 模式可执行 `loginctl enable-linger` 保持退出登录后运行。日志存于 `instances/<name>/logs`，单文件上限 10 MiB，保留三份轮转日志。`start`、`stop`、`restart`、`status`、`logs -f`、`doctor`、`upgrade`、`uninstall` 按部署记录的 driver 分发。`doctor` 报告 Box 沙箱、stdio MCP 和音频能力所需工具是否缺失（分别为 Docker/Podman/nsjail、node+npx、ffmpeg）。
+
+原生升级先准备新 venv，再停服备份数据（排除可重建的缓存和 venv），切换版本后检查 `/healthz`；检查失败自动恢复旧版本及数据。只保留最近三份备份。卸载默认保留数据和备份；显式 `--purge-data` 才删除数据。
+
+`--region auto|cn|global` 优先读取 `LANGBOT_REGION`，否则进行两秒超时的地区探测。`cn` 使用 npmmirror 下载 Python、阿里云 PyPI（备用清华）、同一 PyPI 源安装插件依赖，Docker 默认 `docker.langbot.app/rockchin/langbot`。镜像缺少 LangBot wheel 时可单独从 PyPI 获取，依赖仍走配置的镜像。`--pypi-index`、`--python-mirror`、`--image-repository` 可覆盖默认值，设置随记录保存并用于后续升级。大陆模式优先 uv 镜像，失败回退 GitHub。
+
+更新提示仅读取本地缓存，带超时的独立进程每日最多刷新一次；仅终端输出提示，JSON/YAML、`CI`、`LBCTL_NO_UPDATE_CHECK=1` 下不提示。`status` 使用缓存展示 lbctl/Core 当前及最新版本。`install --output json` 包含 `url`、`driver`、`instance_dir`、`version`、`name`、`region`、`service_manager`。
+
 可以发现并登记多个本机 LangBot Compose 实例：
 
 ```sh
@@ -159,10 +182,10 @@ lbctl --context first status
 
 云端和本地实例统一用 `context use <name>` 切换，用 `--context <name>` 临时选择。切换不要求实例在线，临时选择不改变已保存的当前 context。显式参数和环境变量保持原有优先级。旧的单部署定位记录会在下次登记时迁移，保留原有本机兜底目录；接管另一实例不会改变当前 context。新登记格式不能由旧版 CLI 读取。
 
-内置 `install` 支持独立 Compose project 和宿主机端口映射。默认仍为 `--project langbot-lbctl`、`--plugin-debug-port 5401` 和 `--adapter-ports 2280-2285:2280-2285`。安装多个实例时，为每套部署指定不同的 `--dir`、`--project` 和 HTTP `--port`。无须插件调试或入站适配器的测试实例，可关闭这些宿主机端口发布：
+`install --driver docker` 支持独立 Compose project 和宿主机端口映射。默认仍为 `--project langbot-lbctl`、`--plugin-debug-port 5401` 和 `--adapter-ports 2280-2285:2280-2285`。安装多个实例时，为每套部署指定不同的 `--dir`、`--project` 和 HTTP `--port`。无须插件调试或入站适配器的测试实例，可关闭这些宿主机端口发布：
 
 ```sh
-lbctl install --version <vX.Y.Z> --dir /absolute/path/regression \
+lbctl install --driver docker --version <vX.Y.Z> --dir /absolute/path/regression \
   --project regression --port 15301 --profile all \
   --plugin-debug-port 0 --adapter-ports none --dry-run
 ```
@@ -170,7 +193,7 @@ lbctl install --version <vX.Y.Z> --dir /absolute/path/regression \
 去掉 `--dry-run` 即可安装。需要插件调试或入站适配器时，可选择其他空闲宿主机端口：
 
 ```sh
-lbctl install --version <vX.Y.Z> --dir /absolute/path/second \
+lbctl install --driver docker --version <vX.Y.Z> --dir /absolute/path/second \
   --project second --port 15302 --plugin-debug-port 15402 \
   --adapter-ports 12280-12285:2280-2285
 ```

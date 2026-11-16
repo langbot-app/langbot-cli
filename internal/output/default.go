@@ -494,6 +494,25 @@ func renderActiveEnvironment(w io.Writer, environment map[string]any) error {
 	}
 	service, _ := environment["service"].(map[string]any)
 	core := formatCell(service["version"])
+	if versions, ok := environment["versions"].(map[string]any); ok {
+		if version, ok := versions["lbctl"].(map[string]any); ok {
+			value := formatCell(version["current"])
+			if latest := formatCell(version["latest"]); latest != "" {
+				value += " → " + latest
+			}
+			if err := line("lbctl", value); err != nil {
+				return err
+			}
+		}
+		if version, ok := versions["core"].(map[string]any); ok {
+			if core == "" {
+				core = formatCell(version["current"])
+			}
+			if latest := formatCell(version["latest"]); latest != "" {
+				core += " → " + latest
+			}
+		}
+	}
 	if edition := formatCell(service["edition"]); core != "" && edition != "" && environment["type"] == "unknown" {
 		core += " (" + edition + ")"
 	}

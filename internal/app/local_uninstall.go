@@ -3,6 +3,8 @@ package app
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/langbot-app/langbot-cli/internal/deploy"
@@ -30,6 +32,33 @@ func (s *Service) Uninstall(ctx context.Context, options UninstallOptions) (Resu
 		return Result{}, err
 	}
 	var response Result
+	if record.Driver == deploy.DriverNative {
+		err := deploy.WithMutationLock(operationCtx, diagnostics.Dir, func() error {
+			current, err := diagnostics.Store.Read()
+			if err != nil {
+				return err
+			}
+			if current.DeploymentID != record.DeploymentID {
+				return result.New("precondition", "deployment changed")
+			}
+			if err := deploy.NativeStop(operationCtx, diagnostics.Dir, current); err != nil {
+				return err
+			}
+			if err := deploy.RemoveNativeService(operationCtx, current); err != nil {
+				return err
+			}
+			if options.PurgeData {
+				if current.DataDir != filepath.Join(diagnostics.Dir, "data") {
+					return result.New("precondition", "invalid data directory")
+				}
+				if err := os.RemoveAll(current.DataDir); err != nil {
+					return err
+				}
+			}
+			return os.RemoveAll(filepath.Join(diagnostics.Dir, "venvs"))
+		})
+		return Result{Data: map[string]any{"action": "uninstall", "driver": record.Driver, "data_preserved": !options.PurgeData, "backups_preserved": true}}, nativeMutationError(err)
+	}
 	err = deploy.WithMutationLock(operationCtx, diagnostics.Dir, func() error {
 		if err := deploy.CheckUpgradeInterrupted(diagnostics.Dir); err != nil {
 			return result.New("recovery_required", err.Error())

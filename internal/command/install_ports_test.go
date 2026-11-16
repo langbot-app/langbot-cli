@@ -46,7 +46,7 @@ func TestInstallDryRunExposesSelectedPortsAndProject(t *testing.T) {
 	runner := &installPortRunner{}
 	var out bytes.Buffer
 	code := Execute(context.Background(), []string{
-		"install", "--version", "v4.10.10", "--dir", dir, "--project", "regression",
+		"install", "--driver", "docker", "--region", "global", "--version", "v4.10.10", "--dir", dir, "--project", "regression",
 		"--port", "invalid-port",
 	}, Dependencies{Out: &out, LocalRunner: runner, LookupEnv: environmentLookup})
 	if code != 2 || len(runner.calls) != 0 {
@@ -54,7 +54,7 @@ func TestInstallDryRunExposesSelectedPortsAndProject(t *testing.T) {
 	}
 	out.Reset()
 	code = Execute(context.Background(), []string{
-		"install", "--version", "v4.10.10", "--dir", dir, "--project", "regression",
+		"install", "--driver", "docker", "--region", "global", "--version", "v4.10.10", "--dir", dir, "--project", "regression",
 		"--port", strconv.Itoa(port),
 		"--plugin-debug-port", "0", "--adapter-ports", "none", "--profile", "all", "--dry-run", "-o", "json",
 	}, Dependencies{Out: &out, LocalRunner: runner, LocalLocatorPath: filepath.Join(root, "locator.yaml"), LookupEnv: environmentLookup})

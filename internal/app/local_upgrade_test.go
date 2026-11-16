@@ -228,6 +228,16 @@ func TestUpgradeDryRunDoesNotStopOrPull(t *testing.T) {
 	}
 }
 
+func TestUpgradeResolvesLatestStableWhenVersionIsOmitted(t *testing.T) {
+	service, _, record, _ := upgradeServiceFixture(t, false)
+	called := false
+	service.deps.LatestRelease = func(context.Context) (string, error) { called = true; return "v4.10.10", nil }
+	response, err := service.Upgrade(context.Background(), UpgradeOptions{CheckOptions: CheckOptions{Endpoint: record.Endpoint, EndpointSet: true}, DryRun: true})
+	if err != nil || !called || response.Data.(map[string]any)["dry_run"] != true {
+		t.Fatalf("latest upgrade: %+v %v", response, err)
+	}
+}
+
 func TestUpgradeCompletesAfterBackupAndVersionReadback(t *testing.T) {
 	service, runner, record, dir := upgradeServiceFixture(t, false)
 	service.deps.Version = "0.4.2"

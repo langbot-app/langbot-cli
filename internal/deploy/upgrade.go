@@ -87,7 +87,8 @@ func ComposeForUpgrade(record Record, dir, version string) ([]byte, string, erro
 		if record.InstallPorts != nil {
 			ports = *record.InstallPorts
 		}
-		updated := []byte(renderCompose(DefaultImageRepository+":"+version, record.Port, filepath.Join(dir, "data", "box"), ports))
+		updated := []byte(renderCompose(ImageRepository(record)+":"+version, record.Port, filepath.Join(dir, "data", "box"), ports))
+		updated = composePackageIndex(updated, record.PyPIIndex)
 		return updated, fileDigest(updated), nil
 	}
 	content, err := os.ReadFile(record.ComposeFile)
@@ -128,7 +129,7 @@ func ValidateOwnedLayout(record Record, dir string) error {
 	if record.Driver != DriverDockerCompose || !ValidComposeProject(record.ComposeProject) ||
 		(record.InstallPorts == nil && record.ComposeProject != DefaultComposeProject) ||
 		record.ComposeFile != filepath.Join(dir, "compose.yaml") || record.EnvFile != filepath.Join(dir, ".env") ||
-		record.DataDir != filepath.Join(dir, "data") || record.Asset.Name != DefaultImageRepository+":"+record.CoreVersion ||
+		record.DataDir != filepath.Join(dir, "data") || record.Asset.Name != ImageRepository(record)+":"+record.CoreVersion ||
 		record.Endpoint != fmt.Sprintf("http://127.0.0.1:%d", record.Port) ||
 		!regularFile(record.EnvFile) || !releaseVersionPattern.MatchString(record.CoreVersion) {
 		return errors.New("仅支持 lbctl 安装的默认 Compose 部署")
@@ -144,6 +145,7 @@ func ValidateOwnedLayout(record Record, dir string) error {
 		return errors.New("部署记录的端口映射无效")
 	}
 	current := []byte(renderCompose(record.Asset.Name, record.Port, filepath.Join(dir, "data", "box"), ports))
+	current = composePackageIndex(current, record.PyPIIndex)
 	actual, err := os.ReadFile(record.ComposeFile)
 	legacy := []byte(strings.Replace(string(current), deployComposeEnvironment, "", 1))
 	if err != nil || (!equalDigest(actual, current) && !equalDigest(actual, legacy)) {

@@ -1,5 +1,7 @@
 <div align="center">
 
+`lbctl install` 預設自動配置 Python 原生部署，也可使用 `--driver docker`。部署、升級及自更新說明見 [中文指南](README_CN.md#deployment)。
+
 <a href="https://langbot.app">
 <img src="https://raw.githubusercontent.com/langbot-app/LangBot/master/res/logo-blue.png" width="96" alt="LangBot"/>
 </a>

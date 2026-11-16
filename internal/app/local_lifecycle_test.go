@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -265,7 +266,7 @@ func TestAdoptRequiresLocalEndpointAndMatchingPublishedPort(t *testing.T) {
 	if err != nil || record.Endpoint != endpoint {
 		t.Fatalf("record = %+v, err = %v", record, err)
 	}
-	if returned := adopted.Data.(map[string]any)["record"].(deploy.Record); returned != record {
+	if returned := adopted.Data.(map[string]any)["record"].(deploy.Record); !reflect.DeepEqual(returned, record) {
 		t.Fatalf("adopt response differs from persisted record: %+v != %+v", returned, record)
 	}
 	unchanged, err := service.Adopt(context.Background(), AdoptOptions{ComposeFile: composeFile, ComposeProject: "langbot", Endpoint: endpoint})
@@ -283,7 +284,7 @@ func TestAdoptRequiresLocalEndpointAndMatchingPublishedPort(t *testing.T) {
 	if err != nil || updated.Asset.Digest == record.Asset.Digest || updated.DeploymentID != record.DeploymentID {
 		t.Fatalf("adopt did not refresh the asset while preserving identity: %+v, %v", updated, err)
 	}
-	if returned := refreshed.Data.(map[string]any)["record"].(deploy.Record); returned != updated {
+	if returned := refreshed.Data.(map[string]any)["record"].(deploy.Record); !reflect.DeepEqual(returned, updated) {
 		t.Fatalf("refreshed adopt response differs from persisted record: %+v != %+v", returned, updated)
 	}
 }

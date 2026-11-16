@@ -65,6 +65,18 @@ func (d Diagnostics) Status(ctx context.Context) (StatusResult, error) {
 		return result, Problem{Kind: "precondition", Msg: "无法读取本地部署记录"}
 	}
 	result.Record = record
+	if record.Driver == DriverNative {
+		result.Status = "stopped"
+		result.Evidence["service_manager"] = record.ServiceManager
+		if NativeRunning(d.Dir) {
+			result.Status = "running"
+			if err := NativeHealth(ctx, record, d.HTTP); err != nil {
+				result.Status = "degraded"
+				result.Evidence["health"] = err.Error()
+			}
+		}
+		return result, nil
+	}
 	if upgrade, upgradeErr := ReadUpgradeState(d.Dir); upgradeErr == nil {
 		if upgrade.DeploymentID != record.DeploymentID {
 			return result, Problem{Kind: "precondition", Msg: "升级记录与部署不一致"}
@@ -119,6 +131,15 @@ func (d Diagnostics) Status(ctx context.Context) (StatusResult, error) {
 }
 
 func (d Diagnostics) Doctor(ctx context.Context) ([]Check, error) {
+	if record, err := d.Store.Read(); err == nil && record.Driver == DriverNative {
+		checks := NativeCapabilities()
+		status, err := d.Status(ctx)
+		checks = append(checks, Check{Name: "native_service", Status: status.Status, Reason: record.ServiceManager})
+		if record.ServiceManager == "systemd-user" {
+			checks = append(checks, Check{Name: "linger", Status: "info", Reason: "Run loginctl enable-linger to keep LangBot running after logout"})
+		}
+		return checks, err
+	}
 	checks := make([]Check, 0, 12)
 	add := func(name, status, reason string, detail any) {
 		checks = append(checks, Check{Name: name, Status: status, Reason: reason, Detail: detail})

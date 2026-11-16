@@ -20,6 +20,7 @@ const (
 	RecordSchemaVersion  = 1
 	DriverDockerCompose  = "docker_compose"
 	DriverNativeProcess  = "native_process"
+	DriverNative         = "native"
 	localContextRequired = "当前 Docker context 指向远程 daemon；本地生命周期只允许本机 daemon"
 	managedMarker        = "lbctl-managed"
 	markerFileName       = ".lbctl-managed"
@@ -35,22 +36,30 @@ var (
 
 // Record 是本地部署的唯一持久化描述，不保存 Workspace API Key。
 type Record struct {
-	SchemaVersion  int           `yaml:"schema_version" json:"schema_version"`
-	ManagedBy      string        `yaml:"managed_by" json:"managed_by"`
-	DeploymentID   string        `yaml:"deployment_id" json:"deployment_id"`
-	InstanceUUID   string        `yaml:"instance_uuid,omitempty" json:"instance_uuid,omitempty"`
-	Driver         string        `yaml:"driver" json:"driver"`
-	CoreVersion    string        `yaml:"core_version" json:"core_version"`
-	Profile        string        `yaml:"profile" json:"profile"`
-	ComposeProject string        `yaml:"compose_project" json:"compose_project"`
-	ComposeFile    string        `yaml:"compose_file" json:"compose_file"`
-	EnvFile        string        `yaml:"env_file,omitempty" json:"env_file,omitempty"`
-	DataDir        string        `yaml:"data_dir" json:"data_dir"`
-	Endpoint       string        `yaml:"endpoint" json:"endpoint"`
-	Port           int           `yaml:"port" json:"port"`
-	InstallPorts   *InstallPorts `yaml:"install_ports,omitempty" json:"install_ports,omitempty"`
-	Asset          AssetInfo     `yaml:"asset" json:"asset"`
-	UpdatedAt      time.Time     `yaml:"updated_at" json:"updated_at"`
+	Name            string        `yaml:"name,omitempty" json:"name,omitempty"`
+	Region          string        `yaml:"region,omitempty" json:"region,omitempty"`
+	PyPIIndex       string        `yaml:"pypi_index,omitempty" json:"pypi_index,omitempty"`
+	PythonMirror    string        `yaml:"python_mirror,omitempty" json:"python_mirror,omitempty"`
+	ImageRepository string        `yaml:"image_repository,omitempty" json:"image_repository,omitempty"`
+	ServiceManager  string        `yaml:"service_manager,omitempty" json:"service_manager,omitempty"`
+	ToolsDir        string        `yaml:"tools_dir,omitempty" json:"tools_dir,omitempty"`
+	Extras          []string      `yaml:"extras,omitempty" json:"extras,omitempty"`
+	SchemaVersion   int           `yaml:"schema_version" json:"schema_version"`
+	ManagedBy       string        `yaml:"managed_by" json:"managed_by"`
+	DeploymentID    string        `yaml:"deployment_id" json:"deployment_id"`
+	InstanceUUID    string        `yaml:"instance_uuid,omitempty" json:"instance_uuid,omitempty"`
+	Driver          string        `yaml:"driver" json:"driver"`
+	CoreVersion     string        `yaml:"core_version" json:"core_version"`
+	Profile         string        `yaml:"profile" json:"profile"`
+	ComposeProject  string        `yaml:"compose_project" json:"compose_project"`
+	ComposeFile     string        `yaml:"compose_file" json:"compose_file"`
+	EnvFile         string        `yaml:"env_file,omitempty" json:"env_file,omitempty"`
+	DataDir         string        `yaml:"data_dir" json:"data_dir"`
+	Endpoint        string        `yaml:"endpoint" json:"endpoint"`
+	Port            int           `yaml:"port" json:"port"`
+	InstallPorts    *InstallPorts `yaml:"install_ports,omitempty" json:"install_ports,omitempty"`
+	Asset           AssetInfo     `yaml:"asset" json:"asset"`
+	UpdatedAt       time.Time     `yaml:"updated_at" json:"updated_at"`
 }
 
 type AssetInfo struct {
@@ -359,7 +368,7 @@ func (s Store) Read() (Record, error) {
 	if record.Driver == "" {
 		record.Driver = DriverDockerCompose
 	}
-	if record.Driver != DriverDockerCompose && record.Driver != DriverNativeProcess {
+	if record.Driver != DriverDockerCompose && record.Driver != DriverNativeProcess && record.Driver != DriverNative {
 		return Record{}, ErrCorrupt
 	}
 	return record, nil
@@ -387,7 +396,7 @@ func (s Store) Write(ctx context.Context, record Record) error {
 	if record.Driver == "" {
 		record.Driver = DriverDockerCompose
 	}
-	if record.Driver != DriverDockerCompose && record.Driver != DriverNativeProcess {
+	if record.Driver != DriverDockerCompose && record.Driver != DriverNativeProcess && record.Driver != DriverNative {
 		return ErrCorrupt
 	}
 	now := time.Now

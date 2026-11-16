@@ -74,8 +74,10 @@ func Execute(ctx context.Context, args []string, deps Dependencies) int {
 		LocalLocatorPath: deps.LocalLocatorPath, LatestRelease: deps.LatestRelease, LocalLogOut: deps.Out, LocalLogErr: deps.Err,
 	})
 	root := newRoot(deps, flags, service)
+	root.AddCommand(newUpdateCommand(deps, flags))
 	root.SetArgs(args)
 	executed, err := root.ExecuteContextC(ctx)
+	passiveUpdateNotice(deps, flags)
 	if err != nil {
 		selectOutput(executed, flags)
 		var typed *result.Error
@@ -1263,6 +1265,9 @@ func newDoctorCommand(service *app.Service, deps Dependencies, flags *globalFlag
 
 func newInstallCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
 	var dir, version, profile, project string
+	var driver, name, region, pypiIndex, pythonMirror, imageRepository string
+	var extras []string
+	var yes bool
 	var port, pluginDebugPort int
 	var adapterPorts []string
 	var dryRun bool
@@ -1272,9 +1277,23 @@ func newInstallCommand(service *app.Service, deps Dependencies, flags *globalFla
 			if flags.contextSet || flags.endpointSet || flags.apiKeyStdin {
 				return emitCommand(deps, flags, app.Result{}, result.New("input", "install 不接受 context、endpoint 或 API Key"))
 			}
+			selected, selectedPort, err := installSelection(cmd.Context(), deps, driver, port, yes)
+			if err != nil {
+				return emitCommand(deps, flags, app.Result{}, result.New("input", err.Error()))
+			}
+			if dir == "" && deps.LocalDir == "" {
+				dir, err = deploy.InstanceDir(name)
+				if err != nil {
+					return emitCommand(deps, flags, app.Result{}, result.New("input", err.Error()))
+				}
+			}
+			if !cmd.Flags().Changed("project") && name != "default" {
+				project = "langbot-" + strings.ToLower(name)
+			}
 			return emitCall(deps, flags, func() (app.Result, error) {
 				return service.Install(cmd.Context(), app.InstallOptions{
-					Dir: dir, Version: version, Profile: profile, Port: port, DryRun: dryRun,
+					Driver: selected, Name: name, Region: region, PyPIIndex: pypiIndex, PythonMirror: pythonMirror, ImageRepository: imageRepository, Extras: extras,
+					Dir: dir, Version: version, Profile: profile, Port: selectedPort, DryRun: dryRun,
 					Project: project, PluginDebugPort: &pluginDebugPort, AdapterPorts: adapterPorts,
 					Timeout: flags.timeout, TimeoutSet: flags.timeoutSet,
 				})
@@ -1282,6 +1301,14 @@ func newInstallCommand(service *app.Service, deps Dependencies, flags *globalFla
 		},
 	}
 	cmd.Flags().StringVar(&dir, "dir", "", "本机部署目录")
+	cmd.Flags().StringVar(&driver, "driver", "", "native (recommended) or docker")
+	cmd.Flags().StringVar(&name, "name", "default", "Instance name")
+	cmd.Flags().StringVar(&region, "region", "auto", "auto, cn or global")
+	cmd.Flags().StringVar(&pypiIndex, "pypi-index", "", "Python package index")
+	cmd.Flags().StringVar(&pythonMirror, "python-mirror", "", "Managed Python download mirror")
+	cmd.Flags().StringVar(&imageRepository, "image-repository", "", "Docker image repository")
+	cmd.Flags().StringSliceVar(&extras, "extra", nil, "Optional dependencies: seekdb,milvus,valkey")
+	cmd.Flags().BoolVar(&yes, "yes", false, "Skip all prompts")
 	cmd.Flags().StringVar(&version, "version", "", "LangBot 稳定 Release tag，默认最新版")
 	cmd.Flags().StringVar(&profile, "profile", "basic", "部署 profile：basic 或 all")
 	cmd.Flags().IntVar(&port, "port", 5300, "LangBot HTTP 宿主机端口")
@@ -1344,9 +1371,6 @@ func newUpgradeCommand(service *app.Service, deps Dependencies, flags *globalFla
 	cmd := &cobra.Command{
 		Use: "upgrade", Short: "安全升级本机受管部署", Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if strings.TrimSpace(version) == "" {
-				return emitCommand(deps, flags, app.Result{}, result.New("input", "upgrade 需要 --version <tag>"))
-			}
 			if !dryRun && !yes {
 				return emitCommand(deps, flags, app.Result{}, result.New("precondition", "升级会停止并修改本机部署，请显式传入 --yes"))
 			}

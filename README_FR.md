@@ -1,5 +1,7 @@
 <div align="center">
 
+`lbctl install` configure Python automatiquement ; utilisez `--driver docker` pour Docker. Consultez le [guide de déploiement et de mise à jour](README.md#deployment).
+
 <a href="https://langbot.app">
 <img src="https://raw.githubusercontent.com/langbot-app/LangBot/master/res/logo-blue.png" width="96" alt="LangBot"/>
 </a>

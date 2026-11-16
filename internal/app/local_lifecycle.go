@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -21,18 +20,22 @@ import (
 	"time"
 
 	"github.com/langbot-app/langbot-cli/internal/api"
-	"github.com/langbot-app/langbot-cli/internal/clientidentity"
 	"github.com/langbot-app/langbot-cli/internal/config"
 	"github.com/langbot-app/langbot-cli/internal/deploy"
 	endpointutil "github.com/langbot-app/langbot-cli/internal/endpoint"
 	"github.com/langbot-app/langbot-cli/internal/result"
 )
 
-const latestReleaseURL = "https://api.github.com/repos/langbot-app/LangBot/releases/latest"
-
 var ansiEscapePattern = regexp.MustCompile(`\x1b\[[0-9;]*[A-Za-z]`)
 
 type InstallOptions struct {
+	Driver          string
+	Name            string
+	Region          string
+	PyPIIndex       string
+	PythonMirror    string
+	ImageRepository string
+	Extras          []string
 	Dir             string
 	Version         string
 	Profile         string
@@ -70,6 +73,9 @@ type LocalLogsOptions struct {
 }
 
 func (s *Service) Install(ctx context.Context, options InstallOptions) (Result, error) {
+	if options.Driver == deploy.DriverNative {
+		return s.installNative(ctx, options)
+	}
 	timeout, err := operationTimeout(options.Timeout, options.TimeoutSet, 10*time.Minute)
 	if err != nil {
 		return Result{}, err
@@ -94,9 +100,24 @@ func (s *Service) Install(ctx context.Context, options InstallOptions) (Result, 
 		return Result{}, result.New("input", err.Error())
 	}
 	assets.SetDeployIdentity(s.deps.Version)
+	settings := deploy.Record{Name: options.Name, Region: options.Region, PyPIIndex: options.PyPIIndex, PythonMirror: options.PythonMirror, ImageRepository: options.ImageRepository, ServiceManager: "docker_compose"}
+	if settings.Region != "" {
+		settings.Region, err = deploy.ResolveRegion(operationCtx, settings.Region, s.deps.LocalHTTP)
+		if err != nil {
+			return Result{}, err
+		}
+	}
+	deploy.ApplyRegion(&settings)
+	if err := assets.SetImageRepository(settings.ImageRepository); err != nil {
+		return Result{}, result.New("input", err.Error())
+	}
+	assets.SetPackageIndex(settings.PyPIIndex)
 	runner := s.localRunner()
 	checks, preflightErr := deploy.PreflightInstall(operationCtx, assets, runner)
 	plan := installPlanData(assets, checks)
+	for key, value := range map[string]any{"url": assets.Record("", "").Endpoint, "driver": deploy.DriverDockerCompose, "instance_dir": dir, "version": version, "name": options.Name, "region": settings.Region, "service_manager": "docker_compose"} {
+		plan[key] = value
+	}
 	if preflightErr != nil {
 		return Result{Data: plan}, mapLocalError(preflightErr)
 	}
@@ -135,6 +156,7 @@ func (s *Service) Install(ctx context.Context, options InstallOptions) (Result, 
 				return result.New("internal", "生成部署标识失败")
 			}
 			record := assets.Record(deploymentID, imageDigest)
+			record.Name, record.Region, record.PyPIIndex, record.PythonMirror, record.ImageRepository, record.ServiceManager = settings.Name, settings.Region, settings.PyPIIndex, settings.PythonMirror, settings.ImageRepository, settings.ServiceManager
 			store := deploy.Store{Dir: assets.Dir}
 			if err := store.Write(operationCtx, record); err != nil {
 				return mapStoreWriteError(err)
@@ -176,6 +198,11 @@ func (s *Service) Install(ctx context.Context, options InstallOptions) (Result, 
 			response.Data = plan
 		}
 		return response, normalizeLocalMutationError(err)
+	}
+	if data, ok := response.Data.(map[string]any); ok {
+		for _, key := range []string{"url", "driver", "instance_dir", "version", "name", "region", "service_manager"} {
+			data[key] = plan[key]
+		}
 	}
 	return response, nil
 }
@@ -349,6 +376,11 @@ func (s *Service) LocalLogs(ctx context.Context, options LocalLogsOptions) (Resu
 	}
 	operationCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+	if record.Driver == deploy.DriverNative {
+		var buffer strings.Builder
+		err := deploy.NativeLogs(operationCtx, diagnostics.Dir, &buffer, options.Tail, false)
+		return Result{Data: map[string]any{"lines": splitLogLines(buffer.String(), nil)}}, err
+	}
 	args := logArguments(options, false)
 	command, commandErr := diagnostics.Runner.Compose(operationCtx, record, args...)
 	if commandErr != nil {
@@ -377,7 +409,7 @@ func (s *Service) FollowLocalLogs(ctx context.Context, options LocalLogsOptions)
 	}
 	defer cancel()
 	stream, ok := diagnostics.Runner.(deploy.StreamRunner)
-	if !ok {
+	if !ok && record.Driver != deploy.DriverNative {
 		return result.New("incompatible", "当前 Docker runner 不支持日志跟踪")
 	}
 	out := s.deps.LocalLogOut
@@ -395,7 +427,12 @@ func (s *Service) FollowLocalLogs(ctx context.Context, options LocalLogsOptions)
 		errOut = io.Discard
 	}
 	safeErr := newSanitizedLineWriter(errOut, secrets)
-	streamErr := stream.ComposeStream(operationCtx, record, out, safeErr, logArguments(options, true)...)
+	var streamErr error
+	if record.Driver == deploy.DriverNative {
+		streamErr = deploy.NativeLogs(operationCtx, diagnostics.Dir, out, options.Tail, true)
+	} else {
+		streamErr = stream.ComposeStream(operationCtx, record, out, safeErr, logArguments(options, true)...)
+	}
 	_ = safeErr.Flush()
 	if streamErr != nil {
 		if errors.Is(operationCtx.Err(), context.Canceled) {
@@ -419,6 +456,9 @@ func (s *Service) runLifecycle(ctx context.Context, action string, options Lifec
 	record, diagnostics, err := s.lifecycleTarget(ctx, options.CheckOptions)
 	if err != nil {
 		return Result{}, err
+	}
+	if record.Driver == deploy.DriverNative {
+		return s.nativeLifecycle(ctx, diagnostics, record, action)
 	}
 	timeout, err := operationTimeout(options.Timeout, options.TimeoutSet, lifecycleTimeout(action))
 	if err != nil {
@@ -493,7 +533,7 @@ func (s *Service) lifecycleTarget(ctx context.Context, options CheckOptions) (de
 	if resolved.Environment.Type == "cloud" || !sameLocalEndpoint(resolved.Record.Endpoint, resolved.Connection.Endpoint) {
 		return deploy.Record{}, deploy.Diagnostics{}, result.New("precondition", "当前 Active Environment 与本机部署 endpoint 不一致")
 	}
-	if resolved.Record.Driver != deploy.DriverDockerCompose {
+	if resolved.Record.Driver != deploy.DriverDockerCompose && resolved.Record.Driver != deploy.DriverNative {
 		return deploy.Record{}, deploy.Diagnostics{}, result.New("incompatible", "当前本机部署不支持 Docker Compose 生命周期操作")
 	}
 	return resolved.Record, *resolved.Diagnostics, nil
@@ -516,30 +556,11 @@ func (s *Service) latestRelease(ctx context.Context) (string, error) {
 	if s.deps.LatestRelease != nil {
 		return s.deps.LatestRelease(ctx)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, latestReleaseURL, nil)
+	version, err := deploy.LatestCore(ctx, s.deps.LocalHTTP)
 	if err != nil {
-		return "", result.New("internal", "创建 Release 请求失败")
+		return "", result.New("network", err.Error())
 	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("User-Agent", clientidentity.UserAgent(ctx))
-	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", result.New("network", "无法查询 LangBot 最新稳定版本")
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", result.New("server", "LangBot Release 服务返回异常状态")
-	}
-	var payload struct {
-		Tag        string `json:"tag_name"`
-		Draft      bool   `json:"draft"`
-		Prerelease bool   `json:"prerelease"`
-	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&payload); err != nil || payload.Draft || payload.Prerelease {
-		return "", result.New("incompatible", "LangBot Release 响应无效")
-	}
-	return strings.TrimSpace(payload.Tag), nil
+	return version, nil
 }
 
 func (s *Service) waitForLocalHTTP(ctx context.Context, endpoint string) error {
@@ -710,6 +731,14 @@ func sameDeployment(left, right deploy.Record) bool {
 }
 
 func validateLogsOptions(options LocalLogsOptions, record deploy.Record) error {
+	if record.Driver == deploy.DriverNative {
+		if options.Service != "" && options.Service != "langbot" {
+			return result.New("input", "native logs only support --service langbot")
+		}
+		if options.Since != "" {
+			return result.New("input", "native logs do not support --since; use --tail")
+		}
+	}
 	if options.Tail < 1 || options.Tail > 5000 {
 		return result.New("input", "tail 必须在 1-5000 之间")
 	}

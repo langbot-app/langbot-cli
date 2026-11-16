@@ -1,5 +1,7 @@
 <div align="center">
 
+`lbctl install` は Python 環境を自動設定します。Docker は `--driver docker` で選択できます。[導入・更新ガイド](README.md#deployment)。
+
 <a href="https://langbot.app">
 <img src="https://raw.githubusercontent.com/langbot-app/LangBot/master/res/logo-blue.png" width="96" alt="LangBot"/>
 </a>

@@ -15,14 +15,15 @@ import (
 )
 
 type ActiveEnvironment struct {
-	Name         string                  `json:"name" yaml:"name"`
-	Type         string                  `json:"type" yaml:"type"`
-	Discovery    string                  `json:"discovery" yaml:"discovery"`
-	Connection   EnvironmentConnection   `json:"connection" yaml:"connection"`
-	Service      EnvironmentService      `json:"service" yaml:"service"`
-	Identity     EnvironmentIdentity     `json:"identity" yaml:"identity"`
-	Capabilities EnvironmentCapabilities `json:"capabilities" yaml:"capabilities"`
-	Runtime      EnvironmentRuntime      `json:"runtime" yaml:"runtime"`
+	Versions     map[string]deploy.UpdateResult `json:"versions,omitempty" yaml:"versions,omitempty"`
+	Name         string                         `json:"name" yaml:"name"`
+	Type         string                         `json:"type" yaml:"type"`
+	Discovery    string                         `json:"discovery" yaml:"discovery"`
+	Connection   EnvironmentConnection          `json:"connection" yaml:"connection"`
+	Service      EnvironmentService             `json:"service" yaml:"service"`
+	Identity     EnvironmentIdentity            `json:"identity" yaml:"identity"`
+	Capabilities EnvironmentCapabilities        `json:"capabilities" yaml:"capabilities"`
+	Runtime      EnvironmentRuntime             `json:"runtime" yaml:"runtime"`
 }
 
 type EnvironmentConnection struct {
@@ -73,6 +74,12 @@ type environmentResolution struct {
 
 func (s *Service) Status(ctx context.Context, options CheckOptions) (Result, error) {
 	resolved, err := s.discoverActiveEnvironment(ctx, options, true)
+	cache := deploy.ReadUpdateCache()
+	core := resolved.Environment.Service.Version
+	if core == "" {
+		core = resolved.Record.CoreVersion
+	}
+	resolved.Environment.Versions = map[string]deploy.UpdateResult{"lbctl": {Current: s.deps.Version, Latest: cache.LBCTL}, "core": {Current: core, Latest: cache.Core}}
 	if err != nil {
 		return Result{Data: resolved.Environment, Meta: connectionMeta(resolved.Connection)}, err
 	}
@@ -337,7 +344,7 @@ func (s *Service) resolveRuntime(ctx context.Context, environment ActiveEnvironm
 	runtimeInfo.Binding = "verified"
 	runtimeInfo.DeploymentID = record.DeploymentID
 	runtimeInfo.Dir = diagnostics.Dir
-	if record.Driver != deploy.DriverDockerCompose {
+	if record.Driver != deploy.DriverDockerCompose && record.Driver != deploy.DriverNative {
 		runtimeInfo.Management = "unavailable"
 		return runtimeInfo, nil
 	}
