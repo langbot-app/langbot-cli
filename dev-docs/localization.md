@@ -43,7 +43,8 @@ and percentages when the server supplies a content length, using KiB/MiB/GiB.
 
 Panels use terminal cell widths rather than rune or byte counts. CJK, fullwidth
 punctuation and emoji occupy two cells; middle dots, arrows and checks occupy
-one. Borders occupy at most `min(columns - 2, 76)` cells. Terminals narrower
+one. Panels occupy at most `min(columns - 2, 76)` cells and retain a left
+accent with an open right edge. Terminals narrower
 than 60 columns use unboxed lines without right alignment. The palette uses
 cyan, bold and dim only. First-run notices follow the product heading, before
 deployment steps. Stable versions show either an available upgrade command or
@@ -59,7 +60,7 @@ TTY output redraws a two-line region (step/time and the last subprocess line),
 truncating to terminal cell width. Completed steps remain above it. Windows
 without VT uses carriage-return-only refresh. Plain output has no heartbeat.
 The CLI never hides the cursor and clears the active region on completion or
-cancellation. Summary and status panels use thin borders at 60 columns or more;
+cancellation. Summary and status panels use a thin left accent at 60 columns or more;
 narrow terminals and plain output use unboxed lines.
 
 Install/upgrade show the product, resolved target version, deployment method,

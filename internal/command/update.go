@@ -33,6 +33,9 @@ func newUpdateCommand(deps Dependencies, flags *globalFlags) *cobra.Command {
 }
 
 func passiveUpdateNotice(deps Dependencies, flags *globalFlags) {
+	if flags.commandPath == "status" {
+		return
+	}
 	file, ok := deps.Err.(*os.File)
 	if !ok || !term.IsTerminal(int(file.Fd())) {
 		return
