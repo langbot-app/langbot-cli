@@ -167,23 +167,38 @@ func NativeEnvironment(record Record) []string {
 	return result
 }
 
+// CheckNativePorts verifies that the HTTP, plugin debug and Box ports are all
+// free. Each port is probed on both the loopback address and the wildcard
+// address: on BSD-derived systems (macOS) a wildcard bind succeeds even when
+// 127.0.0.1:<port> is already taken, so a wildcard-only probe misses loopback
+// listeners such as a second native instance's runtime.
 func CheckNativePorts(record Record) error {
 	ports := []struct {
 		name string
 		port int
 	}{{"HTTP", record.Port}, {"Plugin Runtime 调试", 5401}, {"Box", 5410}}
-	listeners := []net.Listener{}
-	defer func() {
-		for _, listener := range listeners {
-			listener.Close()
-		}
-	}()
+	seen := map[int]string{}
 	for _, item := range ports {
-		listener, err := net.Listen("tcp", fmt.Sprintf(":%d", item.port))
-		if err != nil {
+		if item.port != 0 {
+			if other, exists := seen[item.port]; exists {
+				return fmt.Errorf("%s 端口 %d 与 %s 端口冲突；Core 4.11.x 原生部署需要独占 5401 和 5410，请更换端口，或使用 Docker 部署多实例", item.name, item.port, other)
+			}
+			seen[item.port] = item.name
+		}
+		if err := probeNativePort(item.port); err != nil {
 			return fmt.Errorf("%s 端口 %d 不可用：%w；Core 4.11.x 原生部署需要独占 5401 和 5410，请停止冲突服务，或使用 Docker 部署多实例", item.name, item.port, err)
 		}
-		listeners = append(listeners, listener)
+	}
+	return nil
+}
+
+func probeNativePort(port int) error {
+	for _, host := range []string{"127.0.0.1", ""} {
+		listener, err := net.Listen("tcp", net.JoinHostPort(host, fmt.Sprint(port)))
+		if err != nil {
+			return err
+		}
+		listener.Close()
 	}
 	return nil
 }
