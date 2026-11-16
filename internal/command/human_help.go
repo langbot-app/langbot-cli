@@ -268,7 +268,7 @@ func flagEnum(command, flag string) []string {
 		}
 	case "type":
 		if strings.HasPrefix(command, "model.") || command == "provider.scan-models" {
-			return []string{"llm", "embedding", "rerank"}
+			return []string{"llm", "embedding", "rerank", "asr", "tts"}
 		}
 	case "active":
 		return []string{"true", "false"}

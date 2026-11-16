@@ -428,7 +428,7 @@ func requiredFlagSet(names ...string) map[string]bool {
 
 func modelMeta(operation string, requiredFlags ...string) schemaCommandMeta {
 	meta := writeMeta(nil, schemaWriteOptions{RequiredFlags: requiredFlags})
-	modelTypes := []string{"llm", "embedding", "rerank"}
+	modelTypes := []string{"llm", "embedding", "rerank", "asr", "tts"}
 	meta.Operations = []schemaOperation{{Template: "model.{type}." + operation, Values: modelTypes, When: &schemaCondition{Flag: "type", OneOf: modelTypes}}}
 	if operation == "create" || operation == "update" || operation == "delete" {
 		meta.Operations = append(meta.Operations, schemaOperation{Template: "model.{type}.get", Values: modelTypes, Role: "readback"})

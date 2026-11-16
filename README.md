@@ -538,3 +538,70 @@ lbctl sandbox errors
 Sandbox queries read the current Workspace: status requires `resource.view`; sessions and errors require `audit.view`. Managed sandboxes use server-side admission checks. Status includes `enabled`, `available`, and server-provided explanations.
 
 Core declares the corresponding capabilities; output supports `-o json` and `-o yaml`. `enabled: false` means disabled; `enabled: true` with `available: false` means unavailable.
+
+## Operation commands
+
+New commands use `POST /api/v1/operations/<id>`, with SSE at `/<id>/stream`. They check `operation.invoke` (plus `operation.stream` for streams). Older Core versions return `incompatible` (exit 8), identifying the required Cloud/new Core capability, without guessing alternative routes. Existing commands retain their v4.11.8-compatible routes, including `monitoring embedding-calls`, `mcp-server resource-templates`, and file-based marketplace installation.
+
+```sh
+lbctl op list --domain agent --search run
+lbctl op describe agent.create
+lbctl op call agent.list -o json
+printf '%s' '{"agent_data":{"name":"demo","config":{}}}' | lbctl agent create --file - --yes
+lbctl agent runs list <agent-uuid>
+lbctl monitoring executions --file filters.json
+lbctl op stream <streaming-operation-id> --file input.json --yes
+lbctl agent debug <agent-uuid> --file debug.json --yes
+```
+
+`op call` accepts an optional JSON/YAML object via `--file path` or `--file -`, defaulting to `{}`; `op stream` requires `--file`. Generic calls obtain risk and execution mode from `op describe`; catalog-hidden IDs already registered by this CLI use their built-in contracts. Unknown hidden IDs remain unavailable. Writes and high/dangerous-risk operations require interactive confirmation or `--yes`. Friendly commands use their registered operation contracts and the same confirmation rule. Writes require a saved, Workspace-bound context. Stdin cannot simultaneously supply a request body, an API key, or a confirmation answer. Streams emit each event immediately in the selected format, then a completion result; errors or disconnection before `done` fail without retrying.
+
+Friendly positionals populate Core input fields; remaining fields go in `--file`. Bodies are **operation inputs**, not legacy HTTP payloads: agent creation uses `{"agent_data":{...}}`, debug uses `{"payload":{...}}`, and `monitoring execution <id>` needs `{"source":"agent"}` or another Core execution source. Conflicting positional/body IDs fail locally. `--help` lists input field names; `op describe` supplies schemas for catalog-visible operations. All commands support concise output and `-o json|yaml`. Every Core request carries the canonical `X-LangBot-Client-Command` name.
+
+### Command reference
+
+`lbctl schema --summary` is the complete offline index. Use `lbctl schema --command "agent create"` for flags/safety requirements and each group's `--help` for positionals.
+
+| Group | Commands |
+| --- | --- |
+| Connection/deployment | `context`, `whoami`, `capabilities`, `status`, `doctor`, `version`, `install`, `adopt`, `start`, `stop`, `restart`, `upgrade`, `uninstall`, `logs` |
+| Generic | `op list/describe/call/stream` |
+| Agent | `list/get/create/update/delete/metadata`, `runs list/events`, `debug` (stream) |
+| Plugin | Existing list/get/config/logs/delete/upgrade; `permissions get/confirm`, `search`, `readme`, `debug-info`, `config-file upload/delete`, `github releases/assets`, `page-action`, `install local/github/marketplace` |
+| Bot | Existing CRUD; `routes preview/status`, `message send/test`, `logs`, `runtime`, `admins list/add/delete`, `group-filter preview/apply`, `setup <platform> start/status/cancel` |
+| Monitoring | Existing messages/llm-calls/tool-calls/embedding-calls/sessions/errors/message/session; `overview`, `executions`, `execution`, `tokens`, `inflight`, `feedback list/stats`, `export <kind>`, `session analysis/reset` |
+| Pipeline | Existing CRUD/copy/apply/extensions/run; `metadata`, `defaults`, `chat history/reset/connections/broadcast`, `migration preview/execute` |
+| Model | `list/get/create/update/delete/test --type llm\|embedding\|rerank\|asr\|tts`, `default get`, `starred get/set` |
+| Provider | Existing CRUD/scan-models; `models count`, `codex start/poll/status/cancel/disconnect` |
+| Skill | Existing CRUD/files/preview/install; `directory scan/import`, `reload`, `package get`, `github preview`, `zip preview` |
+| MCP server | Existing CRUD/resources/resource-templates/logs/test; `runtime` |
+| Knowledge | Existing knowledge-base/engine/parser commands; `knowledge-base migration preview/execute` |
+| Discovery | `adapter list/get`, `requester list/get`, `tool list/get`, `extension list`, `stats` |
+| API key/webhook | `api-key list/get/create/update/delete`, `webhook list/get/create/update/delete` |
+| Settings | `governance get/update`, `operation-logs list/filters/export` |
+| Workspace | `current/get`, `language get/update`, `member list/update/remove`, `invitation create/list/revoke` |
+| Assistant | `list/get/create/turn/run/stream/stop` |
+| File | `file image upload/get` |
+| System | `storage-analysis`, `model-availability`, `model-recommended`, `plugin-status` |
+| Other existing groups | `task`, `sandbox`, `api`, `raw`, `schema`, `completion` |
+
+Bot setup platforms: `dingtalk`, `lark`, `qqofficial`, `slack`, `wecombot`, `weixin`; QR/authorization information is printed as text. Export kinds: `messages`, `sessions`, `errors`, `llm-calls`, `embedding-calls`, `feedback`. `assistant run` invokes `assistant.run.start`; `assistant stream` uses SSE. ASR/TTS commands probe `/api/v1/provider/models/asr|tts` before enabling CRUD/test rather than using the operation catalog. Unfiltered `model list` keeps its existing three-type aggregate.
+
+### Plugin permissions
+
+```sh
+lbctl plugin install marketplace <author> <name> --version 1.2.3 --wait
+lbctl plugin install local --file plugin.lbpkg --confirm-permissions
+lbctl plugin install github --file github.json --confirm-permissions
+lbctl plugin permissions get <author> <name>
+lbctl plugin permissions confirm <author> <name> --yes
+lbctl plugin permissions confirm <author> <name> --capability storage.plugin --operation agent.list --yes
+```
+
+Confirmation grants all declared permissions unless individual IDs are supplied. Compatibility-mode plugins always receive the complete declared set. Core checks each grant against the API key's own permissions. `--confirm-permissions` implies waiting for successful installation, confirming, and verifying that the plugin is enabled. It requires `plugin.permissions.confirm_api_key` and `operation.invoke`; failure never proceeds to confirmation. Local/GitHub identity comes from the package manifest, not the filename/repository name. GitHub confirmation downloads the selected public release asset to inspect its manifest without sending the Workspace key to GitHub.
+
+### Core access boundaries
+
+The catalog is filtered by permission, principal, and exposure; it is not every friendly command. Catalog-hidden operations already known to the CLI can still be invoked using their fixed contracts; Core remains the authorization authority. Core rejects API keys for account-only operations, including Codex login, assistant sessions, pipeline migration, and Workspace member/invitation administration. Knowledge migration's existing routes also require a member; `preview` maps to `/api/v1/knowledge/migration/status`. This CLI uses API keys and does not bypass those restrictions.
+
+Binary uploads (image, plugin local/config-file, skill ZIP preview/install) keep the existing multipart routes. Image retrieval depends on Core serializing the stored binary content in its operation response. The system wizard is excluded because it manages WebUI onboarding state rather than a headless resource workflow.

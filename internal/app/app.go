@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -48,9 +49,11 @@ type Result struct {
 
 // WaitOptions 控制异步任务的本地轮询，不会向服务端发送取消请求。
 type WaitOptions struct {
-	Wait         bool
-	PollInterval time.Duration
-	WaitTimeout  time.Duration
+	ConfirmPermissions bool
+	UseOperations      bool
+	Wait               bool
+	PollInterval       time.Duration
+	WaitTimeout        time.Duration
 }
 
 // WritePreflight 是经过身份、绑定、权限和能力确认后的写连接快照。
@@ -1735,6 +1738,9 @@ func (s *Service) PluginInstallLocal(ctx context.Context, filename string, dryRu
 }
 
 func (s *Service) pluginInstall(ctx context.Context, operation string, body map[string]any, filename string, dryRun, wait bool, waitOptions WaitOptions, options CheckOptions) (Result, error) {
+	if waitOptions.ConfirmPermissions && !dryRun {
+		wait = true
+	}
 	if dryRun && wait {
 		return Result{}, result.New("input", "dry-run 不能等待异步任务")
 	}
@@ -1763,6 +1769,22 @@ func (s *Service) pluginInstall(ctx context.Context, operation string, body map[
 		return Result{Data: data, Meta: preflight.Meta()}, nil
 	}
 	client, target := s.writeClient(preflight)
+	var pluginAuthor, pluginName string
+	if waitOptions.ConfirmPermissions {
+		if !preflight.Capabilities.Operations["operation.invoke"] || !preflight.Capabilities.Operations["plugin.permissions.confirm_api_key"] {
+			return Result{Data: data, Meta: preflight.Meta()}, result.New("incompatible", "安装后确认权限需要支持 operation.invoke 和 plugin.permissions.confirm_api_key 的 Core")
+		}
+		if operation == "plugin.install.github" {
+			body, err = resolveGitHubPluginAsset(ctx, s.deps.Transport, body)
+			if err != nil {
+				return Result{Data: data, Meta: preflight.Meta()}, err
+			}
+		}
+		pluginAuthor, pluginName, err = s.pluginInstallIdentity(ctx, operation, body, filename)
+		if err != nil {
+			return Result{Data: data, Meta: preflight.Meta()}, err
+		}
+	}
 	var taskID string
 	if filename != "" {
 		file, openErr := os.Open(filename)
@@ -1777,6 +1799,20 @@ func (s *Service) pluginInstall(ctx context.Context, operation string, body map[
 			return Result{Data: data, Meta: preflight.Meta()}, err
 		}
 		taskID, err = client.PluginInstallGitHub(ctx, target, body)
+	} else if waitOptions.UseOperations {
+		if !preflight.Capabilities.Operations["operation.invoke"] {
+			return Result{Data: data, Meta: preflight.Meta()}, result.New("incompatible", "需要支持 operation.invoke 的 LangBot Core")
+		}
+		var value any
+		value, err = client.OperationCall(ctx, target, operation, body)
+		if err == nil {
+			object, ok := value.(map[string]any)
+			if !ok || object["task_id"] == nil {
+				err = result.New("incompatible", "安装未返回 task_id")
+			} else {
+				taskID = fmt.Sprint(object["task_id"])
+			}
+		}
 	} else {
 		taskID, err = client.PluginInstallMarketplace(ctx, target, body)
 	}
@@ -1784,7 +1820,14 @@ func (s *Service) pluginInstall(ctx context.Context, operation string, body map[
 		markAsyncSubmissionFailure(data, err)
 		return Result{Data: data, Meta: preflight.Meta()}, err
 	}
-	return s.finishTask(ctx, client, target, taskID, wait, waitOptions, data, preflight.Meta())
+	finished, err := s.finishTask(ctx, client, target, taskID, wait, waitOptions, data, preflight.Meta())
+	if err != nil || !waitOptions.ConfirmPermissions {
+		return finished, err
+	}
+	permissions, err := operationSession(preflight, client, target).ConfirmPlugin(ctx, pluginAuthor, pluginName, nil, nil)
+	data["permissions"] = permissions
+	data["enabled"] = err == nil
+	return finished, err
 }
 
 // PluginUpgrade 升级已安装插件。
@@ -2419,6 +2462,9 @@ func (s *Service) readPreflight(ctx context.Context, operation, permission strin
 		return preflight, err
 	}
 	preflight.Capabilities = capabilities
+	if err := s.probeAudioModel(ctx, &preflight, operation); err != nil {
+		return preflight, err
+	}
 	if err := requireCapability(preflight, operation); err != nil {
 		return preflight, err
 	}
@@ -2513,6 +2559,9 @@ func (s *Service) writePreflight(ctx context.Context, operation, permission stri
 		return WritePreflight{Connection: conn, Identity: identity}, err
 	}
 	preflight := WritePreflight{Connection: conn, Identity: identity, Capabilities: capabilities}
+	if err := s.probeAudioModel(ctx, &preflight, operation); err != nil {
+		return preflight, err
+	}
 	if err := requireCapability(preflight, operation); err != nil {
 		return preflight, err
 	}

@@ -40,6 +40,8 @@ const (
 	llmModelsPath       = "/api/v1/provider/models/llm"
 	embeddingModelsPath = "/api/v1/provider/models/embedding"
 	rerankModelsPath    = "/api/v1/provider/models/rerank"
+	asrModelsPath       = "/api/v1/provider/models/asr"
+	ttsModelsPath       = "/api/v1/provider/models/tts"
 	defaultTimeout      = 30 * time.Second
 	maxResponseBytes    = 1 << 20
 	maxRequestBytes     = 1 << 20
@@ -109,6 +111,9 @@ type TaskListFilters struct {
 }
 
 var capabilityOperationIDs = []string{
+	"operation.invoke",
+	"operation.stream",
+	"plugin.permissions.confirm_api_key",
 	"knowledge_engine.list",
 	"knowledge_engine.creation_schema",
 	"knowledge_engine.retrieval_schema",
@@ -1488,18 +1493,18 @@ func knownWritePath(method, path string) bool {
 	if method == http.MethodPost && path == documentUploadPath {
 		return true
 	}
-	if method == http.MethodPost && (path == providersPath || path == llmModelsPath || path == embeddingModelsPath || path == rerankModelsPath) {
+	if method == http.MethodPost && (path == providersPath || path == llmModelsPath || path == embeddingModelsPath || path == rerankModelsPath || path == asrModelsPath || path == ttsModelsPath) {
 		return true
 	}
 	if method == http.MethodPost {
-		for _, modelBase := range []string{llmModelsPath, embeddingModelsPath, rerankModelsPath} {
+		for _, modelBase := range []string{llmModelsPath, embeddingModelsPath, rerankModelsPath, asrModelsPath, ttsModelsPath} {
 			if nestedPath(path, modelBase, 1, "test") {
 				return true
 			}
 		}
 	}
 	if method == http.MethodPut || method == http.MethodDelete {
-		for _, base := range []string{providersPath, llmModelsPath, embeddingModelsPath, rerankModelsPath} {
+		for _, base := range []string{providersPath, llmModelsPath, embeddingModelsPath, rerankModelsPath, asrModelsPath, ttsModelsPath} {
 			if identifierPath(path, base) {
 				return true
 			}
@@ -1655,7 +1660,7 @@ func knownGetPath(path string) bool {
 		if base == providersPath || identifierPath(base, providersPath) {
 			return validSecretProjectionQuery(query)
 		}
-		for _, modelBase := range []string{llmModelsPath, embeddingModelsPath, rerankModelsPath} {
+		for _, modelBase := range []string{llmModelsPath, embeddingModelsPath, rerankModelsPath, asrModelsPath, ttsModelsPath} {
 			if base == modelBase {
 				return validModelListQuery(query)
 			}

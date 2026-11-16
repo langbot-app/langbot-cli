@@ -13,15 +13,17 @@ const (
 	ModelTypeLLM       = "llm"
 	ModelTypeEmbedding = "embedding"
 	ModelTypeRerank    = "rerank"
+	ModelTypeASR       = "asr"
+	ModelTypeTTS       = "tts"
 )
 
 // ValidateModelType 将模型请求限制在服务端支持的三类模型资源内。
 func ValidateModelType(modelType string) error {
 	switch modelType {
-	case ModelTypeLLM, ModelTypeEmbedding, ModelTypeRerank:
+	case ModelTypeLLM, ModelTypeEmbedding, ModelTypeRerank, ModelTypeASR, ModelTypeTTS:
 		return nil
 	default:
-		return result.New("input", "model type 必须是 llm、embedding 或 rerank")
+		return result.New("input", "model type 必须是 llm、embedding、rerank、asr 或 tts")
 	}
 }
 
@@ -34,6 +36,10 @@ func modelBasePath(modelType string) (string, error) {
 		return llmModelsPath, nil
 	case ModelTypeEmbedding:
 		return embeddingModelsPath, nil
+	case ModelTypeASR:
+		return asrModelsPath, nil
+	case ModelTypeTTS:
+		return ttsModelsPath, nil
 	default:
 		return rerankModelsPath, nil
 	}

@@ -176,6 +176,7 @@ func newRoot(deps Dependencies, flags *globalFlags, service *app.Service) *cobra
 	root.AddCommand(newPluginCommand(service, deps, flags))
 	root.AddCommand(newSkillCommand(service, deps, flags))
 	root.AddCommand(newMCPServerCommand(service, deps, flags))
+	addOperationCommands(root, service, deps, flags)
 	configureHumanHelp(root)
 	configureExperience(root, deps, flags)
 	return root
@@ -249,7 +250,7 @@ func newModelCommand(service *app.Service, deps Dependencies, flags *globalFlags
 			return service.ModelList(cmd.Context(), strings.ToLower(strings.TrimSpace(listType)), providerUUID, connectionOptions(flags))
 		})
 	}}
-	list.Flags().StringVar(&listType, "type", "", "模型类型：llm、embedding 或 rerank；不指定时聚合全部类型")
+	list.Flags().StringVar(&listType, "type", "", "模型类型：llm、embedding、rerank、asr 或 tts；不指定时聚合三类原有模型")
 	list.Flags().StringVar(&providerUUID, "provider", "", "按 Provider UUID 筛选")
 	command.AddCommand(list)
 	var getType string
@@ -261,7 +262,7 @@ func newModelCommand(service *app.Service, deps Dependencies, flags *globalFlags
 			return service.ModelGet(cmd.Context(), strings.ToLower(strings.TrimSpace(getType)), args[0], connectionOptions(flags))
 		})
 	}}
-	get.Flags().StringVar(&getType, "type", "", "模型类型：llm、embedding 或 rerank（必填）")
+	get.Flags().StringVar(&getType, "type", "", "模型类型：llm、embedding、rerank、asr 或 tts（必填）")
 	command.AddCommand(get)
 	var createType, createFile string
 	var createDryRun bool
@@ -277,7 +278,7 @@ func newModelCommand(service *app.Service, deps Dependencies, flags *globalFlags
 			return service.ModelCreate(cmd.Context(), strings.ToLower(strings.TrimSpace(createType)), body, createDryRun, connectionOptions(flags))
 		})
 	}}
-	create.Flags().StringVar(&createType, "type", "", "模型类型：llm、embedding 或 rerank（必填）")
+	create.Flags().StringVar(&createType, "type", "", "模型类型：llm、embedding、rerank、asr 或 tts（必填）")
 	create.Flags().StringVar(&createFile, "file", "", "JSON/YAML 请求体文件，使用 - 从 stdin 读取")
 	create.Flags().BoolVar(&createDryRun, "dry-run", false, "只检查前置条件，不写入")
 	command.AddCommand(create)
@@ -295,7 +296,7 @@ func newModelCommand(service *app.Service, deps Dependencies, flags *globalFlags
 			return service.ModelUpdate(cmd.Context(), strings.ToLower(strings.TrimSpace(updateType)), args[0], body, updateDryRun, connectionOptions(flags))
 		})
 	}}
-	update.Flags().StringVar(&updateType, "type", "", "模型类型：llm、embedding 或 rerank（必填）")
+	update.Flags().StringVar(&updateType, "type", "", "模型类型：llm、embedding、rerank、asr 或 tts（必填）")
 	update.Flags().StringVar(&updateFile, "file", "", "JSON/YAML 请求体文件，使用 - 从 stdin 读取")
 	update.Flags().BoolVar(&updateDryRun, "dry-run", false, "只检查前置条件，不写入")
 	command.AddCommand(update)
@@ -309,7 +310,7 @@ func newModelCommand(service *app.Service, deps Dependencies, flags *globalFlags
 			return service.ModelDelete(cmd.Context(), strings.ToLower(strings.TrimSpace(deleteType)), args[0], deleteYes, deleteDryRun, connectionOptions(flags))
 		})
 	}}
-	deleteCommand.Flags().StringVar(&deleteType, "type", "", "模型类型：llm、embedding 或 rerank（必填）")
+	deleteCommand.Flags().StringVar(&deleteType, "type", "", "模型类型：llm、embedding、rerank、asr 或 tts（必填）")
 	deleteCommand.Flags().BoolVar(&deleteYes, "yes", false, "确认删除")
 	deleteCommand.Flags().BoolVar(&deleteDryRun, "dry-run", false, "只检查前置条件，不删除")
 	command.AddCommand(deleteCommand)
@@ -327,7 +328,7 @@ func newModelCommand(service *app.Service, deps Dependencies, flags *globalFlags
 			return service.ModelTest(cmd.Context(), strings.ToLower(strings.TrimSpace(testType)), args[0], body, testDryRun, connectionOptions(flags))
 		})
 	}}
-	test.Flags().StringVar(&testType, "type", "", "模型类型：llm、embedding 或 rerank（必填）")
+	test.Flags().StringVar(&testType, "type", "", "模型类型：llm、embedding、rerank、asr 或 tts（必填）")
 	test.Flags().StringVar(&testFile, "file", "", "JSON/YAML 请求体文件，使用 - 从 stdin 读取；省略时使用空对象")
 	test.Flags().BoolVar(&testDryRun, "dry-run", false, "只检查前置条件，不调用服务")
 	command.AddCommand(test)
@@ -707,7 +708,7 @@ func newPluginCommand(service *app.Service, deps Dependencies, flags *globalFlag
 		cmd.Flags().DurationVar(waitTimeout, "wait-timeout", 5*time.Minute, "本地等待超时")
 	}
 	var githubFile string
-	var githubDryRun, githubWait bool
+	var githubDryRun, githubWait, githubConfirm bool
 	var githubPollInterval, githubWaitTimeout time.Duration
 	github := &cobra.Command{Use: "github", Short: "从 GitHub 安装 Plugin", Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -719,37 +720,57 @@ func newPluginCommand(service *app.Service, deps Dependencies, flags *globalFlag
 				return emitCommand(deps, flags, app.Result{}, err)
 			}
 			return emitCall(deps, flags, func() (app.Result, error) {
-				return service.PluginInstallGitHub(cmd.Context(), body, githubDryRun, githubWait, app.WaitOptions{Wait: githubWait, PollInterval: githubPollInterval, WaitTimeout: githubWaitTimeout}, connectionOptions(flags))
+				return service.PluginInstallGitHub(cmd.Context(), body, githubDryRun, githubWait, app.WaitOptions{ConfirmPermissions: githubConfirm, Wait: githubWait, PollInterval: githubPollInterval, WaitTimeout: githubWaitTimeout}, connectionOptions(flags))
 			})
 		},
 	}
 	github.Flags().StringVar(&githubFile, "file", "", "JSON/YAML 请求体文件，使用 - 从 stdin 读取")
+	github.Flags().BoolVar(&githubConfirm, "confirm-permissions", false, "等待安装完成，确认全部声明权限并启用")
 	newTaskFlags(github, &githubDryRun, &githubWait, &githubPollInterval, &githubWaitTimeout)
 	install.AddCommand(github)
 
-	var marketplaceFile string
-	var marketplaceDryRun, marketplaceWait bool
+	var marketplaceFile, marketplaceVersion string
+	var marketplaceDryRun, marketplaceWait, marketplaceConfirm bool
 	var marketplacePollInterval, marketplaceWaitTimeout time.Duration
-	marketplace := &cobra.Command{Use: "marketplace", Short: "从 Marketplace 安装 Plugin", Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			body, err := loadRequestBody(cmd.Context(), marketplaceFile, flags.apiKeyStdin, deps.In)
-			if err != nil {
-				return emitCommand(deps, flags, app.Result{}, err)
+	marketplace := &cobra.Command{Use: "marketplace [author name]", Short: "从 Marketplace 安装 Plugin", Args: func(_ *cobra.Command, args []string) error {
+		if len(args) != 0 && len(args) != 2 {
+			return result.New("input", "请提供 author name，或使用 --file")
+		}
+		return nil
+	},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			body := map[string]any{}
+			if len(args) == 2 {
+				if marketplaceFile != "" {
+					return result.New("input", "author name 不能与 --file 同时使用")
+				}
+				body["plugin_author"], body["plugin_name"] = args[0], args[1]
+			} else {
+				var err error
+				body, err = loadRequestBody(cmd.Context(), marketplaceFile, flags.apiKeyStdin, deps.In)
+				if err != nil {
+					return emitCommand(deps, flags, app.Result{}, err)
+				}
+			}
+			if marketplaceVersion != "" {
+				body["plugin_version"] = marketplaceVersion
 			}
 			if err := validateWaitFlags(marketplaceDryRun, marketplaceWait, marketplacePollInterval, marketplaceWaitTimeout); err != nil {
 				return emitCommand(deps, flags, app.Result{}, err)
 			}
 			return emitCall(deps, flags, func() (app.Result, error) {
-				return service.PluginInstallMarketplace(cmd.Context(), body, marketplaceDryRun, marketplaceWait, app.WaitOptions{Wait: marketplaceWait, PollInterval: marketplacePollInterval, WaitTimeout: marketplaceWaitTimeout}, connectionOptions(flags))
+				return service.PluginInstallMarketplace(cmd.Context(), body, marketplaceDryRun, marketplaceWait, app.WaitOptions{ConfirmPermissions: marketplaceConfirm, UseOperations: len(args) == 2, Wait: marketplaceWait, PollInterval: marketplacePollInterval, WaitTimeout: marketplaceWaitTimeout}, connectionOptions(flags))
 			})
 		},
 	}
 	marketplace.Flags().StringVar(&marketplaceFile, "file", "", "JSON/YAML 请求体文件，使用 - 从 stdin 读取")
+	marketplace.Flags().StringVar(&marketplaceVersion, "version", "", "指定市场版本")
+	marketplace.Flags().BoolVar(&marketplaceConfirm, "confirm-permissions", false, "等待安装完成，确认全部声明权限并启用")
 	newTaskFlags(marketplace, &marketplaceDryRun, &marketplaceWait, &marketplacePollInterval, &marketplaceWaitTimeout)
 	install.AddCommand(marketplace)
 
 	var localFile string
-	var localDryRun, localWait bool
+	var localDryRun, localWait, localConfirm bool
 	var localPollInterval, localWaitTimeout time.Duration
 	local := &cobra.Command{Use: "local", Short: "从本地包安装 Plugin", Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -757,11 +778,12 @@ func newPluginCommand(service *app.Service, deps Dependencies, flags *globalFlag
 				return emitCommand(deps, flags, app.Result{}, err)
 			}
 			return emitCall(deps, flags, func() (app.Result, error) {
-				return service.PluginInstallLocal(cmd.Context(), localFile, localDryRun, localWait, app.WaitOptions{Wait: localWait, PollInterval: localPollInterval, WaitTimeout: localWaitTimeout}, connectionOptions(flags))
+				return service.PluginInstallLocal(cmd.Context(), localFile, localDryRun, localWait, app.WaitOptions{ConfirmPermissions: localConfirm, Wait: localWait, PollInterval: localPollInterval, WaitTimeout: localWaitTimeout}, connectionOptions(flags))
 			})
 		},
 	}
 	local.Flags().StringVar(&localFile, "file", "", "本地 Plugin 包文件")
+	local.Flags().BoolVar(&localConfirm, "confirm-permissions", false, "等待安装完成，确认全部声明权限并启用")
 	newTaskFlags(local, &localDryRun, &localWait, &localPollInterval, &localWaitTimeout)
 	install.AddCommand(local)
 	command.AddCommand(install)
