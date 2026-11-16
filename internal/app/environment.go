@@ -74,11 +74,16 @@ type environmentResolution struct {
 }
 
 func (s *Service) Status(ctx context.Context, options CheckOptions) (Result, error) {
+	started := time.Now()
 	resolved, err := s.discoverActiveEnvironment(ctx, options, true)
 	cache := deploy.ReadUpdateCache()
 	disabled, _ := s.deps.LookupEnv("LBCTL_NO_UPDATE_CHECK")
-	if options.Human && resolved.LocalMatch && disabled != "1" && (cache.Core == "" || time.Since(cache.CheckedAt) > 24*time.Hour) {
-		checkCtx, cancel := context.WithTimeout(ctx, time.Second)
+	budget := time.Second
+	if resolved.Connection.Timeout > 0 {
+		budget = min(budget, resolved.Connection.Timeout-time.Since(started))
+	}
+	if err == nil && budget > 0 && options.Human && resolved.LocalMatch && disabled != "1" && (cache.Core == "" || time.Since(cache.CheckedAt) > 24*time.Hour) {
+		checkCtx, cancel := context.WithTimeout(ctx, budget)
 		if latest, checkErr := s.latestRelease(checkCtx); checkErr == nil {
 			cache.Core = latest
 		}
