@@ -227,6 +227,12 @@ func TestSchemaIsOfflineStableAndDescribesCommands(t *testing.T) {
 			t.Fatalf("%s lifecycle contract is inaccurate: %#v", name, commands[name])
 		}
 	}
+	for _, action := range []string{"status", "enable", "disable"} {
+		entry := commands["autostart."+action]
+		if entry.Mutating != (action != "status") || entry.RequiresConnection || !hasFlag(entry.Flags, "name", "local", false) || !isRejected(entry.Flags, "endpoint") {
+			t.Fatalf("autostart.%s contract is inaccurate: %#v", action, entry)
+		}
+	}
 	uninstall := commands["uninstall"]
 	if !uninstall.Mutating || !uninstall.Destructive || !uninstall.RequiresYes || !hasFlag(uninstall.Flags, "yes", "local", false) || !hasFlag(uninstall.Flags, "purge-data", "local", false) {
 		t.Fatalf("uninstall lifecycle contract is inaccurate: %#v", uninstall)

@@ -209,6 +209,9 @@ func (s *Service) Install(ctx context.Context, options InstallOptions) (Result, 
 		return response, normalizeLocalMutationError(err)
 	}
 	if data, ok := response.Data.(map[string]any); ok {
+		if record, ok := data["record"].(deploy.Record); ok {
+			installAutostartData(data, record, assets.Dir)
+		}
 		for _, key := range []string{"url", "driver", "instance_dir", "version", "name", "region", "service_manager"} {
 			data[key] = plan[key]
 		}

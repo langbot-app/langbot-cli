@@ -42,6 +42,30 @@ func TestNativeLifecycleRendering(t *testing.T) {
 	}
 }
 
+func TestNativeInstallFailureRendering(t *testing.T) {
+	data := map[string]any{"action": "install", "changed": true, "step": "install_service", "log_path": "logs/install.log", "runtime_log_path": "logs/langbot.log", "retry_command": "lbctl install --dir '中文 dir'", "rollback_command": "lbctl uninstall --dir '中文 dir'"}
+	var out bytes.Buffer
+	if err := renderLocalAction(&out, data); err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range []string{"安装失败", "install_service", "logs/install.log", "logs/langbot.log", "lbctl install", "lbctl uninstall"} {
+		if !strings.Contains(out.String(), value) {
+			t.Fatalf("missing %s: %s", value, out.String())
+		}
+	}
+	if strings.Contains(out.String(), "待确认") {
+		t.Fatal(out.String())
+	}
+}
+
+func TestInstallAutostartHint(t *testing.T) {
+	var out bytes.Buffer
+	err := renderLocalAction(&out, map[string]any{"action": "install", "changed": true, "status": map[string]any{"status": "running"}, "autostart": true, "autostart_mechanism": "HKCU Run", "autostart_disable_command": "lbctl autostart disable --name 'mybot'"})
+	if err != nil || !strings.Contains(out.String(), "Autostart enabled (HKCU Run)") || !strings.Contains(out.String(), "lbctl autostart disable --name 'mybot'") {
+		t.Fatalf("%s: %v", out.String(), err)
+	}
+}
+
 func TestNativeDryRunAndFailedUpgradeRendering(t *testing.T) {
 	for _, test := range []struct {
 		data map[string]any

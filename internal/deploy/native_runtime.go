@@ -143,6 +143,9 @@ func NativeEnvironment(record Record) []string {
 	env := map[string]string{}
 	for _, item := range os.Environ() {
 		name, value, _ := strings.Cut(item, "=")
+		if runtime.GOOS == "windows" {
+			name = strings.ToUpper(name)
+		}
 		env[name] = value
 	}
 	env["UV_PYTHON_INSTALL_DIR"] = filepath.Join(record.ToolsDir, "python")
@@ -158,6 +161,8 @@ func NativeEnvironment(record Record) []string {
 	env["VIRTUAL_ENV"] = venv
 	env["PATH"] = filepath.Dir(NativePython(filepath.Dir(record.DataDir), record.CoreVersion)) + string(os.PathListSeparator) + env["PATH"]
 	env["PYTHONUNBUFFERED"] = "1"
+	env["PYTHONIOENCODING"] = "utf-8"
+	env["PYTHONUTF8"] = "1"
 	if record.PythonMirror != "" {
 		env["UV_PYTHON_INSTALL_MIRROR"] = record.PythonMirror
 	}
@@ -220,12 +225,10 @@ func PrepareNative(ctx context.Context, dir string, record Record, out io.Writer
 	}
 	var lastOutput string
 	run := func(args ...string) error {
-		var captured bytes.Buffer
-		writer := io.MultiWriter(out, &captured)
 		command := exec.CommandContext(ctx, uv, args...)
-		command.Env, command.Stdout, command.Stderr = NativeEnvironment(record), writer, writer
-		err := command.Run()
-		lastOutput = captured.String()
+		command.Env = NativeEnvironment(record)
+		var err error
+		lastOutput, err = runNativeCommand(command, out)
 		return err
 	}
 	telemetry.SetStep(ctx, "install_python")
@@ -254,7 +257,7 @@ func PrepareNative(ctx context.Context, dir string, record Record, out io.Writer
 			return nil
 		}
 		if ctx.Err() != nil {
-			return ctx.Err()
+			return err
 		}
 	}
 	if record.Region != "cn" || !missingLangBotVersion(lastOutput) {

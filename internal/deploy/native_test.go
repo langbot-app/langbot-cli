@@ -106,6 +106,10 @@ func TestNativeUpgradeRestoresVersionAndData(t *testing.T) {
 	for _, failure := range []string{"", "prepare", "health"} {
 		t.Run(failure, func(t *testing.T) {
 			dir, record := nativeFixture(t)
+			record.Autostart = new(false)
+			if err := (Store{Dir: dir}).Write(context.Background(), record); err != nil {
+				t.Fatal(err)
+			}
 			dataPath := filepath.Join(record.DataDir, "state.txt")
 			if err := os.WriteFile(dataPath, []byte("original"), 0o600); err != nil {
 				t.Fatal(err)
@@ -124,6 +128,9 @@ func TestNativeUpgradeRestoresVersionAndData(t *testing.T) {
 					return nil
 				},
 				start: func(_ context.Context, _ string, record Record) error {
+					if record.Autostart == nil || *record.Autostart {
+						t.Fatal("upgrade re-enabled autostart")
+					}
 					calls = append(calls, "start:"+record.CoreVersion)
 					if record.CoreVersion == "v4.11.8" {
 						return os.WriteFile(dataPath, []byte("migrated"), 0o600)
@@ -141,6 +148,9 @@ func TestNativeUpgradeRestoresVersionAndData(t *testing.T) {
 			current, readErr := (Store{Dir: dir}).Read()
 			if readErr != nil {
 				t.Fatal(readErr)
+			}
+			if current.Autostart == nil || *current.Autostart {
+				t.Fatal("autostart preference was not preserved")
 			}
 			data, readErr := os.ReadFile(dataPath)
 			if readErr != nil {

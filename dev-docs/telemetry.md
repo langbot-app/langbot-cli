@@ -1,8 +1,9 @@
 # Lifecycle telemetry
 
-`lbctl install`, `upgrade`, `uninstall`, `start`, `restart`, and `update`
-(including `self-update`) send a `started` event and a `succeeded` or `failed`
+`lbctl install`, `upgrade`, `uninstall`, `start`, `stop`, `restart`, `update`
+(including `self-update`), and `autostart status|enable|disable` send a `started` event and a `succeeded` or `failed`
 event directly to Space. Help and unrelated commands do not send events.
+Autostart command names are reported as `autostart.status`, `autostart.enable`, and `autostart.disable`.
 Validation failures and dry-run/check executions are included.
 
 Set `LANGBOT_TELEMETRY=0` or `DO_NOT_TRACK=1` to disable collection, including

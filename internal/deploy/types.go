@@ -42,6 +42,7 @@ type Record struct {
 	PythonMirror    string        `yaml:"python_mirror,omitempty" json:"python_mirror,omitempty"`
 	ImageRepository string        `yaml:"image_repository,omitempty" json:"image_repository,omitempty"`
 	ServiceManager  string        `yaml:"service_manager,omitempty" json:"service_manager,omitempty"`
+	Autostart       *bool         `yaml:"autostart,omitempty" json:"autostart,omitempty"`
 	ToolsDir        string        `yaml:"tools_dir,omitempty" json:"tools_dir,omitempty"`
 	Extras          []string      `yaml:"extras,omitempty" json:"extras,omitempty"`
 	SchemaVersion   int           `yaml:"schema_version" json:"schema_version"`
@@ -255,7 +256,9 @@ func configureCommandCancellation(command *exec.Cmd) {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		if err := exec.CommandContext(ctx, "taskkill.exe", "/PID", fmt.Sprint(command.Process.Pid), "/T", "/F").Run(); err != nil {
+		killer := exec.CommandContext(ctx, "taskkill.exe", "/PID", fmt.Sprint(command.Process.Pid), "/T", "/F")
+		hideNativeConsole(killer)
+		if err := killer.Run(); err != nil {
 			return command.Process.Kill()
 		}
 		return nil
