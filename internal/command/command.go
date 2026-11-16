@@ -85,12 +85,13 @@ func Execute(ctx context.Context, args []string, deps Dependencies) int {
 	root := newRoot(deps, flags, service)
 	root.AddCommand(newUpdateCommand(deps, flags))
 	selected, remaining, _ := root.Find(args)
+	var parseErr error
 	if selected != nil {
-		_ = selected.ParseFlags(remaining)
+		parseErr = selected.ParseFlags(remaining)
 	}
 	_, formatErr := output.NormalizeFormat(flags.output)
 	machine := (flags.output != "" && formatErr == nil) || (selected != nil && selected.Name() == "schema")
-	if hasHelpFlag(args) || (selected != nil && selected.Name() == "help") {
+	if humanHelpRequest(root, selected, parseErr) {
 		machine = false
 	}
 	lang := i18n.English

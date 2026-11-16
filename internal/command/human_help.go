@@ -21,6 +21,24 @@ func helpHint(cmd *cobra.Command) string {
 	return i18n.T("Run ") + path + i18n.T(" --help for usage")
 }
 
+func humanHelpRequest(root, selected *cobra.Command, parseErr error) bool {
+	if selected == nil || parseErr != nil {
+		return false
+	}
+	if help, _ := selected.Flags().GetBool("help"); help {
+		return true
+	}
+	args := selected.Flags().Args()
+	if selected == root {
+		return len(args) == 0
+	}
+	if selected.Name() != "help" {
+		return false
+	}
+	_, remaining, err := root.Find(args)
+	return err == nil && len(remaining) == 0
+}
+
 // Use static metadata, never raw parser errors, which can include secret values.
 func commandInputError(cmd *cobra.Command) error {
 	if cmd == nil {
