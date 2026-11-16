@@ -3,6 +3,7 @@ package api
 import (
 	"strings"
 
+	"github.com/langbot-app/langbot-cli/internal/i18n"
 	"github.com/langbot-app/langbot-cli/internal/redact"
 	"github.com/langbot-app/langbot-cli/internal/result"
 )
@@ -31,7 +32,7 @@ func hasConfigPlaceholder(value any) bool {
 // than accidentally changing a credential or restoring it to a different host.
 func restoreConfigPlaceholders(expected, current any) (any, error) {
 	failure := func() (any, error) {
-		return nil, result.New("precondition", "无法安全保留脱敏的 Bot 配置，请提供该字段的实际值；未发送更新")
+		return nil, result.New("precondition", i18n.T("Unable to safely preserve redacted Bot configuration; provide the actual field value; update not sent"))
 	}
 	switch v := expected.(type) {
 	case string:

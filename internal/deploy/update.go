@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/gofrs/flock"
+	"github.com/langbot-app/langbot-cli/internal/i18n"
 	"github.com/langbot-app/langbot-cli/internal/telemetry"
 )
 
@@ -61,7 +63,7 @@ func (updater Updater) Latest(ctx context.Context) (string, error) {
 		return "", err
 	}
 	if !releaseVersionPattern.MatchString(payload.Version) {
-		return "", fmt.Errorf("invalid lbctl release version")
+		return "", errors.New(i18n.T("invalid lbctl release version"))
 	}
 	return payload.Version, nil
 }
@@ -97,7 +99,7 @@ func (updater Updater) Update(ctx context.Context, current string, check bool) (
 		platform = CurrentPlatform()
 	}
 	if _, ok := UVAssets[platform]; !ok {
-		return result, fmt.Errorf("unsupported update platform")
+		return result, errors.New(i18n.T("unsupported update platform"))
 	}
 	asset := "lbctl_" + strings.ReplaceAll(platform, "/", "_")
 	telemetry.SetStep(ctx, "download_update")
@@ -118,7 +120,7 @@ func (updater Updater) Update(ctx context.Context, current string, check bool) (
 		}
 	}
 	if len(expected) != 64 {
-		return result, fmt.Errorf("release checksum absent for %s", asset)
+		return result, fmt.Errorf(i18n.T("release checksum absent for %s"), asset)
 	}
 	data, err := Fetch(ctx, updater.client(), base+asset, 200<<20)
 	if err != nil {
@@ -126,7 +128,7 @@ func (updater Updater) Update(ctx context.Context, current string, check bool) (
 	}
 	sum := sha256.Sum256(data)
 	if hex.EncodeToString(sum[:]) != expected {
-		return result, fmt.Errorf("lbctl checksum mismatch")
+		return result, errors.New(i18n.T("lbctl checksum mismatch"))
 	}
 	telemetry.SetStep(ctx, "replace_binary")
 	info, err := os.Stat(binary)

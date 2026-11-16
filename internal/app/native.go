@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/langbot-app/langbot-cli/internal/i18n"
+	"github.com/langbot-app/langbot-cli/internal/progress"
 	"io"
 	"os"
 	"path/filepath"
@@ -52,7 +54,7 @@ func (s *Service) installNative(ctx context.Context, options InstallOptions) (Re
 		return Result{}, result.New("input", err.Error())
 	}
 	if options.Port < 1 || options.Port > 65535 {
-		return Result{}, result.New("input", "invalid port")
+		return Result{}, result.New("input", i18n.T("invalid port"))
 	}
 	home, err := deploy.Home()
 	if err != nil {
@@ -75,7 +77,7 @@ func (s *Service) installNative(ctx context.Context, options InstallOptions) (Re
 	record.Autostart = new(record.ServiceManager != "process")
 	for _, extra := range record.Extras {
 		if extra != "seekdb" && extra != "milvus" && extra != "valkey" {
-			return Result{}, result.New("input", "unsupported --extra: "+extra)
+			return Result{}, result.New("input", i18n.T("unsupported --extra: ")+extra)
 		}
 	}
 	if existing, err := (deploy.Store{Dir: dir}).Read(); err == nil {
@@ -141,7 +143,7 @@ func (s *Service) installNative(ctx context.Context, options InstallOptions) (Re
 			}
 			if existing, err := (deploy.Store{Dir: dir}).Read(); err == nil {
 				if existing.DeploymentID != record.DeploymentID {
-					return result.New("precondition", "deployment changed")
+					return result.New("precondition", i18n.T("deployment changed"))
 				}
 				if deploy.NativeRunning(dir) {
 					return nil
@@ -170,7 +172,7 @@ func (s *Service) installNative(ctx context.Context, options InstallOptions) (Re
 			if logErr != nil {
 				return logErr
 			}
-			if err := deploy.PrepareNative(ctx, dir, record, io.MultiWriter(s.nativeOutput(), installLog)); err != nil {
+			if err := deploy.PrepareNative(ctx, dir, record, io.MultiWriter(progress.Output(ctx, s.nativeOutput()), installLog)); err != nil {
 				return err
 			}
 			step = "install_service"
@@ -189,7 +191,7 @@ func (s *Service) installNative(ctx context.Context, options InstallOptions) (Re
 				return err
 			}
 			if record.ServiceManager == "systemd-user" {
-				fmt.Fprintln(s.nativeOutput(), "Run loginctl enable-linger to keep LangBot running after logout.")
+				fmt.Fprintln(s.nativeOutput(), i18n.Human("Run loginctl enable-linger to keep LangBot running after logout."))
 			}
 			for _, check := range deploy.NativeCapabilities() {
 				fmt.Fprintf(s.nativeOutput(), "%s: %s (%s)\n", check.Name, check.Status, check.Reason)
@@ -251,7 +253,7 @@ func (s *Service) nativeLifecycle(ctx context.Context, diagnostics deploy.Diagno
 			return err
 		}
 		if current.DeploymentID != record.DeploymentID {
-			return fmt.Errorf("deployment changed")
+			return errors.New(i18n.T("deployment changed"))
 		}
 		if action != "start" {
 			telemetry.SetStep(ctx, "stop_service")

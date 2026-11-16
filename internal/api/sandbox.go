@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/langbot-app/langbot-cli/internal/i18n"
 	"github.com/langbot-app/langbot-cli/internal/redact"
 	"github.com/langbot-app/langbot-cli/internal/result"
 )
@@ -28,7 +29,7 @@ func (c Client) WorkspaceSandbox(ctx context.Context, target Target, action stri
 	case "test":
 		resp, err = c.write(ctx, target, http.MethodPost, workspaceSandboxPath+"/test", bodyOrEmpty(body))
 	default:
-		return nil, result.New("input", "未知的沙箱配置操作")
+		return nil, result.New("input", i18n.T("Unknown sandbox configuration operation"))
 	}
 	secret := ""
 	if e2b, ok := body["e2b"].(map[string]any); ok {
@@ -48,17 +49,17 @@ func (c Client) WorkspaceSandbox(ctx context.Context, target Target, action stri
 		return nil, &failure
 	}
 	if resp.Data == nil {
-		err = protocolError("服务端未返回沙箱配置，操作结果需核查", resp.StatusCode, "")
+		err = protocolError(i18n.T("Server did not return sandbox configuration; verify operation result"), resp.StatusCode, "")
 	} else if _, ok := resp.Data["backends"].([]any); !ok {
-		err = protocolError("服务端沙箱配置缺少后端诊断，无法确认结果", resp.StatusCode, "")
+		err = protocolError(i18n.T("Server sandbox configuration lacks backend diagnostics; cannot confirm result"), resp.StatusCode, "")
 	} else {
 		for _, field := range []string{"e2b", "limits", "limit_caps"} {
 			if _, ok := resp.Data[field].(map[string]any); !ok {
-				err = protocolError("服务端沙箱配置格式不完整，无法确认结果", resp.StatusCode, "")
+				err = protocolError(i18n.T("Server sandbox configuration is incomplete; cannot confirm result"), resp.StatusCode, "")
 			}
 		}
 		if _, exists := resp.Data["backend"]; !exists {
-			err = protocolError("服务端未返回已保存的沙箱后端", resp.StatusCode, "")
+			err = protocolError(i18n.T("Server did not return the saved sandbox backend"), resp.StatusCode, "")
 		}
 	}
 	if err != nil {
@@ -79,13 +80,13 @@ func (c Client) WorkspaceSandbox(ctx context.Context, target Target, action stri
 func workspaceSandboxErrorMessage(message, fallback string) string {
 	switch message {
 	case "Workspace sandbox settings require an upgraded Box SDK and Runtime", "Workspace sandbox limits require an upgraded Box SDK and Runtime":
-		return "服务端需要升级 Box SDK 和 Runtime 才能配置工作区沙箱"
+		return i18n.T("Server requires a Box SDK and Runtime upgrade to configure workspace sandbox")
 	case "Custom E2B configuration is restricted by platform policy":
-		return "当前平台策略不允许自定义 E2B 连接"
+		return i18n.T("Current platform policy disallows custom E2B connections")
 	case "A new API key is required when E2B addresses change":
-		return "更换 E2B 地址时必须提供新的 E2B API Key"
+		return i18n.T("Changing E2B URLs requires a new E2B API Key")
 	case "The selected sandbox backend is unavailable":
-		return "所选沙箱后端不可用；请查询配置或检查连接"
+		return i18n.T("Selected sandbox backend unavailable; inspect configuration or check connectivity")
 	}
 	return fallback
 }

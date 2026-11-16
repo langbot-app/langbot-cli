@@ -44,7 +44,7 @@ func TestContextsSelectCloudAndMultipleLocalInstances(t *testing.T) {
 	run := func(args ...string) (int, string) {
 		t.Helper()
 		out.Reset()
-		code := Execute(context.Background(), args, deps)
+		code := executeChinese(context.Background(), args, deps)
 		return code, out.String()
 	}
 	for _, item := range []struct{ name, endpoint string }{
@@ -115,11 +115,11 @@ func TestContextListReturnsSavedContextsWhenLocalRegistryIsUnavailable(t *testin
 	deps := Dependencies{Out: &out, LookupEnv: environmentLookup, LocalLocatorPath: root,
 		DefaultConfigPath: func() (string, error) { return filepath.Join(root, "config.yaml"), nil },
 	}
-	if code := Execute(context.Background(), []string{"context", "add", "cloud", "--endpoint", "https://cloud.example"}, deps); code != 0 {
+	if code := executeChinese(context.Background(), []string{"context", "add", "cloud", "--endpoint", "https://cloud.example"}, deps); code != 0 {
 		t.Fatal(out.String())
 	}
 	out.Reset()
-	if code := Execute(context.Background(), []string{"context", "list", "-o", "json"}, deps); code != 0 || !strings.Contains(out.String(), `"local_error"`) || !strings.Contains(out.String(), "https://cloud.example") {
+	if code := executeChinese(context.Background(), []string{"context", "list", "-o", "json"}, deps); code != 0 || !strings.Contains(out.String(), `"local_error"`) || !strings.Contains(out.String(), "https://cloud.example") {
 		t.Fatalf("local error hid saved contexts: %d %s", code, out.String())
 	}
 }

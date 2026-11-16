@@ -5,13 +5,14 @@ import (
 	"os/exec"
 	"syscall"
 
+	"github.com/langbot-app/langbot-cli/internal/i18n"
 	"golang.org/x/sys/windows"
 )
 
 func releaseNativeConsole() error {
 	result, _, err := windows.NewLazySystemDLL("kernel32.dll").NewProc("FreeConsole").Call()
 	if result == 0 {
-		return fmt.Errorf("FreeConsole: %w", err)
+		return fmt.Errorf(i18n.T("FreeConsole: %w"), err)
 	}
 	return nil
 }

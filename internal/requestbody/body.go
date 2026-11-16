@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/langbot-app/langbot-cli/internal/i18n"
 	"github.com/langbot-app/langbot-cli/internal/result"
 	"go.yaml.in/yaml/v3"
 )
@@ -18,10 +19,10 @@ const maxBytes = 1 << 20
 // ValidateSources 确保 API Key 和请求体不会同时读取 stdin。
 func ValidateSources(name string, apiKeyStdin bool) error {
 	if strings.TrimSpace(name) == "" {
-		return result.New("input", "必须指定请求体文件")
+		return result.New("input", i18n.T("A request body file is required"))
 	}
 	if name == "-" && apiKeyStdin {
-		return result.New("input", "请求体 stdin 不能与 --api-key-stdin 同时使用")
+		return result.New("input", i18n.T("Request body stdin cannot be combined with --api-key-stdin"))
 	}
 	return nil
 }
@@ -47,14 +48,14 @@ func LoadText(ctx context.Context, name string, stdin io.Reader) (string, error)
 	} else {
 		opened, err := os.Open(name)
 		if err != nil {
-			return "", result.New("input", "无法读取请求体文件")
+			return "", result.New("input", i18n.T("Unable to read request body file"))
 		}
 		file = opened
 		defer file.Close()
 		reader = file
 	}
 	if reader == nil {
-		return "", result.New("input", "无法读取请求体")
+		return "", result.New("input", i18n.T("Unable to read request body"))
 	}
 	data, err := read(ctx, reader)
 	if err != nil {
@@ -66,7 +67,7 @@ func LoadText(ctx context.Context, name string, stdin io.Reader) (string, error)
 // Parse 解析 JSON 或 YAML。扩展名未知时根据首个非空字节选择格式。
 func Parse(name string, data []byte) (map[string]any, error) {
 	if len(bytes.TrimSpace(data)) == 0 {
-		return nil, result.New("input", "请求体为空")
+		return nil, result.New("input", i18n.T("Request body is empty"))
 	}
 	format := strings.ToLower(name)
 	switch {
@@ -86,13 +87,13 @@ func Parse(name string, data []byte) (map[string]any, error) {
 func read(ctx context.Context, reader io.Reader) ([]byte, error) {
 	data, err := io.ReadAll(io.LimitReader(contextReader{ctx: ctx, reader: reader}, maxBytes+1))
 	if ctx.Err() != nil {
-		return nil, result.New("network", "请求已取消")
+		return nil, result.New("network", i18n.T("Request cancelled"))
 	}
 	if err != nil {
-		return nil, result.New("input", "读取请求体失败")
+		return nil, result.New("input", i18n.T("Failed to read request body"))
 	}
 	if len(data) > maxBytes {
-		return nil, result.New("input", "请求体过大")
+		return nil, result.New("input", i18n.T("Request body is too large"))
 	}
 	return data, nil
 }
@@ -116,14 +117,14 @@ func parseJSON(data []byte) (map[string]any, error) {
 	decoder.UseNumber()
 	value, err := decodeJSONValue(decoder)
 	if err != nil {
-		return nil, result.New("input", "请求体 JSON 格式无效")
+		return nil, result.New("input", i18n.T("Invalid request body JSON"))
 	}
 	if token, err := decoder.Token(); !errors.Is(err, io.EOF) || token != nil {
-		return nil, result.New("input", "请求体包含多余内容")
+		return nil, result.New("input", i18n.T("Request body contains extra content"))
 	}
 	object, ok := value.(map[string]any)
 	if !ok {
-		return nil, result.New("input", "请求体根节点必须是 JSON object")
+		return nil, result.New("input", i18n.T("Request body root must be a JSON object"))
 	}
 	return object, nil
 }
@@ -145,10 +146,10 @@ func decodeJSONValue(decoder *json.Decoder) (any, error) {
 				}
 				key, ok := keyToken.(string)
 				if !ok {
-					return nil, errors.New("object key is not a string")
+					return nil, errors.New(i18n.T("object key is not a string"))
 				}
 				if _, exists := object[key]; exists {
-					return nil, errors.New("duplicate object key")
+					return nil, errors.New(i18n.T("duplicate object key"))
 				}
 				value, err := decodeJSONValue(decoder)
 				if err != nil {
@@ -170,7 +171,7 @@ func decodeJSONValue(decoder *json.Decoder) (any, error) {
 			_, err = decoder.Token()
 			return values, err
 		default:
-			return nil, errors.New("unexpected delimiter")
+			return nil, errors.New(i18n.T("unexpected delimiter"))
 		}
 	default:
 		return token, nil
@@ -181,7 +182,7 @@ func parseYAML(data []byte) (map[string]any, error) {
 	decoder := yaml.NewDecoder(bytes.NewReader(data))
 	var document yaml.Node
 	if err := decoder.Decode(&document); err != nil || len(document.Content) != 1 {
-		return nil, result.New("input", "请求体 YAML 格式无效")
+		return nil, result.New("input", i18n.T("Invalid request body YAML"))
 	}
 	root := document.Content[0]
 	if err := validateYAMLNode(root); err != nil {
@@ -189,27 +190,27 @@ func parseYAML(data []byte) (map[string]any, error) {
 	}
 	var extra yaml.Node
 	if err := decoder.Decode(&extra); err != io.EOF {
-		return nil, result.New("input", "请求体包含多余 YAML 文档")
+		return nil, result.New("input", i18n.T("Request body contains extra YAML documents"))
 	}
 	if root.Kind != yaml.MappingNode {
-		return nil, result.New("input", "请求体根节点必须是 JSON object")
+		return nil, result.New("input", i18n.T("Request body root must be a JSON object"))
 	}
 	var object map[string]any
 	if err := yaml.Unmarshal(data, &object); err != nil {
-		return nil, result.New("input", "请求体 YAML 格式无效")
+		return nil, result.New("input", i18n.T("Invalid request body YAML"))
 	}
 	if object == nil {
-		return nil, result.New("input", "请求体根节点必须是 JSON object")
+		return nil, result.New("input", i18n.T("Request body root must be a JSON object"))
 	}
 	return object, nil
 }
 
 func validateYAMLNode(node *yaml.Node) error {
 	if node.Kind == yaml.AliasNode {
-		return errors.New("YAML 请求体不支持别名")
+		return errors.New(i18n.T("YAML request bodies do not support aliases"))
 	}
 	if node.Tag != "" && !knownYAMLTag(node) {
-		return errors.New("YAML 请求体包含未知标签")
+		return errors.New(i18n.T("YAML request body contains an unknown tag"))
 	}
 	switch node.Kind {
 	case yaml.MappingNode:
@@ -217,10 +218,10 @@ func validateYAMLNode(node *yaml.Node) error {
 		for index := 0; index < len(node.Content); index += 2 {
 			key := node.Content[index]
 			if key.Kind != yaml.ScalarNode || key.Tag != "!!str" {
-				return errors.New("YAML 请求体键必须是字符串")
+				return errors.New(i18n.T("YAML request body keys must be strings"))
 			}
 			if _, exists := seen[key.Value]; exists {
-				return errors.New("请求体包含重复键")
+				return errors.New(i18n.T("Request body contains duplicate keys"))
 			}
 			seen[key.Value] = struct{}{}
 			if err := validateYAMLNode(node.Content[index+1]); err != nil {

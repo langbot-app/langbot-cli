@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/gofrs/flock"
+	"github.com/langbot-app/langbot-cli/internal/progress"
 )
 
 const DefaultEndpoint = "https://space.langbot.app/api/v1/telemetry"
@@ -217,6 +218,7 @@ func (client *Client) Begin(ctx context.Context, command string) (context.Contex
 }
 
 func SetStep(ctx context.Context, step string) {
+	progress.StepID(ctx, step)
 	if op, ok := ctx.Value(operationKey{}).(*Operation); ok {
 		op.Event.Step = Identifier(step)
 	}

@@ -33,9 +33,11 @@ func main() {
 		return
 	}
 	reporter := telemetry.New(telemetry.Options{Version: version})
+	home, _ := os.UserHomeDir()
 	code := command.Execute(ctx, os.Args[1:], command.Dependencies{
-		Telemetry: reporter,
-		In:        os.Stdin, Out: os.Stdout, Err: os.Stderr,
+		NoticeHome: home,
+		Telemetry:  reporter,
+		In:         os.Stdin, Out: os.Stdout, Err: os.Stderr,
 		LookupEnv: os.LookupEnv,
 		Version:   version, Commit: commit, BuildDate: buildDate,
 	})

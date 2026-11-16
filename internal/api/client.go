@@ -20,6 +20,7 @@ import (
 
 	"github.com/langbot-app/langbot-cli/internal/clientidentity"
 	"github.com/langbot-app/langbot-cli/internal/endpoint"
+	"github.com/langbot-app/langbot-cli/internal/i18n"
 	"github.com/langbot-app/langbot-cli/internal/redact"
 	"github.com/langbot-app/langbot-cli/internal/result"
 )
@@ -241,7 +242,7 @@ func ValidateSkillFilePath(path string, allowRoot bool) error {
 		return err
 	}
 	if !allowRoot && len(parts) == 1 && parts[0] == "." {
-		return result.New("input", "文件路径不是安全的相对路径")
+		return result.New("input", i18n.T("File path is not a safe relative path"))
 	}
 	return nil
 }
@@ -268,7 +269,7 @@ func (c Client) Info(ctx context.Context, target Target) (Info, error) {
 	}
 	data := projectInfo(resp.Data, target.secret())
 	if safeString(data["version"]) == "" {
-		return Info{}, protocolError("服务返回的诊断数据缺少有效版本", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
+		return Info{}, protocolError(i18n.T("Server diagnostic data lacks a valid version"), resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
 	}
 
 	return Info{
@@ -285,7 +286,7 @@ func (c Client) Context(ctx context.Context, target Target) (Context, error) {
 	}
 	identity, ok := parseContextData(resp.Data)
 	if !ok {
-		return Context{}, protocolError("服务返回的身份数据格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
+		return Context{}, protocolError(i18n.T("Invalid server identity data format"), resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
 	}
 	return identity, nil
 }
@@ -298,11 +299,11 @@ func (c Client) Capabilities(ctx context.Context, target Target) (Capabilities, 
 	}
 	schemaVersion, ok := capabilitySchemaVersion(resp.Data["schema_version"])
 	if !ok || schemaVersion != 1 {
-		return Capabilities{}, protocolError("服务返回的能力协议版本不受支持", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
+		return Capabilities{}, protocolError(i18n.T("Server capability protocol version is not supported"), resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
 	}
 	operations, ok := resp.Data["operations"].(map[string]any)
 	if !ok {
-		return Capabilities{}, protocolError("服务返回的能力数据格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
+		return Capabilities{}, protocolError(i18n.T("Invalid server capability data format"), resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
 	}
 	known := make(map[string]struct{}, len(capabilityOperationIDs))
 	for _, operationID := range capabilityOperationIDs {
@@ -315,11 +316,11 @@ func (c Client) Capabilities(ctx context.Context, target Target) (Capabilities, 
 		}
 		entry, ok := value.(map[string]any)
 		if !ok {
-			return Capabilities{}, protocolError("服务返回的能力项格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
+			return Capabilities{}, protocolError(i18n.T("Invalid server capability entry format"), resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
 		}
 		supported, ok := entry["supported"].(bool)
 		if !ok {
-			return Capabilities{}, protocolError("服务返回的能力项缺少有效 supported 字段", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
+			return Capabilities{}, protocolError(i18n.T("Server capability entry lacks a valid supported field"), resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
 		}
 		parsed[operationID] = supported
 	}
@@ -338,7 +339,7 @@ func (c Client) Task(ctx context.Context, target Target, identifier string) (Tas
 	}
 	task, ok := parseTaskData(resp.Data, identifier)
 	if !ok {
-		return Task{}, protocolError("服务返回的任务数据格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
+		return Task{}, protocolError(i18n.T("Invalid server task data format"), resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
 	}
 	return task, nil
 }
@@ -362,21 +363,21 @@ func (c Client) Tasks(ctx context.Context, target Target, filters TaskListFilter
 	}
 	raw, ok := resp.Data["tasks"].([]any)
 	if !ok {
-		return nil, protocolError("服务返回的任务列表格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
+		return nil, protocolError(i18n.T("Invalid server task list format"), resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
 	}
 	tasks := make([]Task, 0, len(raw))
 	for _, value := range raw {
 		item, ok := value.(map[string]any)
 		if !ok {
-			return nil, protocolError("服务返回的任务格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
+			return nil, protocolError(i18n.T("Invalid server task format"), resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
 		}
 		id, ok := stringValue(item["id"])
 		if !ok || strings.TrimSpace(id) == "" || containsSecret(id, target.secret()) {
-			return nil, protocolError("服务返回的任务缺少有效 ID", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
+			return nil, protocolError(i18n.T("Server task lacks a valid ID"), resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
 		}
 		task, ok := parseTaskData(item, id)
 		if !ok {
-			return nil, protocolError("服务返回的任务数据格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
+			return nil, protocolError(i18n.T("Invalid server task data format"), resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
 		}
 		tasks = append(tasks, task)
 	}
@@ -398,7 +399,7 @@ func (c Client) KnowledgeBase(ctx context.Context, target Target, identifier str
 		return nil, err
 	}
 	if base["uuid"] != identifier {
-		return nil, protocolError("服务返回的知识库 UUID 与请求不一致", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
+		return nil, protocolError(i18n.T("Server knowledge-base UUID does not match the request"), resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
 	}
 	return base, nil
 }
@@ -436,7 +437,7 @@ func (c Client) KnowledgeBaseFiles(ctx context.Context, target Target, identifie
 	}
 	files, ok := resp.Data["files"].([]any)
 	if !ok {
-		return nil, protocolError("服务返回的知识库文件列表格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
+		return nil, protocolError(i18n.T("Invalid server knowledge-base file list format"), resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
 	}
 	return redactConnectionSecret(files, target.secret()).([]any), nil
 }
@@ -469,29 +470,29 @@ func (c Client) KnowledgeBaseRetrieve(ctx context.Context, target Target, identi
 // UploadDocument 上传文件并返回服务端文件 ID。
 func (c Client) UploadDocument(ctx context.Context, target Target, filename string, file io.Reader) (string, error) {
 	if strings.TrimSpace(filename) == "" || file == nil {
-		return "", result.New("input", "上传文件不能为空")
+		return "", result.New("input", i18n.T("Upload file must not be empty"))
 	}
 	content, err := io.ReadAll(io.LimitReader(file, maxUploadBytes+1))
 	if err != nil {
-		return "", result.New("input", "读取上传文件失败")
+		return "", result.New("input", i18n.T("Failed to read upload file"))
 	}
 	if len(content) > maxUploadBytes {
-		return "", result.New("input", "上传文件超过 10MB 限制")
+		return "", result.New("input", i18n.T("Upload file exceeds the 10MB limit"))
 	}
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
 	part, err := writer.CreateFormFile("file", filename)
 	if err != nil {
-		return "", result.New("input", "无法构造上传请求")
+		return "", result.New("input", i18n.T("Unable to construct upload request"))
 	}
 	if _, err = part.Write(content); err != nil {
-		return "", result.New("input", "无法构造上传请求")
+		return "", result.New("input", i18n.T("Unable to construct upload request"))
 	}
 	if err = writer.Close(); err != nil {
-		return "", result.New("input", "无法构造上传请求")
+		return "", result.New("input", i18n.T("Unable to construct upload request"))
 	}
 	if body.Len() > maxUploadBytes {
-		return "", result.New("input", "上传文件连同请求元数据超过 10MB 限制")
+		return "", result.New("input", i18n.T("Upload file and request metadata exceed the 10MB limit"))
 	}
 	resp, err := c.writeMultipart(ctx, target, documentUploadPath, body.Bytes(), writer.FormDataContentType())
 	if err != nil {
@@ -577,11 +578,11 @@ func (c Client) PluginGet(ctx context.Context, target Target, author, name strin
 	}
 	plugin, ok := resp.Data["plugin"].(map[string]any)
 	if !ok {
-		return nil, protocolError("服务返回的资源格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
+		return nil, protocolError(i18n.T("Invalid server resource format"), resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
 	}
 	projected := projectPlugin(plugin, author, name, target.secret())
 	if projected["author"] != author || projected["name"] != name {
-		return nil, protocolError("服务返回的 Plugin 身份与请求不一致", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
+		return nil, protocolError(i18n.T("Server Plugin identity does not match the request"), resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
 	}
 	return projected, nil
 }
@@ -593,19 +594,19 @@ func (c Client) Plugins(ctx context.Context, target Target) ([]map[string]any, e
 	}
 	raw, ok := resp.Data["plugins"].([]any)
 	if !ok {
-		return nil, protocolError("服务返回的插件列表格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
+		return nil, protocolError(i18n.T("Invalid server plugin list format"), resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
 	}
 	items := make([]map[string]any, 0, len(raw))
 	for _, value := range raw {
 		plugin, ok := value.(map[string]any)
 		if !ok {
-			return nil, protocolError("服务返回的插件格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
+			return nil, protocolError(i18n.T("Invalid server plugin format"), resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
 		}
 		projected := projectPlugin(plugin, "", "", target.secret())
 		author, authorOK := projected["author"].(string)
 		name, nameOK := projected["name"].(string)
 		if !authorOK || strings.TrimSpace(author) == "" || !nameOK || strings.TrimSpace(name) == "" {
-			return nil, protocolError("服务返回的 Plugin 缺少有效身份", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
+			return nil, protocolError(i18n.T("Server Plugin lacks a valid identity"), resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
 		}
 		items = append(items, projected)
 	}
@@ -626,7 +627,7 @@ func (c Client) PluginConfig(ctx context.Context, target Target, author, name st
 
 func (c Client) PluginConfigUpdate(ctx context.Context, target Target, author, name string, body map[string]any) error {
 	if body == nil {
-		return result.New("input", "Plugin 配置必须是 JSON object")
+		return result.New("input", i18n.T("Plugin configuration must be a JSON object"))
 	}
 	path, err := pluginResourcePath(author, name, "/config")
 	if err != nil {
@@ -676,18 +677,18 @@ func (c Client) Skills(ctx context.Context, target Target) ([]map[string]any, er
 	}
 	raw, ok := resp.Data["skills"].([]any)
 	if !ok {
-		return nil, protocolError("服务返回的 Skill 列表格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
+		return nil, protocolError(i18n.T("Invalid server Skill list format"), resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
 	}
 	items := make([]map[string]any, 0, len(raw))
 	for _, value := range raw {
 		item, ok := value.(map[string]any)
 		if !ok {
-			return nil, protocolError("服务返回的 Skill 格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
+			return nil, protocolError(i18n.T("Invalid server Skill format"), resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
 		}
 		projected := projectSkillSummary(item, target.secret())
 		name, ok := projected["name"].(string)
 		if !ok || strings.TrimSpace(name) == "" {
-			return nil, protocolError("服务返回的 Skill 缺少有效名称", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
+			return nil, protocolError(i18n.T("Server Skill lacks a valid name"), resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
 		}
 		items = append(items, projected)
 	}
@@ -705,11 +706,11 @@ func (c Client) SkillGet(ctx context.Context, target Target, name string) (map[s
 	}
 	item, ok := resp.Data["skill"].(map[string]any)
 	if !ok {
-		return nil, protocolError("服务返回的 Skill 格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
+		return nil, protocolError(i18n.T("Invalid server Skill format"), resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
 	}
 	projected := projectSkillSummary(item, target.secret())
 	if skillName, ok := projected["name"].(string); !ok || skillName != name {
-		return nil, protocolError("服务返回的 Skill 身份与请求不一致", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
+		return nil, protocolError(i18n.T("Server Skill identity does not match the request"), resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
 	}
 	if instructions, exists := item["instructions"]; exists {
 		projected["instructions"] = redactConnectionSecret(instructions, target.secret())
@@ -769,7 +770,7 @@ func (c Client) skillFileRead(ctx context.Context, target Target, name, filePath
 	}
 	content, ok := resp.Data["content"].(string)
 	if !ok {
-		return nil, false, protocolError("服务返回的 Skill 文件格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
+		return nil, false, protocolError(i18n.T("Invalid server Skill file format"), resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
 	}
 	return redactConnectionSecret(resp.Data, target.secret()), content == expected, nil
 }
@@ -788,7 +789,7 @@ func (c Client) SkillPreview(ctx context.Context, target Target, name string) (a
 
 func (c Client) SkillCreate(ctx context.Context, target Target, body map[string]any) (map[string]any, error) {
 	if body == nil {
-		return nil, result.New("input", "Skill 请求体必须是 JSON object")
+		return nil, result.New("input", i18n.T("Skill request body must be a JSON object"))
 	}
 	resp, err := c.write(ctx, target, http.MethodPost, skillsPath, body)
 	if err != nil {
@@ -804,7 +805,7 @@ func (c Client) SkillCreate(ctx context.Context, target Target, body map[string]
 
 func (c Client) SkillUpdate(ctx context.Context, target Target, name string, body map[string]any) (map[string]any, error) {
 	if body == nil {
-		return nil, result.New("input", "Skill 请求体必须是 JSON object")
+		return nil, result.New("input", i18n.T("Skill request body must be a JSON object"))
 	}
 	path, err := skillResourcePath(name, "")
 	if err != nil {
@@ -889,7 +890,7 @@ func (c Client) MCPServerGet(ctx context.Context, target Target, name string) (m
 	}
 	item, ok := resp.Data["server"].(map[string]any)
 	if !ok {
-		return nil, protocolError("服务返回的 MCP Server 格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
+		return nil, protocolError(i18n.T("Invalid server MCP Server format"), resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
 	}
 	server := projectMCPServer(item, target.secret())
 	for _, field := range []string{"extra_args", "readme", "runtime_info"} {
@@ -901,7 +902,7 @@ func (c Client) MCPServerGet(ctx context.Context, target Target, name string) (m
 	serverName, nameOK := server["name"].(string)
 	if !uuidOK || strings.TrimSpace(uuid) == "" || containsSecret(uuid, target.secret()) ||
 		!nameOK || serverName != strings.TrimSpace(name) {
-		return nil, protocolError("服务返回的 MCP Server 身份与请求不一致", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
+		return nil, protocolError(i18n.T("Server MCP Server identity does not match the request"), resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
 	}
 	return server, nil
 }
@@ -1025,7 +1026,7 @@ func (c Client) Bot(ctx context.Context, target Target, uuid string) (map[string
 		return nil, err
 	}
 	if bot["uuid"] != uuid {
-		return nil, protocolError("服务返回的 Bot UUID 与请求不一致", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
+		return nil, protocolError(i18n.T("Server Bot UUID does not match the request"), resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
 	}
 	return bot, nil
 }
@@ -1054,7 +1055,7 @@ func (c Client) Pipeline(ctx context.Context, target Target, uuid string) (map[s
 		return nil, err
 	}
 	if pipeline["uuid"] != uuid {
-		return nil, protocolError("服务返回的 Pipeline UUID 与请求不一致", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
+		return nil, protocolError(i18n.T("Server Pipeline UUID does not match the request"), resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
 	}
 	return pipeline, nil
 }
@@ -1062,7 +1063,7 @@ func (c Client) Pipeline(ctx context.Context, target Target, uuid string) (map[s
 // BotCreate 创建 Bot，并返回服务端分配的 UUID。
 func (c Client) BotCreate(ctx context.Context, target Target, body map[string]any) (WriteResult, error) {
 	if hasConfigPlaceholder(body["adapter_config"]) {
-		return WriteResult{}, result.New("input", "创建 Bot 不能使用脱敏配置占位符，请通过请求体提供实际凭据")
+		return WriteResult{}, result.New("input", i18n.T("Cannot create a Bot with redacted placeholders; supply actual credentials in the request body"))
 	}
 	return c.createResource(ctx, target, http.MethodPost, botsPath, body)
 }
@@ -1082,7 +1083,7 @@ func (c Client) BotUpdate(ctx context.Context, target Target, uuid string, body 
 		}
 		current, ok := resp.Data["bot"].(map[string]any)
 		if !ok || current["uuid"] != uuid {
-			return WriteResult{}, result.New("precondition", "无法读取 Bot 原始配置，拒绝写入脱敏占位符")
+			return WriteResult{}, result.New("precondition", i18n.T("Unable to read original Bot configuration; refusing to write redacted placeholders"))
 		}
 		restored, err := restoreConfigPlaceholders(body["adapter_config"], current["adapter_config"])
 		if err != nil {
@@ -1129,14 +1130,14 @@ func (c Client) PipelineCopy(ctx context.Context, target Target, uuid string) (W
 
 func (c Client) createResource(ctx context.Context, target Target, method, base string, body map[string]any) (WriteResult, error) {
 	if body == nil {
-		return WriteResult{}, result.New("input", "请求体必须是 JSON object")
+		return WriteResult{}, result.New("input", i18n.T("Request body must be a JSON object"))
 	}
 	return c.writeUUID(ctx, target, method, base, body)
 }
 
 func (c Client) updateResource(ctx context.Context, target Target, method, base, uuid string, body map[string]any) (WriteResult, error) {
 	if method == http.MethodPut && body == nil {
-		return WriteResult{}, result.New("input", "请求体必须是 JSON object")
+		return WriteResult{}, result.New("input", i18n.T("Request body must be a JSON object"))
 	}
 	path, err := resourcePath(base, uuid)
 	if err != nil {
@@ -1172,7 +1173,7 @@ func (c Client) writeUUID(ctx context.Context, target Target, method, path strin
 // 绕过操作定义的通用 HTTP 入口。
 func (c Client) Raw(ctx context.Context, target Target, method, path string) (any, error) {
 	if method != http.MethodGet || path != infoPath {
-		return nil, result.New("incompatible", "只允许读取已确认的 system/info 接口")
+		return nil, result.New("incompatible", i18n.T("Only the confirmed system/info endpoint is readable"))
 	}
 	resp, err := c.fetch(ctx, target, method, path)
 	if err != nil {
@@ -1189,10 +1190,10 @@ func (c Client) Raw(ctx context.Context, target Target, method, path string) (an
 // APIRequest 执行登记在 operation registry 中的请求，并返回经过安全投影的 JSON 数据。
 func (c Client) APIRequest(ctx context.Context, target Target, operation Operation, body map[string]any) (any, error) {
 	if resolved, ok := ResolveOperation(operation.Method, operation.Path); !ok || resolved.ID != operation.ID {
-		return nil, result.New("incompatible", "请求不在受控操作登记表中")
+		return nil, result.New("incompatible", i18n.T("Request is not in the controlled operation registry"))
 	}
 	if !operation.ReadOnly {
-		return nil, result.New("incompatible", "受控 API 暂不开放资源写入")
+		return nil, result.New("incompatible", i18n.T("Controlled API does not yet allow resource writes"))
 	}
 	var resp response
 	var err error
@@ -1210,10 +1211,10 @@ func (c Client) APIRequest(ctx context.Context, target Target, operation Operati
 func (c Client) readPost(ctx context.Context, target Target, path string, body map[string]any) (response, error) {
 	encoded, err := json.Marshal(bodyOrEmpty(body))
 	if err != nil {
-		return response{}, result.New("input", "请求体格式无法编码")
+		return response{}, result.New("input", i18n.T("Request body cannot be encoded"))
 	}
 	if len(encoded) > maxRequestBytes {
-		return response{}, result.New("input", "请求体过大")
+		return response{}, result.New("input", i18n.T("Request body is too large"))
 	}
 	return c.do(ctx, target, http.MethodPost, path, bytes.NewReader(encoded), true)
 }
@@ -1230,7 +1231,7 @@ func (c Client) fetch(ctx context.Context, target Target, method, path string) (
 		ctx = context.Background()
 	}
 	if method != http.MethodGet || !knownGetPath(path) {
-		return response{}, result.New("incompatible", "只允许读取已确认的 system 或资源接口")
+		return response{}, result.New("incompatible", i18n.T("Only confirmed system or resource endpoints are readable"))
 	}
 	return c.do(ctx, target, method, path, nil, false)
 }
@@ -1240,16 +1241,16 @@ func (c Client) write(ctx context.Context, target Target, method, path string, b
 		ctx = context.Background()
 	}
 	if !knownWritePath(method, path) {
-		return response{}, result.New("incompatible", "只允许执行已确认的资源写操作")
+		return response{}, result.New("incompatible", i18n.T("Only confirmed resource writes are allowed"))
 	}
 	var payload io.Reader
 	if body != nil {
 		encoded, err := json.Marshal(body)
 		if err != nil {
-			return response{}, result.New("input", "请求体格式无法编码")
+			return response{}, result.New("input", i18n.T("Request body cannot be encoded"))
 		}
 		if len(encoded) > maxRequestBytes {
-			return response{}, result.New("input", "请求体过大")
+			return response{}, result.New("input", i18n.T("Request body is too large"))
 		}
 		payload = bytes.NewReader(encoded)
 	}
@@ -1262,7 +1263,7 @@ func (c Client) write(ctx context.Context, target Target, method, path string, b
 
 func (c Client) writeMultipart(ctx context.Context, target Target, path string, body []byte, contentType string) (response, error) {
 	if !knownWritePath(http.MethodPost, path) {
-		return response{}, result.New("incompatible", "只允许执行已确认的资源写操作")
+		return response{}, result.New("incompatible", i18n.T("Only confirmed resource writes are allowed"))
 	}
 	response, err := c.doWithContentType(ctx, target, http.MethodPost, path, bytes.NewReader(body), true, contentType)
 	if err != nil {
@@ -1312,55 +1313,55 @@ func (c Client) skillMultipart(ctx context.Context, target Target, suffix, filen
 
 func (c Client) previewJSON(ctx context.Context, target Target, path string, body map[string]any) (response, error) {
 	if !knownPreviewPath(path) {
-		return response{}, result.New("incompatible", "只允许调用已确认的预览接口")
+		return response{}, result.New("incompatible", i18n.T("Only confirmed preview endpoints may be called"))
 	}
 	encoded, err := json.Marshal(body)
 	if err != nil {
-		return response{}, result.New("input", "请求体格式无法编码")
+		return response{}, result.New("input", i18n.T("Request body cannot be encoded"))
 	}
 	if len(encoded) > maxRequestBytes {
-		return response{}, result.New("input", "请求体过大")
+		return response{}, result.New("input", i18n.T("Request body is too large"))
 	}
 	return c.do(ctx, target, http.MethodPost, path, bytes.NewReader(encoded), true)
 }
 
 func (c Client) previewMultipart(ctx context.Context, target Target, path string, body []byte, contentType string) (response, error) {
 	if !knownPreviewPath(path) {
-		return response{}, result.New("incompatible", "只允许调用已确认的预览接口")
+		return response{}, result.New("incompatible", i18n.T("Only confirmed preview endpoints may be called"))
 	}
 	return c.doWithContentType(ctx, target, http.MethodPost, path, bytes.NewReader(body), true, contentType)
 }
 
 func multipartBody(filename string, file io.Reader, sourcePaths []string, maxBytes int64) ([]byte, string, error) {
 	if file == nil {
-		return nil, "", result.New("input", "上传文件不能为空")
+		return nil, "", result.New("input", i18n.T("Upload file must not be empty"))
 	}
 	content, err := io.ReadAll(io.LimitReader(file, maxBytes+1))
 	if err != nil {
-		return nil, "", result.New("input", "读取上传文件失败")
+		return nil, "", result.New("input", i18n.T("Failed to read upload file"))
 	}
 	if int64(len(content)) > maxBytes {
-		return nil, "", result.New("input", "上传文件过大")
+		return nil, "", result.New("input", i18n.T("Upload file is too large"))
 	}
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
 	part, err := writer.CreateFormFile("file", filepath.Base(filename))
 	if err != nil {
-		return nil, "", result.New("input", "无法构造上传请求")
+		return nil, "", result.New("input", i18n.T("Unable to construct upload request"))
 	}
 	if _, err := part.Write(content); err != nil {
-		return nil, "", result.New("input", "无法构造上传请求")
+		return nil, "", result.New("input", i18n.T("Unable to construct upload request"))
 	}
 	for _, sourcePath := range sourcePaths {
 		if err := writer.WriteField("source_paths", sourcePath); err != nil {
-			return nil, "", result.New("input", "无法构造上传请求")
+			return nil, "", result.New("input", i18n.T("Unable to construct upload request"))
 		}
 	}
 	if err := writer.Close(); err != nil {
-		return nil, "", result.New("input", "无法构造上传请求")
+		return nil, "", result.New("input", i18n.T("Unable to construct upload request"))
 	}
 	if int64(body.Len()) > maxBytes {
-		return nil, "", result.New("input", "上传请求过大")
+		return nil, "", result.New("input", i18n.T("Upload request is too large"))
 	}
 	return body.Bytes(), writer.FormDataContentType(), nil
 }
@@ -1372,13 +1373,13 @@ func (c Client) do(ctx context.Context, target Target, method, path string, requ
 func (c Client) doWithContentType(ctx context.Context, target Target, method, path string, requestBody io.Reader, allowNilData bool, contentType string) (response, error) {
 	base, err := endpoint.Normalize(target.Endpoint)
 	if err != nil {
-		return response{}, result.New("input", "服务地址无效")
+		return response{}, result.New("input", i18n.T("Invalid service URL"))
 	}
 	requestURL := strings.TrimRight(base, "/") + path
 
 	request, err := http.NewRequestWithContext(ctx, method, requestURL, requestBody)
 	if err != nil {
-		return response{}, result.New("input", "无法构造 HTTP 请求")
+		return response{}, result.New("input", i18n.T("Unable to construct HTTP request"))
 	}
 	if target.UserToken != "" {
 		request.Header.Set("Authorization", "Bearer "+target.UserToken)
@@ -1422,7 +1423,7 @@ func (c Client) doWithContentType(ctx context.Context, target Target, method, pa
 		return response{}, err
 	}
 	if tooLarge {
-		err := protocolError("服务响应过大", resp.StatusCode, responseRequestID(resp.Header, envelope{}, target.secret()))
+		err := protocolError(i18n.T("Service response is too large"), resp.StatusCode, responseRequestID(resp.Header, envelope{}, target.secret()))
 		return response{}, err
 	}
 	parsed, parseErr := parseEnvelope(responseBody)
@@ -1444,7 +1445,7 @@ func (c Client) doWithContentType(ctx context.Context, target Target, method, pa
 		return response{}, failure
 	}
 	if parseErr != nil {
-		return response{}, protocolError("服务返回的响应格式无效", resp.StatusCode, requestID)
+		return response{}, protocolError(i18n.T("Invalid server response format"), resp.StatusCode, requestID)
 	}
 	if !isSuccessCode(parsed.Code) {
 		return response{}, businessError(parsed.Code, requestID, resp.StatusCode, target.secret())
@@ -1463,10 +1464,10 @@ func (c Client) doWithContentType(ctx context.Context, target Target, method, pa
 		ok = true
 	}
 	if !ok {
-		return response{}, protocolError("服务返回的诊断数据格式无效", resp.StatusCode, requestID)
+		return response{}, protocolError(i18n.T("Invalid server diagnostic data format"), resp.StatusCode, requestID)
 	}
 	if path == infoPath && !validInfoData(data, target.secret()) {
-		return response{}, protocolError("服务返回的诊断数据缺少有效版本", resp.StatusCode, requestID)
+		return response{}, protocolError(i18n.T("Server diagnostic data lacks a valid version"), resp.StatusCode, requestID)
 	}
 	return response{
 		StatusCode: resp.StatusCode,
@@ -1645,7 +1646,7 @@ func classifyWriteError(err error) error {
 }
 
 func writeUnknown(cause ...*result.Error) *result.Error {
-	err := result.New("network", "写操作结果未知，请检查服务端状态")
+	err := result.New("network", i18n.T("Write result unknown; check server state"))
 	err.Type = "result_unknown"
 	if len(cause) != 0 && cause[0] != nil {
 		err.HTTPStatus = cause[0].HTTPStatus
@@ -1788,11 +1789,11 @@ func capabilitySchemaVersion(value any) (int, bool) {
 func resourcePath(base, identifier string) (string, error) {
 	if strings.TrimSpace(identifier) == "" || identifier == "." || identifier == ".." ||
 		strings.ContainsAny(identifier, "/\\?#") || strings.IndexFunc(identifier, func(r rune) bool { return r < 0x20 || r == 0x7f }) >= 0 {
-		return "", result.New("input", "资源 ID 必须是单个安全的路径段")
+		return "", result.New("input", i18n.T("Resource ID must be a single safe path segment"))
 	}
 	escaped := url.PathEscape(identifier)
 	if escaped == "." || escaped == ".." || strings.Contains(escaped, "/") {
-		return "", result.New("input", "资源 ID 必须是单个安全的路径段")
+		return "", result.New("input", i18n.T("Resource ID must be a single safe path segment"))
 	}
 	return base + "/" + escaped, nil
 }
@@ -1800,11 +1801,11 @@ func resourcePath(base, identifier string) (string, error) {
 func mcpServerPath(name string) (string, error) {
 	if strings.TrimSpace(name) == "" || strings.TrimSpace(name) != name || strings.ContainsAny(name, "\\?#") ||
 		strings.IndexFunc(name, func(r rune) bool { return r < 0x20 || r == 0x7f }) >= 0 {
-		return "", result.New("input", "MCP Server 名称不是安全的路径参数")
+		return "", result.New("input", i18n.T("MCP Server name is not a safe path parameter"))
 	}
 	for _, segment := range strings.Split(name, "/") {
 		if strings.TrimSpace(segment) == "" || segment == "." || segment == ".." {
-			return "", result.New("input", "MCP Server 名称不是安全的路径参数")
+			return "", result.New("input", i18n.T("MCP Server name is not a safe path parameter"))
 		}
 	}
 	return mcpServersPath + "/" + url.PathEscape(name), nil
@@ -1853,14 +1854,14 @@ func safeFilePath(value string) ([]string, error) {
 	}
 	if value == "" || strings.HasPrefix(value, "/") || strings.Contains(value, "\\") || strings.ContainsAny(value, "?#") ||
 		strings.IndexFunc(value, func(r rune) bool { return r < 0x20 || r == 0x7f }) >= 0 {
-		return nil, result.New("input", "文件路径不是安全的相对路径")
+		return nil, result.New("input", i18n.T("File path is not a safe relative path"))
 	}
 	parts := strings.Split(value, "/")
 	for _, part := range parts {
 		decoded, err := url.PathUnescape(part)
 		if err != nil || part == "" || part == "." || part == ".." || decoded == "." || decoded == ".." ||
 			strings.ContainsAny(decoded, "/\\") {
-			return nil, result.New("input", "文件路径不是安全的相对路径")
+			return nil, result.New("input", i18n.T("File path is not a safe relative path"))
 		}
 	}
 	return parts, nil
@@ -1868,11 +1869,11 @@ func safeFilePath(value string) ([]string, error) {
 
 func taskPath(identifier string) (string, error) {
 	if identifier == "" {
-		return "", result.New("input", "任务 ID 必须是非负整数")
+		return "", result.New("input", i18n.T("Task ID must be a non-negative integer"))
 	}
 	parsed, err := strconv.ParseUint(identifier, 10, 64)
 	if err != nil || strconv.FormatUint(parsed, 10) != identifier {
-		return "", result.New("input", "任务 ID 必须是非负整数")
+		return "", result.New("input", i18n.T("Task ID must be a non-negative integer"))
 	}
 	return tasksPath + "/" + identifier, nil
 }
@@ -1880,16 +1881,16 @@ func taskPath(identifier string) (string, error) {
 func parseResourceList(resp response, key string, project func(map[string]any, string) map[string]any, secret string) ([]map[string]any, error) {
 	raw, ok := resp.Data[key].([]any)
 	if !ok {
-		return nil, protocolError("服务返回的资源列表格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, secret))
+		return nil, protocolError(i18n.T("Invalid server resource list format"), resp.StatusCode, responseRequestID(resp.Header, resp.Body, secret))
 	}
 	items := make([]map[string]any, 0, len(raw))
 	for _, value := range raw {
 		item, ok := value.(map[string]any)
 		if !ok {
-			return nil, protocolError("服务返回的资源格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, secret))
+			return nil, protocolError(i18n.T("Invalid server resource format"), resp.StatusCode, responseRequestID(resp.Header, resp.Body, secret))
 		}
 		if !validResourceUUID(item, secret) {
-			return nil, protocolError("服务返回的资源缺少有效 UUID", resp.StatusCode, responseRequestID(resp.Header, resp.Body, secret))
+			return nil, protocolError(i18n.T("Server resource lacks a valid UUID"), resp.StatusCode, responseRequestID(resp.Header, resp.Body, secret))
 		}
 		items = append(items, project(item, secret))
 	}
@@ -1899,10 +1900,10 @@ func parseResourceList(resp response, key string, project func(map[string]any, s
 func parseResourceObject(resp response, key string, project func(map[string]any, string) map[string]any, secret string) (map[string]any, error) {
 	item, ok := resp.Data[key].(map[string]any)
 	if !ok {
-		return nil, protocolError("服务返回的资源格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, secret))
+		return nil, protocolError(i18n.T("Invalid server resource format"), resp.StatusCode, responseRequestID(resp.Header, resp.Body, secret))
 	}
 	if !validResourceUUID(item, secret) {
-		return nil, protocolError("服务返回的资源缺少有效 UUID", resp.StatusCode, responseRequestID(resp.Header, resp.Body, secret))
+		return nil, protocolError(i18n.T("Server resource lacks a valid UUID"), resp.StatusCode, responseRequestID(resp.Header, resp.Body, secret))
 	}
 	return project(item, secret), nil
 }
@@ -2050,12 +2051,12 @@ func projectSkillSummary(value map[string]any, secret string) map[string]any {
 func parseSkillResponse(resp response, expectedName, secret string) (map[string]any, error) {
 	item, ok := resp.Data["skill"].(map[string]any)
 	if !ok {
-		return nil, protocolError("服务返回的 Skill 格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, secret))
+		return nil, protocolError(i18n.T("Invalid server Skill format"), resp.StatusCode, responseRequestID(resp.Header, resp.Body, secret))
 	}
 	projected := projectSkillSummary(item, secret)
 	name, ok := projected["name"].(string)
 	if !ok || strings.TrimSpace(name) == "" || (expectedName != "" && name != expectedName) {
-		return nil, protocolError("服务返回的 Skill 身份与请求不一致", resp.StatusCode, responseRequestID(resp.Header, resp.Body, secret))
+		return nil, protocolError(i18n.T("Server Skill identity does not match the request"), resp.StatusCode, responseRequestID(resp.Header, resp.Body, secret))
 	}
 	if instructions, exists := item["instructions"]; exists {
 		projected["instructions"] = redactConnectionSecret(instructions, secret)
@@ -2162,11 +2163,11 @@ func parseEnvelope(body []byte) (envelope, error) {
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.UseNumber()
 	if err := decoder.Decode(&value); err != nil || value == nil {
-		return envelope{}, errors.New("response is not a JSON object")
+		return envelope{}, errors.New(i18n.T("response is not a JSON object"))
 	}
 	var extra any
 	if err := decoder.Decode(&extra); err != io.EOF {
-		return envelope{}, errors.New("response has trailing JSON")
+		return envelope{}, errors.New(i18n.T("response has trailing JSON"))
 	}
 	var parsed envelope
 	parsed.Code = value["code"]
@@ -2178,7 +2179,7 @@ func parseEnvelope(body []byte) (envelope, error) {
 		_ = json.Unmarshal(raw, &parsed.RequestID)
 	}
 	if len(parsed.Code) == 0 {
-		return envelope{}, errors.New("response has no code")
+		return envelope{}, errors.New(i18n.T("response has no code"))
 	}
 	return parsed, nil
 }
@@ -2224,7 +2225,7 @@ func httpError(status int, code json.RawMessage, requestID, secret string) *resu
 	err.HTTPStatus = status
 	err.ServerCode = safeServerCode(code, secret)
 	if err.ServerCode == "managed_sandbox_unavailable" {
-		err.Message = "托管 sandbox 不可用；请检查 Workspace 的 sandbox 授权和服务状态"
+		err.Message = i18n.T("Hosted sandbox unavailable; check Workspace sandbox entitlement and service status")
 	}
 	err.RequestID = requestID
 	if status == http.StatusUnauthorized && secret != "" {
@@ -2234,7 +2235,7 @@ func httpError(status int, code json.RawMessage, requestID, secret string) *resu
 }
 
 func businessError(code json.RawMessage, requestID string, status int, secret string) *result.Error {
-	err := result.New("server", "服务拒绝了诊断请求")
+	err := result.New("server", i18n.T("Service rejected the diagnostic request"))
 	err.HTTPStatus = status
 	err.ServerCode = safeServerCode(code, secret)
 	err.RequestID = requestID
@@ -2250,17 +2251,17 @@ func protocolError(message string, status int, requestID string) *result.Error {
 
 func transportMessage(ctx context.Context, err error) string {
 	if errors.Is(ctx.Err(), context.Canceled) || errors.Is(err, context.Canceled) {
-		return "请求已取消"
+		return i18n.T("Request cancelled")
 	}
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(err, context.DeadlineExceeded) {
-		return "请求超时"
+		return i18n.T("Request timed out")
 	}
-	return "无法连接服务"
+	return i18n.T("Unable to connect to service")
 }
 
 func transportError(ctx context.Context, err error) *result.Error {
 	if isTLSError(err) {
-		failure := result.New("network", "TLS 证书验证失败")
+		failure := result.New("network", i18n.T("TLS certificate verification failed"))
 		failure.Type = "tls_error"
 		return failure
 	}
@@ -2374,7 +2375,7 @@ func safeString(value any) string {
 
 func httpStatusMessage(status int) string {
 	if status >= 300 && status < 400 {
-		return "服务返回了重定向，CLI 不会自动跟随"
+		return i18n.T("Service returned a redirect; CLI does not follow redirects automatically")
 	}
-	return fmt.Sprintf("服务返回 HTTP %d", status)
+	return fmt.Sprintf(i18n.T("Service returned HTTP %d"), status)
 }

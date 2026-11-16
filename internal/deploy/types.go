@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gofrs/flock"
+	"github.com/langbot-app/langbot-cli/internal/i18n"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -21,7 +22,7 @@ const (
 	DriverDockerCompose  = "docker_compose"
 	DriverNativeProcess  = "native_process"
 	DriverNative         = "native"
-	localContextRequired = "当前 Docker context 指向远程 daemon；本地生命周期只允许本机 daemon"
+	localContextRequired = "Current Docker context points to a remote daemon; local lifecycle requires a local daemon"
 	managedMarker        = "lbctl-managed"
 	markerFileName       = ".lbctl-managed"
 	recordFileName       = "deployment.yaml"
@@ -29,9 +30,9 @@ const (
 )
 
 var (
-	ErrNotInstalled = errors.New("本地部署尚未安装")
-	ErrNotManaged   = errors.New("目标目录不是 lbctl 管理的部署")
-	ErrCorrupt      = errors.New("本地部署记录损坏")
+	ErrNotInstalled = i18n.Error("Local deployment is not installed")
+	ErrNotManaged   = i18n.Error("Target directory is not managed by lbctl")
+	ErrCorrupt      = i18n.Error("Local deployment record is corrupt")
 )
 
 // Record 是本地部署的唯一持久化描述，不保存 Workspace API Key。
@@ -107,7 +108,7 @@ type DockerRunner struct {
 
 func (r DockerRunner) Docker(ctx context.Context, args ...string) (CommandResult, error) {
 	if len(args) == 0 {
-		return CommandResult{}, errors.New("docker 命令不能为空")
+		return CommandResult{}, errors.New(i18n.T("docker command must not be empty"))
 	}
 	if len(args) == 1 && args[0] == "--version" {
 		return r.exec(ctx, "docker", "--version")
@@ -121,7 +122,7 @@ func (r DockerRunner) Docker(ctx context.Context, args ...string) (CommandResult
 
 func (r DockerRunner) Compose(ctx context.Context, record Record, args ...string) (CommandResult, error) {
 	if len(args) == 0 {
-		return CommandResult{}, errors.New("docker compose 命令不能为空")
+		return CommandResult{}, errors.New(i18n.T("docker compose command must not be empty"))
 	}
 	contextName, result, err := r.localContext(ctx)
 	if err != nil {
@@ -136,7 +137,7 @@ func (r DockerRunner) Compose(ctx context.Context, record Record, args ...string
 
 func (r DockerRunner) ComposeStream(ctx context.Context, record Record, stdout, stderr io.Writer, args ...string) error {
 	if len(args) == 0 {
-		return errors.New("docker compose 命令不能为空")
+		return errors.New(i18n.T("docker compose command must not be empty"))
 	}
 	if r.Exec != nil {
 		result, err := r.Compose(ctx, record, args...)
@@ -213,7 +214,7 @@ func (r DockerRunner) localContext(ctx context.Context) (string, CommandResult, 
 	}
 	name := strings.TrimSpace(shown.Stdout)
 	if name == "" {
-		return "", shown, errors.New("Docker context 为空")
+		return "", shown, errors.New(i18n.T("Docker context is empty"))
 	}
 	inspected, err := r.exec(ctx, "docker", "context", "inspect", name, "--format", "{{.Endpoints.docker.Host}}")
 	if err != nil {
@@ -221,7 +222,7 @@ func (r DockerRunner) localContext(ctx context.Context) (string, CommandResult, 
 	}
 	host := strings.TrimSpace(inspected.Stdout)
 	if !isLocalDockerEndpoint(host) {
-		inspected.Stderr = localContextRequired
+		inspected.Stderr = i18n.T(localContextRequired)
 		return "", inspected, errors.New(inspected.Stderr)
 	}
 	return name, CommandResult{}, nil
@@ -234,7 +235,7 @@ func isLocalDockerEndpoint(endpoint string) bool {
 
 func (r DockerRunner) exec(ctx context.Context, args ...string) (CommandResult, error) {
 	if len(args) == 0 {
-		return CommandResult{}, errors.New("docker 命令不能为空")
+		return CommandResult{}, errors.New(i18n.T("docker command must not be empty"))
 	}
 	if r.Exec != nil {
 		return r.Exec(ctx, args[0], args[1:]...)
@@ -306,7 +307,7 @@ type Store struct {
 func DefaultDir() (string, error) {
 	base, err := os.UserConfigDir()
 	if err != nil || strings.TrimSpace(base) == "" {
-		return "", errors.New("无法确定用户数据目录")
+		return "", errors.New(i18n.T("Unable to determine user data directory"))
 	}
 	return filepath.Join(base, "langbot", "deployment"), nil
 }
@@ -317,14 +318,14 @@ func ResolveDir(value string) (string, error) {
 	}
 	path, err := filepath.Abs(filepath.Clean(value))
 	if err != nil {
-		return "", fmt.Errorf("解析部署目录失败: %w", err)
+		return "", fmt.Errorf(i18n.T("Failed to resolve deployment directory: %w"), err)
 	}
 	return filepath.Clean(path), nil
 }
 
 func (s Store) Read() (Record, error) {
 	if strings.TrimSpace(s.Dir) == "" {
-		return Record{}, errors.New("部署目录不能为空")
+		return Record{}, errors.New(i18n.T("Deployment directory must not be empty"))
 	}
 	info, err := os.Lstat(s.Dir)
 	if errors.Is(err, os.ErrNotExist) {
@@ -380,7 +381,7 @@ func (s Store) Read() (Record, error) {
 
 func (s Store) Write(ctx context.Context, record Record) error {
 	if strings.TrimSpace(s.Dir) == "" {
-		return errors.New("部署目录不能为空")
+		return errors.New(i18n.T("Deployment directory must not be empty"))
 	}
 	if record.SchemaVersion == 0 {
 		record.SchemaVersion = RecordSchemaVersion
@@ -445,7 +446,7 @@ func (s Store) Write(ctx context.Context, record Record) error {
 		if err == nil {
 			err = context.DeadlineExceeded
 		}
-		return fmt.Errorf("等待部署记录锁失败: %w", err)
+		return fmt.Errorf(i18n.T("Failed to acquire deployment record lock: %w"), err)
 	}
 	defer func() { _ = lock.Unlock() }()
 	if markerInfo, err := os.Lstat(markerPath); err == nil {

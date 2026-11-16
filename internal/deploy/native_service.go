@@ -3,6 +3,7 @@ package deploy
 import (
 	"context"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"github.com/gofrs/flock"
+	"github.com/langbot-app/langbot-cli/internal/i18n"
 )
 
 func NativeRunning(dir string) bool {
@@ -143,7 +145,7 @@ func InstallNativeService(ctx context.Context, dir string, record Record) error 
 	case "process":
 		return nil
 	default:
-		return fmt.Errorf("unknown native service manager")
+		return errors.New(i18n.T("unknown native service manager"))
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
@@ -213,7 +215,7 @@ func NativeStart(ctx context.Context, dir string, record Record) error {
 			err = command.Process.Release()
 		}
 	default:
-		return fmt.Errorf("unknown native service manager")
+		return errors.New(i18n.T("unknown native service manager"))
 	}
 	if err != nil {
 		return err
@@ -227,7 +229,7 @@ func NativeStart(ctx context.Context, dir string, record Record) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ready.C:
-			return fmt.Errorf("native supervisor did not start; inspect %s", filepath.Join(dir, "logs", "langbot.log"))
+			return fmt.Errorf(i18n.T("native supervisor did not start; inspect %s"), filepath.Join(dir, "logs", "langbot.log"))
 		case <-ticker.C:
 		}
 	}
@@ -358,7 +360,7 @@ func NativeServe(ctx context.Context, dir string) error {
 		return err
 	}
 	if record.Driver != DriverNative {
-		return fmt.Errorf("not a native deployment")
+		return errors.New(i18n.T("not a native deployment"))
 	}
 	lock := flock.New(filepath.Join(dir, "native.run.lock"))
 	locked, err := lock.TryLock()
@@ -366,7 +368,7 @@ func NativeServe(ctx context.Context, dir string) error {
 		return err
 	}
 	if !locked {
-		return fmt.Errorf("native instance already running")
+		return errors.New(i18n.T("native instance already running"))
 	}
 	defer lock.Unlock()
 	if err := CheckNativePorts(record); err != nil {

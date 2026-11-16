@@ -6,6 +6,7 @@ import (
 
 	"github.com/langbot-app/langbot-cli/internal/api"
 	"github.com/langbot-app/langbot-cli/internal/deploy"
+	"github.com/langbot-app/langbot-cli/internal/i18n"
 	"github.com/langbot-app/langbot-cli/internal/result"
 )
 
@@ -30,12 +31,12 @@ func (s *Service) deploymentDirs() ([]string, error) {
 func (s *Service) localDeployments() ([]DeploymentEntry, error) {
 	dirs, err := s.deploymentDirs()
 	if err != nil {
-		return nil, result.New("precondition", "本机部署定位记录不可用")
+		return nil, result.New("precondition", i18n.T("Local deployment locator record unavailable"))
 	}
 	entries := []DeploymentEntry{}
 	registered, err := (deploy.Locator{Path: s.deps.LocalLocatorPath}).RegisteredDirectories()
 	if err != nil {
-		return nil, result.New("precondition", "本机部署定位记录不可用")
+		return nil, result.New("precondition", i18n.T("Local deployment locator record unavailable"))
 	}
 	for _, dir := range dirs {
 		record, readErr := (deploy.Store{Dir: dir}).Read()
@@ -58,7 +59,7 @@ func (s *Service) localDeployments() ([]DeploymentEntry, error) {
 func (s *Service) checkDeploymentRegistration(dir string, candidate deploy.Record) error {
 	dirs, err := (deploy.Locator{Path: s.deps.LocalLocatorPath}).Directories()
 	if err != nil {
-		return result.New("precondition", "本机部署定位记录不可用")
+		return result.New("precondition", i18n.T("Local deployment locator record unavailable"))
 	}
 	if s.deps.LocalDir != "" {
 		dirs = append(dirs, s.deps.LocalDir)
@@ -72,7 +73,7 @@ func (s *Service) checkDeploymentRegistration(dir string, candidate deploy.Recor
 			continue
 		}
 		if err != nil {
-			return result.New("precondition", "已有本机部署记录不可用，请先诊断")
+			return result.New("precondition", i18n.T("Existing local deployment record is unavailable; diagnose first"))
 		}
 		if record.Uninstalled {
 			continue
@@ -110,7 +111,7 @@ func (s *Service) matchingLocalDiagnostics(endpoint string, identity api.Context
 			continue
 		}
 		if matched {
-			return deploy.Diagnostics{}, result.New("precondition", "多个本机部署匹配当前环境，拒绝自动选择")
+			return deploy.Diagnostics{}, result.New("precondition", i18n.T("Multiple local deployments match this environment; refusing automatic selection"))
 		}
 		diagnostics, err = s.localDiagnostics(dir)
 		if err != nil {

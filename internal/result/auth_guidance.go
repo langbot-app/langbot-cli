@@ -1,5 +1,7 @@
 package result
 
+import "github.com/langbot-app/langbot-cli/internal/i18n"
+
 import "regexp"
 
 // AuthGuidance contains setup instructions, never a credential value.
@@ -12,14 +14,14 @@ type AuthGuidance struct {
 var environmentName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 func AuthSetupError(reason, variable string) *Error {
-	message := "尚未提供 API Key"
+	message := i18n.T("No API Key provided")
 	switch reason {
 	case "environment_variable_unavailable":
-		message = "API Key 环境变量未设置或为空"
+		message = i18n.T("API Key environment variable is unset or empty")
 	case "empty_stdin":
-		message = "stdin 中的 API Key 为空"
+		message = i18n.T("API Key from stdin is empty")
 	case "endpoint_changed":
-		message = "endpoint 已覆盖，必须显式提供新的 API Key"
+		message = i18n.T("endpoint overridden; explicitly provide a new API Key")
 	}
 	err := New("auth", message)
 	AddAuthGuidance(err, reason, variable)
@@ -32,11 +34,11 @@ func AddAuthGuidance(err *Error, reason, variable string) {
 		return
 	}
 	err.Reason = reason
-	verify := "配置后，对同一目标运行 lbctl whoami；保留原命令的 --config、--context、--endpoint 等连接选项。"
+	verify := i18n.T("After configuration, run lbctl whoami on the same target; preserve --config, --context, --endpoint and other connection options from the original command.")
 	if reason == "authentication_rejected" {
 		err.Guidance = &AuthGuidance{Steps: []string{
-			"服务端拒绝了已提供的 API Key；检查目标地址是否正确，以及 Key 是否填错、过期或已吊销。",
-			"如需更换 Key，请在目标 LangBot 管理页面的 API Key 管理中创建 Workspace API Key；通过原凭据来源提供，不要打印或记录 Key。",
+			i18n.T("Server rejected the supplied API Key; check the target URL and whether the Key is incorrect, expired or revoked."),
+			i18n.T("To replace a Key, create a Workspace API Key in the target LangBot admin page and supply it through the original credential source; do not print or log the Key."),
 			verify,
 		}}
 		if environmentName.MatchString(variable) {
@@ -50,8 +52,8 @@ func AddAuthGuidance(err *Error, reason, variable string) {
 	err.Guidance = &AuthGuidance{
 		EnvironmentVariable: variable,
 		Steps: []string{
-			"打开目标 LangBot 管理页面，完成首次初始化后，在 API Key 管理中创建 Workspace API Key。",
-			"在运行 lbctl 的终端设置环境变量 " + variable + "；以下示例使用隐藏输入，不将 Key 写入命令历史。也可显式使用 --api-key-stdin。",
+			i18n.T("Open the target LangBot admin page, complete initialization and create a Workspace API Key in API Key management."),
+			i18n.T("Set the environment variable in the terminal running lbctl: ") + variable + i18n.T("; the example below hides input and keeps the Key out of command history. You can also explicitly use --api-key-stdin."),
 			verify,
 		},
 		Examples: map[string]string{

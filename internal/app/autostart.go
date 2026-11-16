@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/langbot-app/langbot-cli/internal/deploy"
+	"github.com/langbot-app/langbot-cli/internal/i18n"
 	"github.com/langbot-app/langbot-cli/internal/result"
 	"github.com/langbot-app/langbot-cli/internal/telemetry"
 )
@@ -50,7 +51,7 @@ func (s *Service) namedLocalDir(name, dir string) (string, error) {
 func (s *Service) Autostart(ctx context.Context, action, name, dir, timeout string) (Result, error) {
 	telemetry.SetStep(ctx, "resolve_target")
 	if action != "status" && action != "enable" && action != "disable" {
-		return Result{}, result.New("input", "unknown autostart action")
+		return Result{}, result.New("input", i18n.T("unknown autostart action"))
 	}
 	dir, err := s.namedLocalDir(name, dir)
 	if err != nil {

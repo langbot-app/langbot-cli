@@ -7,17 +7,18 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/langbot-app/langbot-cli/internal/i18n"
 	"github.com/langbot-app/langbot-cli/internal/result"
 )
 
 func (c Client) ImageDownload(ctx context.Context, target Target, key string, destination io.Writer) error {
 	if key == "" || strings.ContainsAny(key, "\\\r\n") {
-		return result.New("input", "图片 key 无效")
+		return result.New("input", i18n.T("Invalid image key"))
 	}
 	segments := strings.Split(key, "/")
 	for index, segment := range segments {
 		if segment == "" || segment == "." || segment == ".." {
-			return result.New("input", "图片 key 无效")
+			return result.New("input", i18n.T("Invalid image key"))
 		}
 		segments[index] = url.PathEscape(segment)
 	}
@@ -32,7 +33,7 @@ func (c Client) ImageDownload(ctx context.Context, target Target, key string, de
 		return err
 	}
 	if _, err := io.Copy(destination, response.Body); err != nil {
-		return result.New("network", "读取或写入图片失败")
+		return result.New("network", i18n.T("Failed to read or write image"))
 	}
 	return nil
 }

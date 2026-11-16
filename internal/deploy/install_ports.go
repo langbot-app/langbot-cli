@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/langbot-app/langbot-cli/internal/i18n"
 )
 
 type InstallNetworkOptions struct {
@@ -30,7 +32,7 @@ func resolveInstallNetwork(httpPort int, options InstallNetworkOptions) (string,
 		project = DefaultComposeProject
 	}
 	if !ValidComposeProject(project) {
-		return "", InstallPorts{}, errors.New("Compose project 名称无效")
+		return "", InstallPorts{}, errors.New(i18n.T("Invalid Compose project name"))
 	}
 	ports := defaultInstallPorts()
 	if options.PluginDebugPort != nil {
@@ -73,13 +75,13 @@ func ValidComposeProject(value string) bool {
 
 func (p InstallPorts) hostPorts(httpPort int) ([]int, error) {
 	if httpPort < 1 || httpPort > 65535 || p.PluginDebugPort < 0 || p.PluginDebugPort > 65535 {
-		return nil, errors.New("宿主机端口必须在 1-65535 之间；plugin-debug-port 可用 0 关闭发布")
+		return nil, errors.New(i18n.T("Host ports must be 1-65535; plugin-debug-port accepts 0 to disable publishing"))
 	}
 	ports := []int{httpPort}
 	seen := map[int]bool{httpPort: true}
 	add := func(port int) error {
 		if seen[port] {
-			return fmt.Errorf("宿主机端口 %d 被重复映射", port)
+			return fmt.Errorf(i18n.T("Host port %d is mapped more than once"), port)
 		}
 		seen[port] = true
 		ports = append(ports, port)
@@ -98,7 +100,7 @@ func (p InstallPorts) hostPorts(httpPort int) ([]int, error) {
 		}
 		for offset := 0; offset <= host.end-host.start; offset++ {
 			if targets[target.start+offset] {
-				return nil, errors.New("适配器容器端口被重复映射")
+				return nil, errors.New(i18n.T("Adapter container port mapped more than once"))
 			}
 			targets[target.start+offset] = true
 			if err := add(host.start + offset); err != nil {
@@ -127,28 +129,28 @@ func parseAdapterMapping(value string) (portRange, portRange, error) {
 			return host, target, nil
 		}
 	}
-	return portRange{}, portRange{}, errors.New("adapter-ports 需要 HOST:CONTAINER 或等长端口范围，容器端口仅限 2280-2285；使用 none 关闭发布")
+	return portRange{}, portRange{}, errors.New(i18n.T("adapter-ports requires HOST:CONTAINER or equal-length port ranges; container ports are limited to 2280-2285; use none to disable publishing"))
 }
 
 func parsePortRange(value string) (portRange, error) {
 	parts := strings.Split(value, "-")
 	if len(parts) < 1 || len(parts) > 2 {
-		return portRange{}, errors.New("端口范围无效")
+		return portRange{}, errors.New(i18n.T("Invalid port range"))
 	}
 	values := make([]int, len(parts))
 	for i, part := range parts {
 		if part == "" || strings.IndexFunc(part, func(r rune) bool { return r < '0' || r > '9' }) >= 0 {
-			return portRange{}, errors.New("端口无效")
+			return portRange{}, errors.New(i18n.T("Invalid port"))
 		}
 		value, err := strconv.Atoi(part)
 		if err != nil || value < 1 || value > 65535 {
-			return portRange{}, errors.New("端口无效")
+			return portRange{}, errors.New(i18n.T("Invalid port"))
 		}
 		values[i] = value
 	}
 	result := portRange{start: values[0], end: values[len(values)-1]}
 	if result.end < result.start {
-		return portRange{}, errors.New("端口范围无效")
+		return portRange{}, errors.New(i18n.T("Invalid port range"))
 	}
 	return result, nil
 }

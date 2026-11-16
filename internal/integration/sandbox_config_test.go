@@ -162,7 +162,7 @@ func runSandboxBinary(t *testing.T, binary, config, input, format string, args .
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	arguments := []string{"--config", config, "--timeout", "2s"}
+	arguments := []string{"--lang", "zh-Hans", "--config", config, "--timeout", "2s"}
 	if format != "" {
 		arguments = append(arguments, "-o", format)
 	}
@@ -174,7 +174,8 @@ func runSandboxBinary(t *testing.T, binary, config, input, format string, args .
 			command.Env = append(command.Env, entry)
 		}
 	}
-	command.Env = append(command.Env, "SANDBOX_WORKSPACE_KEY="+sandboxWorkspaceKey, "SANDBOX_E2B_KEY="+sandboxE2BKey)
+	home := t.TempDir()
+	command.Env = append(command.Env, "HOME="+home, "USERPROFILE="+home, "LANGBOT_TELEMETRY=0", "SANDBOX_WORKSPACE_KEY="+sandboxWorkspaceKey, "SANDBOX_E2B_KEY="+sandboxE2BKey)
 	command.Stdin = strings.NewReader(input)
 	var stdout, stderr bytes.Buffer
 	command.Stdout, command.Stderr = &stdout, &stderr

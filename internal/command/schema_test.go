@@ -73,7 +73,7 @@ func TestCurrentContextAndOfflineCompletionUseSelectedConfig(t *testing.T) {
 	}
 	for _, args := range [][]string{{"context", "show", "-o", "json"}, {"__complete", "--context", "lo"}, {"__complete", "model", "list", "--type", "l"}, {"task", "get", "invalid", "-o", "json"}} {
 		var out, diagnostic bytes.Buffer
-		code := Execute(context.Background(), args, Dependencies{Out: &out, Err: &diagnostic, LookupEnv: func(key string) (string, bool) {
+		code := executeChinese(context.Background(), args, Dependencies{Out: &out, Err: &diagnostic, LookupEnv: func(key string) (string, bool) {
 			value, ok := map[string]string{"LANGBOT_CONFIG": path, "LOCAL_KEY": "never-print-this-key"}[key]
 			return value, ok
 		}, DefaultConfigPath: func() (string, error) { panic("custom config ignored") }, Transport: panicRoundTripper{}})
@@ -342,7 +342,7 @@ type schemaExecution struct {
 func executeSchemaForTest(t *testing.T, args ...string) schemaExecution {
 	t.Helper()
 	var out, diagnostic bytes.Buffer
-	code := Execute(context.Background(), args, Dependencies{
+	code := executeChinese(context.Background(), args, Dependencies{
 		In: &panicReader{}, Out: &out, Err: &diagnostic,
 		LookupEnv:         func(string) (string, bool) { panic("schema read environment") },
 		DefaultConfigPath: func() (string, error) { panic("schema read config") },

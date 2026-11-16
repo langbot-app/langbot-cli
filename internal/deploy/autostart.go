@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -11,6 +12,7 @@ import (
 	"time"
 	"unicode/utf16"
 
+	"github.com/langbot-app/langbot-cli/internal/i18n"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -89,7 +91,7 @@ func AutostartStatus(ctx context.Context, record Record) (AutostartInfo, error) 
 	case "process":
 		info.Supported = false
 	default:
-		return info, fmt.Errorf("unknown native service manager %q", record.ServiceManager)
+		return info, fmt.Errorf(i18n.T("unknown native service manager %q"), record.ServiceManager)
 	}
 	return info, err
 }
@@ -132,7 +134,7 @@ func setNativeAutostart(ctx context.Context, dir string, record Record, enabled 
 	switch record.ServiceManager {
 	case "process":
 		if enabled {
-			return fmt.Errorf("process manager does not support autostart; configure a platform service manager")
+			return errors.New(i18n.T("process manager does not support autostart; configure a platform service manager"))
 		}
 		return nil
 	case "schtasks":
@@ -181,7 +183,7 @@ func ChangeAutostart(ctx context.Context, dir string, record Record, enabled boo
 		return nil
 	}
 	if err := ValidateOwnedLayout(record, dir); err != nil {
-		return fmt.Errorf("autostart only modifies lbctl-generated Compose files: %w", err)
+		return fmt.Errorf(i18n.T("autostart only modifies lbctl-generated Compose files: %w"), err)
 	}
 	content, err := os.ReadFile(record.ComposeFile)
 	if err != nil {

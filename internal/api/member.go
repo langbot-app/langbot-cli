@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/langbot-app/langbot-cli/internal/i18n"
 	"github.com/langbot-app/langbot-cli/internal/result"
 )
 
@@ -23,7 +24,7 @@ func (c Client) MemberCapabilities(ctx context.Context, target Target) (Capabili
 	data, _ := value.(map[string]any)
 	operations, ok := data["operations"].([]any)
 	if !ok {
-		return Capabilities{}, result.New("incompatible", "成员操作目录响应无效")
+		return Capabilities{}, result.New("incompatible", i18n.T("Invalid member operation catalog response"))
 	}
 	capabilities := Capabilities{SchemaVersion: 1, Operations: map[string]bool{"operation.invoke": true}}
 	for _, value := range operations {
@@ -46,13 +47,13 @@ func (c Client) MemberContext(ctx context.Context, target Target) (Context, erro
 	identifier, _ := workspace["uuid"].(string)
 	permissions, ok := data["permissions"].([]any)
 	if identifier == "" || !ok {
-		return Context{}, result.New("incompatible", "成员 Workspace 响应无效")
+		return Context{}, result.New("incompatible", i18n.T("Invalid member Workspace response"))
 	}
 	identity := Context{WorkspaceUUID: identifier}
 	for _, value := range permissions {
 		permission, ok := value.(string)
 		if !ok {
-			return Context{}, result.New("incompatible", "成员权限响应无效")
+			return Context{}, result.New("incompatible", i18n.T("Invalid member permission response"))
 		}
 		identity.Permissions = append(identity.Permissions, permission)
 	}
@@ -75,7 +76,7 @@ func (c Client) Login(ctx context.Context, target Target, email, password string
 		response.Body.Close()
 		cancel()
 		if readErr != nil || large {
-			return "", result.New("network", "读取登录响应失败")
+			return "", result.New("network", i18n.T("Failed to read login response"))
 		}
 		var parsed struct {
 			Code json.RawMessage `json:"code"`
@@ -85,10 +86,10 @@ func (c Client) Login(ctx context.Context, target Target, email, password string
 			} `json:"data"`
 		}
 		if json.Unmarshal(data, &parsed) != nil {
-			return "", result.New("incompatible", "登录响应无效")
+			return "", result.New("incompatible", i18n.T("Invalid login response"))
 		}
 		if string(parsed.Code) == `"password_login_disabled"` {
-			failure := result.New("auth", "Cloud 不支持密码登录；请使用 lbctl auth set-token --stdin")
+			failure := result.New("auth", i18n.T("Cloud does not support password login; use lbctl auth set-token --stdin"))
 			failure.Type = "password_login_disabled"
 			return "", failure
 		}
@@ -104,7 +105,7 @@ func (c Client) Login(ctx context.Context, target Target, email, password string
 		if response.StatusCode >= 200 && response.StatusCode < 300 && isSuccessCode(parsed.Code) && parsed.Data.Token != "" {
 			return parsed.Data.Token, nil
 		}
-		return "", result.New("auth", "登录失败；请检查账号、密码或 TOTP / 恢复码")
+		return "", result.New("auth", i18n.T("Login failed; check account, password or TOTP / recovery code"))
 	}
-	return "", result.New("auth", "登录失败")
+	return "", result.New("auth", i18n.T("Login failed"))
 }

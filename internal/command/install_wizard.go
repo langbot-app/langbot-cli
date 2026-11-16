@@ -3,6 +3,7 @@ package command
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/langbot-app/langbot-cli/internal/deploy"
+	"github.com/langbot-app/langbot-cli/internal/i18n"
 	"golang.org/x/term"
 )
 
@@ -21,19 +23,12 @@ func inputTTY(deps Dependencies) bool {
 
 func installSelection(ctx context.Context, deps Dependencies, driver string, port int, yes bool) (string, int, error) {
 	if driver != "" && driver != "native" && driver != "docker" && driver != "docker_compose" {
-		return "", 0, fmt.Errorf("driver must be native or docker")
+		return "", 0, errors.New(i18n.T("driver must be native or docker"))
 	}
 	if port < 1 || port > 65535 {
-		return "", 0, fmt.Errorf("port must be 1-65535")
+		return "", 0, errors.New(i18n.T("port must be 1-65535"))
 	}
 	interactive := inputTTY(deps) && !yes
-	lang, _ := deps.LookupEnv("LANG")
-	text := func(en, zh string) string {
-		if strings.HasPrefix(strings.ToLower(lang), "zh") {
-			return zh
-		}
-		return en
-	}
 	reader := bufio.NewReader(deps.In)
 	if driver == "" {
 		driver = "native"
@@ -49,7 +44,7 @@ func installSelection(ctx context.Context, deps Dependencies, driver string, por
 			version := strings.TrimPrefix(strings.TrimSpace(compose.Stdout), "v")
 			major, _ := strconv.Atoi(strings.Split(version, ".")[0])
 			if composeErr == nil && daemonErr == nil && major >= 2 {
-				fmt.Fprintln(deps.Err, text("1) Native (recommended)\n2) Docker\nSelect [1]:", "1) 原生运行（推荐）\n2) Docker\n请选择 [1]："))
+				fmt.Fprintln(deps.Err, i18n.Human("1) Native (recommended)\n2) Docker\nSelect [1]:"))
 				line, err := reader.ReadString('\n')
 				if err != nil {
 					return "", 0, err
@@ -59,10 +54,10 @@ func installSelection(ctx context.Context, deps Dependencies, driver string, por
 				case "2":
 					driver = "docker"
 				default:
-					return "", 0, fmt.Errorf("select 1 or 2")
+					return "", 0, errors.New(i18n.T("select 1 or 2"))
 				}
 			} else {
-				fmt.Fprintln(deps.Err, text("Docker Compose v2/daemon unavailable; using native deployment.", "Docker Compose v2 或 daemon 不可用，将使用原生部署。"))
+				fmt.Fprintln(deps.Err, i18n.Human("Docker Compose v2/daemon unavailable; using native deployment."))
 			}
 		}
 	}
@@ -72,15 +67,15 @@ func installSelection(ctx context.Context, deps Dependencies, driver string, por
 			next++
 		}
 		if next > 65535 {
-			return "", 0, fmt.Errorf("no free port")
+			return "", 0, errors.New(i18n.T("no free port"))
 		}
-		fmt.Fprintf(deps.Err, text("Port %d is occupied. Use %d? [Y/n]: ", "端口 %d 被占用，改用 %d？[Y/n]："), port, next)
+		fmt.Fprintf(deps.Err, i18n.Human("Port %d is in use; use %d instead? [Y/n]:"), port, next)
 		line, err := reader.ReadString('\n')
 		if err != nil {
 			return "", 0, err
 		}
 		if answer := strings.ToLower(strings.TrimSpace(line)); answer != "" && answer != "y" && answer != "yes" {
-			return "", 0, fmt.Errorf("choose another --port")
+			return "", 0, errors.New(i18n.T("choose another --port"))
 		}
 		port = next
 	}

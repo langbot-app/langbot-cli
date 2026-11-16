@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/langbot-app/langbot-cli/internal/i18n"
 	"github.com/langbot-app/langbot-cli/internal/redact"
 )
 
@@ -22,7 +23,7 @@ func verifyResourceWrite(preflight WritePreflight, data, expected, actual map[st
 	}
 	finished := Result{Data: data, Meta: preflight.Meta()}
 	if !matched {
-		return finished, verificationError("写操作已返回成功，但回读的提交字段不一致；资源可能已修改，请检查后再操作")
+		return finished, verificationError(i18n.T("Write succeeded but submitted fields differ on readback; the resource may have changed, inspect before proceeding"))
 	}
 	return finished, nil
 }

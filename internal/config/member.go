@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 
+	"github.com/langbot-app/langbot-cli/internal/i18n"
 	"github.com/langbot-app/langbot-cli/internal/result"
 )
 
@@ -27,7 +28,7 @@ func (c Connection) WithMember(file File, lookup func(string) (string, bool)) (C
 		return c, result.RequiresMemberSession()
 	}
 	if len(value) > maxSecretBytes || validateSecret(value) != nil {
-		return c, result.New("input", "成员 token 无效")
+		return c, result.New("input", i18n.T("Invalid member token"))
 	}
 	c.APIKey, c.UserToken, c.CredentialSource = "", value, "member_session"
 	return c, nil

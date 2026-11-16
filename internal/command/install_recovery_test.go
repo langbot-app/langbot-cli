@@ -38,7 +38,7 @@ func TestNativePortConflictRecovery(t *testing.T) {
 		if format != "" {
 			commandArgs = append(commandArgs, "--output", format)
 		}
-		code := Execute(context.Background(), commandArgs, Dependencies{Out: &output, Err: io.Discard, LocalDir: filepath.Join(root, "instance")})
+		code := executeChinese(context.Background(), commandArgs, Dependencies{Out: &output, Err: io.Discard, LocalDir: filepath.Join(root, "instance")})
 		if code != 6 || strings.Contains(output.String(), "context show") || !strings.Contains(output.String(), "释放冲突端口") {
 			t.Fatalf("%d: %s", code, output.String())
 		}

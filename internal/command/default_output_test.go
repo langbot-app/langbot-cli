@@ -200,7 +200,7 @@ func executeCommandWithConfigAndTransport(t *testing.T, configPath string, trans
 		input = strings.NewReader("")
 	}
 	var out, diagnostic bytes.Buffer
-	code := command.Execute(context.Background(), args, command.Dependencies{
+	code := command.Execute(context.Background(), append([]string{"--lang", "zh-Hans"}, args...), command.Dependencies{
 		In: input, Out: &out, Err: &diagnostic, Transport: transport,
 		LookupEnv:         func(string) (string, bool) { return "", false },
 		DefaultConfigPath: func() (string, error) { return configPath, nil },

@@ -11,6 +11,7 @@ import (
 	"github.com/langbot-app/langbot-cli/internal/config"
 	"github.com/langbot-app/langbot-cli/internal/deploy"
 	endpointutil "github.com/langbot-app/langbot-cli/internal/endpoint"
+	"github.com/langbot-app/langbot-cli/internal/i18n"
 	"github.com/langbot-app/langbot-cli/internal/result"
 )
 
@@ -274,11 +275,11 @@ func localOperationTimeout(options CheckOptions, lookup func(string) (string, bo
 	}
 	value = strings.TrimSpace(value)
 	if value == "" {
-		return 0, result.New("input", "timeout 不能为空")
+		return 0, result.New("input", i18n.T("timeout must not be empty"))
 	}
 	timeout, err := time.ParseDuration(value)
 	if err != nil || timeout <= 0 {
-		return 0, result.New("input", "timeout 无效")
+		return 0, result.New("input", i18n.T("Invalid timeout"))
 	}
 	return timeout, nil
 }
@@ -416,20 +417,20 @@ func deploymentMatches(record deploy.Record, endpoint string, identity api.Conte
 }
 
 func environmentChecks(environment ActiveEnvironment) []deploy.Check {
-	checks := []deploy.Check{{Name: "connection", Status: "error", Reason: "服务不可达"}}
+	checks := []deploy.Check{{Name: "connection", Status: "error", Reason: i18n.T("Service unreachable")}}
 	if environment.Discovery == "unconfigured" {
-		checks[0] = deploy.Check{Name: "connection", Status: "warn", Reason: "未配置服务目标"}
+		checks[0] = deploy.Check{Name: "connection", Status: "warn", Reason: i18n.T("No service target configured")}
 	} else if environment.Connection.Reachable {
-		checks[0] = deploy.Check{Name: "connection", Status: "ok", Reason: "服务可达", Detail: environment.Connection.Endpoint}
+		checks[0] = deploy.Check{Name: "connection", Status: "ok", Reason: i18n.T("Service reachable"), Detail: environment.Connection.Endpoint}
 	}
 	serviceStatus := "ok"
-	serviceReason := "服务类型已识别"
+	serviceReason := i18n.T("Service type identified")
 	if environment.Type == "unknown" {
-		serviceStatus, serviceReason = "warn", "服务类型未知"
+		serviceStatus, serviceReason = "warn", i18n.T("Service type unknown")
 	}
 	checks = append(checks, deploy.Check{Name: "service_discovery", Status: serviceStatus, Reason: serviceReason, Detail: environment.Service})
-	checks = append(checks, stateCheck("identity", environment.Identity.Status, "API Key 身份已确认", "API Key 身份未知"))
-	checks = append(checks, stateCheck("capabilities", environment.Capabilities.Status, "服务能力已确认", "服务能力未知"))
+	checks = append(checks, stateCheck("identity", environment.Identity.Status, i18n.T("API Key identity confirmed"), i18n.T("API Key identity unknown")))
+	checks = append(checks, stateCheck("capabilities", environment.Capabilities.Status, i18n.T("Service capabilities confirmed"), i18n.T("Service capabilities unknown")))
 	checks = append(checks, deploy.Check{Name: "runtime_binding", Status: runtimeCheckStatus(environment.Runtime), Reason: runtimeCheckReason(environment.Runtime), Detail: environment.Runtime})
 	return checks
 }
@@ -439,7 +440,7 @@ func stateCheck(name, state, okReason, unknownReason string) deploy.Check {
 	case "verified":
 		return deploy.Check{Name: name, Status: "ok", Reason: okReason}
 	case "failed", "mismatch":
-		return deploy.Check{Name: name, Status: "error", Reason: "检查失败"}
+		return deploy.Check{Name: name, Status: "error", Reason: i18n.T("Check failed")}
 	default:
 		return deploy.Check{Name: name, Status: "warn", Reason: unknownReason}
 	}
@@ -455,12 +456,12 @@ func runtimeCheckStatus(info EnvironmentRuntime) string {
 func runtimeCheckReason(info EnvironmentRuntime) string {
 	switch info.Management {
 	case "local_managed":
-		return "本机生命周期绑定已确认"
+		return i18n.T("Local lifecycle binding confirmed")
 	case "cloud_managed":
-		return "生命周期由 LangBot Cloud 管理"
+		return i18n.T("Lifecycle managed by LangBot Cloud")
 	case "unbound":
-		return "未找到匹配的本机生命周期绑定"
+		return i18n.T("No matching local lifecycle binding found")
 	default:
-		return "当前环境不提供本机生命周期管理"
+		return i18n.T("Current environment does not support local lifecycle management")
 	}
 }

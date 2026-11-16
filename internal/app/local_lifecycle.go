@@ -23,6 +23,7 @@ import (
 	"github.com/langbot-app/langbot-cli/internal/config"
 	"github.com/langbot-app/langbot-cli/internal/deploy"
 	endpointutil "github.com/langbot-app/langbot-cli/internal/endpoint"
+	"github.com/langbot-app/langbot-cli/internal/i18n"
 	"github.com/langbot-app/langbot-cli/internal/result"
 	"github.com/langbot-app/langbot-cli/internal/telemetry"
 )
@@ -86,7 +87,7 @@ func (s *Service) Install(ctx context.Context, options InstallOptions) (Result, 
 	defer cancel()
 	dir, err := s.resolveLocalDir(options.Dir)
 	if err != nil {
-		return Result{}, result.New("input", "部署目录无效")
+		return Result{}, result.New("input", i18n.T("Invalid deployment directory"))
 	}
 	version := strings.TrimSpace(options.Version)
 	telemetry.SetStep(ctx, "resolve_version")
@@ -142,16 +143,16 @@ func (s *Service) Install(ctx context.Context, options InstallOptions) (Result, 
 				return err
 			}
 			if err := deploy.ValidateInstallTarget(assets.Dir, true); err != nil {
-				return result.New("precondition", "目标目录不为空，拒绝覆盖")
+				return result.New("precondition", i18n.T("Target directory is not empty; refusing to overwrite"))
 			}
 			occupied, occupiedErr := deploy.InstallProjectOccupied(operationCtx, runner, assets.Project)
 			if occupiedErr != nil || occupied {
-				return result.New("precondition", "受管 Compose project 不可用")
+				return result.New("precondition", i18n.T("Managed Compose project is unavailable"))
 			}
 			telemetry.SetStep(ctx, "pull_image")
 			pull, pullErr := runner.Docker(operationCtx, "pull", assets.Image)
 			if pullErr != nil {
-				return mapDockerCommandError(pull, pullErr, "拉取官方镜像失败")
+				return mapDockerCommandError(pull, pullErr, i18n.T("Failed to pull official images"))
 			}
 			imageDigest := ""
 			if inspected, inspectErr := runner.Docker(operationCtx, "image", "inspect", "--format", "{{index .RepoDigests 0}}", assets.Image); inspectErr == nil {
@@ -159,7 +160,7 @@ func (s *Service) Install(ctx context.Context, options InstallOptions) (Result, 
 			}
 			deploymentID, idErr := deploy.NewDeploymentID()
 			if idErr != nil {
-				return result.New("internal", "生成部署标识失败")
+				return result.New("internal", i18n.T("Failed to generate deployment identity"))
 			}
 			record := assets.Record(deploymentID, imageDigest)
 			record.Name, record.Region, record.PyPIIndex, record.PythonMirror, record.ImageRepository, record.ServiceManager = settings.Name, settings.Region, settings.PyPIIndex, settings.PythonMirror, settings.ImageRepository, settings.ServiceManager
@@ -169,10 +170,10 @@ func (s *Service) Install(ctx context.Context, options InstallOptions) (Result, 
 				return mapStoreWriteError(err)
 			}
 			if err := assets.Write(); err != nil {
-				return result.New("server", "写入部署资产失败")
+				return result.New("server", i18n.T("Failed to write deployment assets"))
 			}
 			if err := locator.Write(assets.Dir); err != nil {
-				return result.New("server", "写入本机部署定位记录失败")
+				return result.New("server", i18n.T("Failed to write local deployment locator"))
 			}
 			telemetry.SetStep(ctx, "compose_up")
 			command, commandErr := runner.Compose(operationCtx, record, "up", "-d")
@@ -186,18 +187,18 @@ func (s *Service) Install(ctx context.Context, options InstallOptions) (Result, 
 					return nil
 				}
 				response = Result{Data: map[string]any{"action": "install", "changed": true, "step": "compose_up_failed", "record": record, "status": status}}
-				return uncertainDockerError(command, commandErr, "安装命令结果无法确认")
+				return uncertainDockerError(command, commandErr, i18n.T("Unable to confirm installation result"))
 			}
 			telemetry.SetStep(ctx, "health_check")
 			if err := s.waitForLocalHTTP(operationCtx, record.Endpoint); err != nil {
 				response = Result{Data: lifecycleFailureData("install", record, "health_check_failed")}
-				return result.New("result_unknown", "容器已启动，但 LangBot HTTP 健康状态未确认")
+				return result.New("result_unknown", i18n.T("Containers started but LangBot HTTP health is unconfirmed"))
 			}
 			diagnostics := deploy.Diagnostics{Dir: assets.Dir, Store: store, Runner: runner, HTTP: s.deps.LocalHTTP}
 			status, statusErr := diagnostics.Status(operationCtx)
 			response = Result{Data: map[string]any{"action": "install", "changed": true, "record": record, "status": status}}
 			if statusErr != nil || status.Status != "running" {
-				return result.New("result_unknown", "安装已执行，但最终运行状态未确认")
+				return result.New("result_unknown", i18n.T("Installation ran but final running state is unconfirmed"))
 			}
 			return nil
 		})
@@ -228,7 +229,7 @@ func (s *Service) Adopt(ctx context.Context, options AdoptOptions) (Result, erro
 	defer cancel()
 	dir, err := s.resolveLocalDir(options.Dir)
 	if err != nil {
-		return Result{}, result.New("input", "部署记录目录无效")
+		return Result{}, result.New("input", i18n.T("Invalid deployment record directory"))
 	}
 	composeFile, err := resolveComposeFile(options.ComposeFile)
 	if err != nil {
@@ -236,7 +237,7 @@ func (s *Service) Adopt(ctx context.Context, options AdoptOptions) (Result, erro
 	}
 	project := strings.TrimSpace(options.ComposeProject)
 	if !validComposeProject(project) {
-		return Result{}, result.New("input", "Compose project 名称无效")
+		return Result{}, result.New("input", i18n.T("Invalid Compose project name"))
 	}
 	endpoint, err := endpointutil.Normalize(strings.TrimSpace(options.Endpoint))
 	if err != nil {
@@ -247,10 +248,10 @@ func (s *Service) Adopt(ctx context.Context, options AdoptOptions) (Result, erro
 		profile = "basic"
 	}
 	if profile != "basic" && profile != "all" {
-		return Result{}, result.New("input", "profile 只支持 basic 或 all")
+		return Result{}, result.New("input", i18n.T("profile only supports basic or all"))
 	}
 	if !loopbackEndpoint(endpoint) {
-		return Result{}, result.New("precondition", "adopt 只允许绑定本机 loopback endpoint")
+		return Result{}, result.New("precondition", i18n.T("adopt only accepts local loopback endpoints"))
 	}
 	target := api.Target{Endpoint: endpoint, Timeout: timeout}
 	if options.APIKeyStdin {
@@ -270,7 +271,7 @@ func (s *Service) Adopt(ctx context.Context, options AdoptOptions) (Result, erro
 		return Result{}, err
 	}
 	if environmentType(info.Edition) == "cloud" {
-		return Result{}, result.New("precondition", "Cloud 服务不能绑定为本机生命周期")
+		return Result{}, result.New("precondition", i18n.T("Cloud services cannot be bound to a local lifecycle"))
 	}
 	record := deploy.Record{Driver: deploy.DriverDockerCompose, CoreVersion: info.Version, Profile: profile, ComposeProject: project, ComposeFile: composeFile, DataDir: filepath.Join(filepath.Dir(composeFile), "data"), Endpoint: endpoint, Port: endpointPort(endpoint)}
 	if target.APIKey != "" {
@@ -282,18 +283,18 @@ func (s *Service) Adopt(ctx context.Context, options AdoptOptions) (Result, erro
 	}
 	services, commandErr := s.localRunner().Compose(operationCtx, record, "config", "--services")
 	if commandErr != nil {
-		return Result{}, result.New("precondition", "无法验证 Compose 项目")
+		return Result{}, result.New("precondition", i18n.T("Unable to verify Compose project"))
 	}
 	if missing := missingRequiredServices(services.Stdout, profile); len(missing) != 0 {
-		return Result{Data: map[string]any{"missing_services": missing}}, result.New("precondition", "Compose 项目缺少 LangBot 必需服务")
+		return Result{Data: map[string]any{"missing_services": missing}}, result.New("precondition", i18n.T("Compose project is missing required LangBot services"))
 	}
 	published, commandErr := s.localRunner().Compose(operationCtx, record, "port", "langbot", "5300")
 	if commandErr != nil || !publishedPortMatches(published.Stdout, record.Port) {
-		return Result{}, result.New("precondition", "Compose 项目的 langbot 服务未发布到 endpoint 端口")
+		return Result{}, result.New("precondition", i18n.T("Compose langbot service is not published on the endpoint port"))
 	}
 	composeData, err := os.ReadFile(composeFile)
 	if err != nil {
-		return Result{}, result.New("precondition", "无法读取 Compose 文件")
+		return Result{}, result.New("precondition", i18n.T("Unable to read Compose file"))
 	}
 	sum := sha256.Sum256(composeData)
 	record.Asset = deploy.AssetInfo{Name: filepath.Base(composeFile), Digest: "sha256:" + hex.EncodeToString(sum[:])}
@@ -324,19 +325,19 @@ func (s *Service) Adopt(ctx context.Context, options AdoptOptions) (Result, erro
 					record = existing
 					return nil
 				}
-				return result.New("precondition", "已存在其他 lbctl 受管部署")
+				return result.New("precondition", i18n.T("Another lbctl-managed deployment already exists"))
 			}
 			if !errors.Is(readErr, deploy.ErrNotInstalled) && !errors.Is(readErr, deploy.ErrNotManaged) {
 				return mapStoreWriteError(readErr)
 			}
 			if errors.Is(readErr, deploy.ErrNotManaged) {
 				if targetErr := deploy.ValidateInstallTarget(dir, true); targetErr != nil {
-					return result.New("precondition", "部署记录目录不为空，拒绝覆盖")
+					return result.New("precondition", i18n.T("Deployment record directory not empty; refusing to overwrite"))
 				}
 			}
 			deploymentID, idErr := deploy.NewDeploymentID()
 			if idErr != nil {
-				return result.New("internal", "生成部署标识失败")
+				return result.New("internal", i18n.T("Failed to generate deployment identity"))
 			}
 			record.DeploymentID = deploymentID
 			if err := store.Write(operationCtx, record); err != nil {
@@ -352,7 +353,7 @@ func (s *Service) Adopt(ctx context.Context, options AdoptOptions) (Result, erro
 			return err
 		}
 		if err := locator.Write(dir); err != nil {
-			return result.New("server", "写入本机部署定位记录失败")
+			return result.New("server", i18n.T("Failed to write local deployment locator"))
 		}
 		return nil
 	})
@@ -396,7 +397,7 @@ func (s *Service) LocalLogs(ctx context.Context, options LocalLogsOptions) (Resu
 	args := logArguments(options, false)
 	command, commandErr := diagnostics.Runner.Compose(operationCtx, record, args...)
 	if commandErr != nil {
-		return Result{}, mapDockerCommandError(command, commandErr, "读取日志失败")
+		return Result{}, mapDockerCommandError(command, commandErr, i18n.T("Failed to read logs"))
 	}
 	lines := splitLogLines(command.Stdout, readLogSecrets(record))
 	return Result{Data: map[string]any{"service": selectedLogService(options.Service), "lines": lines, "count": len(lines)}}, nil
@@ -422,7 +423,7 @@ func (s *Service) FollowLocalLogs(ctx context.Context, options LocalLogsOptions)
 	defer cancel()
 	stream, ok := diagnostics.Runner.(deploy.StreamRunner)
 	if !ok && record.Driver != deploy.DriverNative {
-		return result.New("incompatible", "当前 Docker runner 不支持日志跟踪")
+		return result.New("incompatible", i18n.T("Current Docker runner does not support log following"))
 	}
 	out := s.deps.LocalLogOut
 	if out == nil {
@@ -448,12 +449,12 @@ func (s *Service) FollowLocalLogs(ctx context.Context, options LocalLogsOptions)
 	_ = safeErr.Flush()
 	if streamErr != nil {
 		if errors.Is(operationCtx.Err(), context.Canceled) {
-			return result.New("network", "日志跟踪已取消")
+			return result.New("network", i18n.T("Log following cancelled"))
 		}
 		if errors.Is(operationCtx.Err(), context.DeadlineExceeded) {
-			return result.New("network", "日志跟踪超时")
+			return result.New("network", i18n.T("Log following timed out"))
 		}
-		return result.New("server", "日志跟踪失败")
+		return result.New("server", i18n.T("Log following failed"))
 	}
 	switch writer := out.(type) {
 	case *jsonLineWriter:
@@ -485,18 +486,18 @@ func (s *Service) runLifecycle(ctx context.Context, action string, options Lifec
 		}
 		current, readErr := diagnostics.Store.Read()
 		if readErr != nil || current.DeploymentID != record.DeploymentID {
-			return result.New("precondition", "本机部署绑定已变更")
+			return result.New("precondition", i18n.T("Local deployment binding changed"))
 		}
 		before, beforeErr := diagnostics.Status(operationCtx)
 		if beforeErr != nil || before.Status == "unknown" {
-			return result.New("precondition", "无法确认本机部署状态，请先运行 doctor")
+			return result.New("precondition", i18n.T("Unable to confirm local deployment status; run doctor first"))
 		}
 		if (action == "start" && before.Status == "running") || (action == "stop" && before.Status == "stopped") {
 			response = Result{Data: map[string]any{"action": action, "changed": false, "status": before}}
 			return nil
 		}
 		if action == "restart" && before.Status == "stopped" {
-			return result.New("precondition", "部署未运行，请使用 start")
+			return result.New("precondition", i18n.T("Deployment is not running; use start"))
 		}
 		args := map[string][]string{"start": {"up", "-d"}, "stop": {"stop"}, "restart": {"restart"}}[action]
 		telemetry.SetStep(ctx, "compose_"+action)
@@ -513,18 +514,18 @@ func (s *Service) runLifecycle(ctx context.Context, action string, options Lifec
 			desired = after.Status == "stopped"
 		}
 		if action == "restart" && commandErr != nil {
-			return uncertainDockerError(command, commandErr, "重启命令结果无法确认")
+			return uncertainDockerError(command, commandErr, i18n.T("Unable to confirm restart result"))
 		}
 		if desired {
 			return nil
 		}
 		if commandErr != nil {
-			return uncertainDockerError(command, commandErr, "命令可能已执行，但结果无法确认")
+			return uncertainDockerError(command, commandErr, i18n.T("Command may have executed but its result is unknown"))
 		}
 		if statusErr != nil {
-			return result.New("result_unknown", "命令已执行，但状态回读失败")
+			return result.New("result_unknown", i18n.T("Command executed but status readback failed"))
 		}
-		return result.New("result_unknown", "命令已执行，但未达到期望状态")
+		return result.New("result_unknown", i18n.T("Command executed but the expected state was not reached"))
 	})
 	return response, normalizeLocalMutationError(err)
 }
@@ -562,16 +563,16 @@ func (s *Service) lifecycleTarget(ctx context.Context, options CheckOptions) (de
 		if discoveryErr != nil {
 			return deploy.Record{}, deploy.Diagnostics{}, discoveryErr
 		}
-		return deploy.Record{}, deploy.Diagnostics{}, result.New("precondition", "当前 context 身份或 Workspace 绑定未通过")
+		return deploy.Record{}, deploy.Diagnostics{}, result.New("precondition", i18n.T("Current context identity or Workspace binding is not verified"))
 	}
 	if !resolved.LocalMatch || resolved.Diagnostics == nil {
-		return deploy.Record{}, deploy.Diagnostics{}, result.New("precondition", "当前 Active Environment 未绑定本机受管部署")
+		return deploy.Record{}, deploy.Diagnostics{}, result.New("precondition", i18n.T("Active Environment is not bound to a managed local deployment"))
 	}
 	if resolved.Environment.Type == "cloud" || !sameLocalEndpoint(resolved.Record.Endpoint, resolved.Connection.Endpoint) {
-		return deploy.Record{}, deploy.Diagnostics{}, result.New("precondition", "当前 Active Environment 与本机部署 endpoint 不一致")
+		return deploy.Record{}, deploy.Diagnostics{}, result.New("precondition", i18n.T("Active Environment does not match the local deployment endpoint"))
 	}
 	if resolved.Record.Driver != deploy.DriverDockerCompose && resolved.Record.Driver != deploy.DriverNative {
-		return deploy.Record{}, deploy.Diagnostics{}, result.New("incompatible", "当前本机部署不支持 Docker Compose 生命周期操作")
+		return deploy.Record{}, deploy.Diagnostics{}, result.New("incompatible", i18n.T("Current local deployment does not support Docker Compose lifecycle operations"))
 	}
 	telemetry.SetEnvironment(ctx, resolved.Record.Driver, resolved.Record.ServiceManager, resolved.Record.Region, resolved.Record.CoreVersion)
 	telemetry.SetStep(ctx, "preflight")
@@ -624,7 +625,7 @@ func operationTimeout(value string, set bool, fallback time.Duration) (time.Dura
 	}
 	timeout, err := time.ParseDuration(strings.TrimSpace(value))
 	if err != nil || timeout <= 0 {
-		return 0, result.New("input", "timeout 无效")
+		return 0, result.New("input", i18n.T("Invalid timeout"))
 	}
 	return timeout, nil
 }
@@ -663,7 +664,7 @@ func mapDockerCommandError(command deploy.CommandResult, err error, message stri
 	}
 	lower := strings.ToLower(command.Stderr)
 	if strings.Contains(lower, "permission denied") || strings.Contains(lower, "access denied") {
-		return result.New("permission", "当前用户无权访问 Docker daemon")
+		return result.New("permission", i18n.T("Current user cannot access Docker daemon"))
 	}
 	if strings.Contains(lower, "no such host") || strings.Contains(lower, "timeout") || strings.Contains(lower, "connection") {
 		return result.New("network", message)
@@ -677,9 +678,9 @@ func uncertainDockerError(command deploy.CommandResult, err error, message strin
 
 func mapStoreWriteError(err error) error {
 	if errors.Is(err, deploy.ErrNotManaged) || errors.Is(err, deploy.ErrCorrupt) {
-		return result.New("precondition", "本机部署记录目录不可用")
+		return result.New("precondition", i18n.T("Local deployment record directory unavailable"))
 	}
-	return result.New("server", "写入本机部署记录失败")
+	return result.New("server", i18n.T("Failed to write local deployment record"))
 }
 
 func normalizeLocalMutationError(err error) error {
@@ -696,11 +697,11 @@ func normalizeLocalMutationError(err error) error {
 func resolveComposeFile(value string) (string, error) {
 	path, err := filepath.Abs(filepath.Clean(strings.TrimSpace(value)))
 	if err != nil || strings.TrimSpace(value) == "" {
-		return "", result.New("input", "Compose 文件路径无效")
+		return "", result.New("input", i18n.T("Invalid Compose file path"))
 	}
 	info, err := os.Lstat(path)
 	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
-		return "", result.New("precondition", "Compose 文件不存在或不可用")
+		return "", result.New("precondition", i18n.T("Compose file does not exist or is unavailable"))
 	}
 	return path, nil
 }
@@ -772,14 +773,14 @@ func sameDeployment(left, right deploy.Record) bool {
 func validateLogsOptions(options LocalLogsOptions, record deploy.Record) error {
 	if record.Driver == deploy.DriverNative {
 		if options.Service != "" && options.Service != "langbot" {
-			return result.New("input", "native logs only support --service langbot")
+			return result.New("input", i18n.T("native logs only support --service langbot"))
 		}
 		if options.Since != "" {
-			return result.New("input", "native logs do not support --since; use --tail")
+			return result.New("input", i18n.T("native logs do not support --since; use --tail"))
 		}
 	}
 	if options.Tail < 1 || options.Tail > 5000 {
-		return result.New("input", "tail 必须在 1-5000 之间")
+		return result.New("input", i18n.T("tail must be between 1 and 5000"))
 	}
 	service := strings.TrimSpace(options.Service)
 	if service == "" {
@@ -790,7 +791,7 @@ func validateLogsOptions(options LocalLogsOptions, record deploy.Record) error {
 		allowed["langbot_box"] = true
 	}
 	if !allowed[service] {
-		return result.New("input", "service 不属于当前部署")
+		return result.New("input", i18n.T("service does not belong to the current deployment"))
 	}
 	return nil
 }

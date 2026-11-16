@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+
+	"github.com/langbot-app/langbot-cli/internal/i18n"
 )
 
 func renderDefault(w io.Writer, value any, command string) error {
@@ -22,7 +24,7 @@ func renderDefault(w io.Writer, value any, command string) error {
 	}
 	if meta, ok := envelope["meta"].(map[string]any); ok {
 		if path, ok := meta["config_file"].(string); ok && path != "" {
-			if _, err := fmt.Fprintln(w, "配置文件："+displayCell(path)); err != nil {
+			if _, err := fmt.Fprintln(w, i18n.T("Configuration file: ")+displayCell(path)); err != nil {
 				return err
 			}
 		}
@@ -57,7 +59,7 @@ func renderDefault(w io.Writer, value any, command string) error {
 		if envelope["ok"] == false {
 			return nil
 		}
-		_, err := fmt.Fprintln(w, "无数据")
+		_, err := fmt.Fprintln(w, i18n.T("No data"))
 		return err
 	}
 	if object, ok := data.(map[string]any); ok {
@@ -83,14 +85,14 @@ func renderDefault(w io.Writer, value any, command string) error {
 func renderDefaultError(w io.Writer, value any) error {
 	detail, ok := value.(map[string]any)
 	if !ok {
-		_, err := fmt.Fprintln(w, "错误：操作失败")
+		_, err := fmt.Fprintln(w, i18n.T("Error: operation failed"))
 		return err
 	}
 	message := displayCell(detail["message"])
 	if message == "-" {
-		message = "操作失败"
+		message = i18n.T("Operation failed")
 	}
-	if _, err := fmt.Fprintln(w, "错误："+message); err != nil {
+	if _, err := fmt.Fprintln(w, i18n.T("Error: ")+message); err != nil {
 		return err
 	}
 	for _, field := range []string{"http_status", "server_code", "request_id"} {
@@ -101,18 +103,18 @@ func renderDefaultError(w io.Writer, value any) error {
 		if field == "http_status" && strings.Contains(message, "HTTP "+formatCell(value)) {
 			continue
 		}
-		if _, err := fmt.Fprintln(w, fieldLabel(field)+"："+displayCell(value)); err != nil {
+		if _, err := fmt.Fprintln(w, fieldLabel(field)+i18n.Punct("：")+displayCell(value)); err != nil {
 			return err
 		}
 	}
-	if message == "服务端未明确支持该操作" || message == "服务端明确不支持该操作" {
-		_, err := fmt.Fprintln(w, "建议：对同一目标运行 lbctl capabilities，确认 Core 是否声明了所需能力。")
+	if message == i18n.T("Server has not explicitly confirmed support for this operation") || message == i18n.T("Server explicitly does not support this operation") {
+		_, err := fmt.Fprintln(w, i18n.T("Suggestion: run lbctl capabilities on the same target to check whether Core declares the required capability."))
 		return err
 	}
 	if guidance, ok := detail["guidance"].(map[string]any); ok {
 		if steps, ok := guidance["steps"].([]any); ok {
 			for i, step := range steps {
-				if _, err := fmt.Fprintf(w, "建议 %d：%s\n", i+1, formatCell(step)); err != nil {
+				if _, err := fmt.Fprintf(w, i18n.T("Suggestion %d: %s\n"), i+1, formatCell(step)); err != nil {
 					return err
 				}
 			}
@@ -120,7 +122,7 @@ func renderDefaultError(w io.Writer, value any) error {
 		if examples, ok := guidance["examples"].(map[string]any); ok {
 			for _, shell := range []string{"powershell", "bash"} {
 				if example, exists := examples[shell]; exists {
-					if _, err := fmt.Fprintf(w, "%s：%s\n", shell, formatCell(example)); err != nil {
+					if _, err := fmt.Fprintf(w, i18n.Punct("%s：%s\n"), shell, formatCell(example)); err != nil {
 						return err
 					}
 				}
@@ -147,9 +149,9 @@ func renderTarget(w io.Writer, value any) error {
 		target += " (" + endpoint + ")"
 	}
 	if meta["temporary"] == true {
-		target += "（临时）"
+		target += i18n.T(" (temporary)")
 	}
-	_, err := fmt.Fprintln(w, "目标："+target)
+	_, err := fmt.Fprintln(w, i18n.T("Target: ")+target)
 	return err
 }
 
@@ -160,13 +162,13 @@ func renderDefaultData(w io.Writer, value any, command string) error {
 	}
 	switch command {
 	case "context.add", "context.update", "context.use":
-		verb := map[string]string{"context.add": "已添加环境", "context.update": "已更新环境", "context.use": "已切换到环境"}[command]
-		if _, err := fmt.Fprintf(w, "%s %s（%s）\n", verb, displayCell(data["name"]), displayCell(data["endpoint"])); err != nil {
+		verb := map[string]string{"context.add": i18n.T("Environment added"), "context.update": i18n.T("Environment updated"), "context.use": i18n.T("Switched to environment")}[command]
+		if _, err := fmt.Fprintf(w, i18n.Punct("%s %s（%s）\n"), verb, displayCell(data["name"]), displayCell(data["endpoint"])); err != nil {
 			return err
 		}
 		return renderFields(w, data, []string{"credential_source", "expected_workspace_uuid"})
 	case "context.remove":
-		_, err := fmt.Fprintln(w, "已移除环境 "+displayCell(data["removed"]))
+		_, err := fmt.Fprintln(w, i18n.T("Environment removed ")+displayCell(data["removed"]))
 		return err
 	case "context.list":
 		bound := map[string]bool{}
@@ -215,7 +217,7 @@ func renderDefaultData(w io.Writer, value any, command string) error {
 		if err := renderActiveEnvironment(w, data); err != nil {
 			return err
 		}
-		_, err := fmt.Fprintln(w, "完整信息：在当前命令后加 -o json 或 -o yaml")
+		_, err := fmt.Fprintln(w, i18n.T("Full details: append -o json or -o yaml to this command"))
 		return err
 	case "context.check":
 		if checks, ok := data["checks"].([]any); ok {
@@ -225,19 +227,19 @@ func renderDefaultData(w io.Writer, value any, command string) error {
 			return err
 		}
 		if identity, ok := data["identity"].(map[string]any); ok {
-			if _, err := fmt.Fprintln(w, "身份:"); err != nil {
+			if _, err := fmt.Fprintln(w, i18n.T("Identity:")); err != nil {
 				return err
 			}
 			if err := renderFields(w, identity, []string{"instance_uuid", "workspace_uuid", "api_key_id"}); err != nil {
 				return err
 			}
 		} else if identity, exists := data["identity"]; exists {
-			if err := renderValue(w, identity, "身份"); err != nil {
+			if err := renderValue(w, identity, i18n.T("Identity")); err != nil {
 				return err
 			}
 		}
 		if item, exists := data["error"]; exists {
-			return renderValue(w, item, "错误")
+			return renderValue(w, item, i18n.T("Error "))
 		}
 		return nil
 	case "doctor":
@@ -250,7 +252,7 @@ func renderDefaultData(w io.Writer, value any, command string) error {
 			if err := renderDoctorChecks(w, checks); err != nil {
 				return err
 			}
-			_, err := fmt.Fprintln(w, "完整信息：在当前命令后加 -o json 或 -o yaml")
+			_, err := fmt.Fprintln(w, i18n.T("Full details: append -o json or -o yaml to this command"))
 			return err
 		}
 		return renderValue(w, data, "")
@@ -270,6 +272,11 @@ func renderDefaultData(w io.Writer, value any, command string) error {
 	case "install", "adopt", "start", "stop", "restart", "upgrade", "uninstall":
 		return renderLocalAction(w, data)
 	case "autostart.status", "autostart.enable", "autostart.disable":
+		if data["mechanism"] == "HKCU Run" && data["autostart"] == false {
+			if _, err := fmt.Fprintln(w, i18n.T("Windows temporarily removes the startup entry while an instance is stopped. If startup is enabled in the deployment settings, starting the instance restores it.")); err != nil {
+				return err
+			}
+		}
 		return renderFields(w, data, []string{"autostart", "supported", "mechanism", "location", "instance_dir"})
 	case "whoami":
 		return renderValue(w, data, "")
@@ -325,20 +332,20 @@ func renderDefaultData(w io.Writer, value any, command string) error {
 func renderIngestBatch(w io.Writer, data map[string]any) error {
 	summary, _ := data["summary"].(map[string]any)
 	if data["dry_run"] == true {
-		outcome := "批量预检通过"
+		outcome := i18n.T("Batch preflight passed")
 		if data["outcome_error"] == true {
-			outcome = "批量预检未完成"
+			outcome = i18n.T("Batch preflight incomplete")
 		}
-		if _, err := fmt.Fprintf(w, "%s，共 %s 个文件；未上传，未执行服务端业务校验。\n", outcome, formatCell(summary["total"])); err != nil {
+		if _, err := fmt.Fprintf(w, i18n.T("%s, %s files; not uploaded, server business validation not performed.\n"), outcome, formatCell(summary["total"])); err != nil {
 			return err
 		}
 	} else {
-		if _, err := fmt.Fprintf(w, "共 %s 个文件：已完成 %s，已提交 %s，失败 %s，结果未知 %s，等待未完成 %s，未开始 %s。\n",
+		if _, err := fmt.Fprintf(w, i18n.T("%s files: %s completed, %s submitted, %s failed, %s unknown, %s pending, %s not started.\n"),
 			formatCell(summary["total"]), formatCell(summary["completed"]), formatCell(summary["submitted"]), formatCell(summary["failed"]), formatCell(summary["unknown"]), formatCell(summary["pending"]), formatCell(summary["not_started"])); err != nil {
 			return err
 		}
 	}
-	states := map[string]string{"planned": "待上传", "submitted": "已提交", "completed": "已完成", "failed": "失败", "unknown": "结果未知", "pending": "等待未完成", "not_started": "未开始"}
+	states := map[string]string{"planned": i18n.T("Ready to upload"), "submitted": i18n.T("Submitted"), "completed": i18n.T("Completed"), "failed": i18n.T("Failed"), "unknown": i18n.T("Result unknown"), "pending": i18n.T("Pending"), "not_started": i18n.T("Not started")}
 	items, _ := data["files"].([]any)
 	for _, item := range items {
 		row, _ := item.(map[string]any)
@@ -346,7 +353,7 @@ func renderIngestBatch(w io.Writer, data map[string]any) error {
 			return err
 		}
 		if id, ok := row["task_id"]; ok {
-			if _, err := fmt.Fprintf(w, "  任务 %s", displayCell(id)); err != nil {
+			if _, err := fmt.Fprintf(w, i18n.T("  Task %s"), displayCell(id)); err != nil {
 				return err
 			}
 		}
@@ -388,51 +395,51 @@ func renderLocalAction(w io.Writer, data map[string]any) error {
 				}
 			}
 		} else if data["changed"] != true {
-			line = "安装未执行：前置检查未通过"
+			line = i18n.T("Installation not performed: preflight failed")
 		} else if state != "running" || data["step"] != nil {
-			line = "安装已执行，运行状态待确认：" + endpoint
+			line = i18n.T("Installation ran; running state is unconfirmed: ") + endpoint
 		} else {
-			line = "已安装 LangBot " + version + " → " + endpoint
+			line = i18n.T("Installed LangBot ") + version + " → " + endpoint
 		}
 	case "adopt":
-		line = "已接管本机部署：" + endpoint
+		line = i18n.T("Adopted local deployment: ") + endpoint
 		if data["changed"] == false {
-			line = "本机部署已接管：" + endpoint
+			line = i18n.T("Local deployment adopted: ") + endpoint
 		}
 	case "start", "stop", "restart":
-		line = map[string]string{"start": "已启动本机部署", "stop": "已停止本机部署", "restart": "已重启本机部署"}[action]
+		line = map[string]string{"start": i18n.T("Local deployment started"), "stop": i18n.T("Local deployment stopped"), "restart": i18n.T("Local deployment restarted")}[action]
 		if data["changed"] == false {
-			line = map[string]string{"start": "本机部署已在运行", "stop": "本机部署已停止", "restart": "本机部署已重启"}[action]
+			line = map[string]string{"start": i18n.T("Local deployment already running"), "stop": i18n.T("Local deployment already stopped"), "restart": i18n.T("Local deployment already restarted")}[action]
 		} else if state != map[string]string{"start": "running", "stop": "stopped", "restart": "running"}[action] {
-			line = "命令已执行，本机部署状态待确认"
+			line = i18n.T("Command executed; local deployment status is unconfirmed")
 		}
 	case "upgrade":
 		from, _ := data["source_version"].(string)
 		to, _ := data["target_version"].(string)
 		if data["dry_run"] == true {
-			line = "升级计划：LangBot " + from + " → " + to
+			line = i18n.T("Upgrade plan: LangBot ") + from + " → " + to
 		} else if data["completed"] == true {
-			line = "已升级 LangBot " + from + " → " + to
+			line = i18n.T("Upgraded LangBot ") + from + " → " + to
 		} else {
-			line = "升级未完成；请运行 lbctl status 和 lbctl doctor 检查恢复现场"
+			line = i18n.T("Upgrade incomplete; run lbctl status and lbctl doctor to inspect recovery state")
 		}
 	case "uninstall":
 		if data["project_removed"] == true {
-			line = "已卸载本机受管部署；数据和部署记录已保留"
+			line = i18n.T("Uninstalled managed local deployment; data and deployment records preserved")
 			if data["purge_data"] == true {
-				line = "已卸载本机受管部署并清理数据；备份和部署记录已保留"
+				line = i18n.T("Uninstalled managed local deployment and removed data; backups and deployment records preserved")
 			}
 		} else {
-			line = "卸载未完成；请运行 lbctl status 和 lbctl doctor 检查"
+			line = i18n.T("Uninstall incomplete; run lbctl status and lbctl doctor")
 		}
 	}
 	expected := map[string]string{"install": "running", "start": "running", "stop": "stopped", "restart": "running"}[action]
 	if state != "" && state != expected && data["changed"] != false {
-		label := map[string]string{"running": "运行中", "stopped": "已停止", "starting": "启动中", "degraded": "部分服务异常", "unknown": "状态未知"}[state]
+		label := map[string]string{"running": i18n.T("Running"), "stopped": i18n.T("Stopped"), "starting": i18n.T("Starting"), "degraded": i18n.T("Some services unhealthy"), "unknown": i18n.T("Status unknown")}[state]
 		if label == "" {
 			label = state
 		}
-		line += "（" + label + "）"
+		line += i18n.Punct("（") + label + i18n.Punct("）")
 	}
 	if line != "" {
 		if _, err := fmt.Fprintln(w, line); err != nil {
@@ -450,21 +457,34 @@ func renderLocalAction(w io.Writer, data map[string]any) error {
 		}
 	}
 	if action == "install" && data["dry_run"] != true && data["changed"] == true && state == "running" && data["step"] == nil {
+		if _, err := fmt.Fprintln(w, "+----------------------------------------+"); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintln(w, "URL: "+displayCell(endpoint)); err != nil {
+			return err
+		}
+		for _, field := range []string{"dir", "log_path", "runtime_log_path"} {
+			if value, ok := data[field]; ok && value != "" {
+				if _, err := fmt.Fprintf(w, "%s: %s\n", fieldLabel(field), displayCell(value)); err != nil {
+					return err
+				}
+			}
+		}
 		if enabled, ok := data["autostart"].(bool); ok {
-			message := "自启未开启 / Autostart disabled"
+			message := i18n.T("Autostart disabled")
 			if enabled {
-				message = "已开启开机/登录自启 / Autostart enabled"
+				message = i18n.T("Autostart enabled")
 			}
 			if _, err := fmt.Fprintf(w, "%s (%v)\n", message, data["autostart_mechanism"]); err != nil {
 				return err
 			}
 			if enabled {
-				if _, err := fmt.Fprintf(w, "关闭 / Disable: %v\n", data["autostart_disable_command"]); err != nil {
+				if _, err := fmt.Fprintf(w, i18n.T("Disable: %v\n"), data["autostart_disable_command"]); err != nil {
 					return err
 				}
 			}
 		}
-		_, err := fmt.Fprintln(w, "下一步：lbctl status · lbctl logs · lbctl upgrade --yes")
+		_, err := fmt.Fprintln(w, i18n.T("Next steps: lbctl status · lbctl logs · lbctl upgrade --yes")+"\n+----------------------------------------+")
 		return err
 	}
 	if data["dry_run"] == true || (action == "install" && data["changed"] != true) {
@@ -474,7 +494,7 @@ func renderLocalAction(w io.Writer, data map[string]any) error {
 			}
 		}
 		if dir, ok := data["dir"].(string); ok && dir != "" {
-			if _, err := fmt.Fprintln(w, "部署目录："+dir); err != nil {
+			if _, err := fmt.Fprintln(w, i18n.T("Deployment directory: ")+dir); err != nil {
 				return err
 			}
 		}
@@ -484,13 +504,13 @@ func renderLocalAction(w io.Writer, data map[string]any) error {
 				check, _ := item.(map[string]any)
 				if check["status"] == "error" {
 					failed++
-					if _, err := fmt.Fprintf(w, "未通过：%s（%s）\n", displayCell(check["name"]), displayCell(check["reason"])); err != nil {
+					if _, err := fmt.Fprintf(w, i18n.T("Failed: %s (%s)\n"), displayCell(check["name"]), displayCell(check["reason"])); err != nil {
 						return err
 					}
 				}
 			}
 			if failed == 0 {
-				_, err := fmt.Fprintf(w, "预检：%d 项通过\n", len(checks))
+				_, err := fmt.Fprintf(w, i18n.T("Preflight: %d checks passed\n"), len(checks))
 				return err
 			}
 			if data["step"] == "check_ports" {
@@ -512,25 +532,25 @@ func renderActiveEnvironment(w io.Writer, environment map[string]any) error {
 	}
 	name := formatCell(environment["name"])
 	if environment["discovery"] == "unconfigured" {
-		name = "未配置"
+		name = i18n.T("Not configured")
 	}
-	if err := line("当前环境", name+"（"+environmentTypeLabel(formatCell(environment["type"]))+"）"); err != nil {
+	if err := line(i18n.T("Current environment"), name+i18n.Punct("（")+environmentTypeLabel(formatCell(environment["type"]))+i18n.Punct("）")); err != nil {
 		return err
 	}
 	connection, _ := environment["connection"].(map[string]any)
-	if err := line("地址", connection["endpoint"]); err != nil {
+	if err := line(i18n.T("URL"), connection["endpoint"]); err != nil {
 		return err
 	}
-	connectionLabel := "不可达"
+	connectionLabel := i18n.T("Unreachable")
 	if formatCell(environment["discovery"]) == "unconfigured" {
-		connectionLabel = "未配置"
+		connectionLabel = i18n.T("Not configured")
 	} else if connection["reachable"] == true {
-		connectionLabel = "已连接"
+		connectionLabel = i18n.T("Connected")
 	}
-	if err := line("连接", connectionLabel); err != nil {
+	if err := line(i18n.T("Connection"), connectionLabel); err != nil {
 		return err
 	}
-	if err := line("认证", discoveryStateLabel(formatCell(connection["authentication"]))); err != nil {
+	if err := line(i18n.T("Authentication"), discoveryStateLabel(formatCell(connection["authentication"]))); err != nil {
 		return err
 	}
 	service, _ := environment["service"].(map[string]any)
@@ -562,41 +582,41 @@ func renderActiveEnvironment(w io.Writer, environment map[string]any) error {
 	}
 	identity, _ := environment["identity"].(map[string]any)
 	if state := formatCell(identity["status"]); state == "mismatch" || state == "failed" {
-		if err := line("Workspace 身份", discoveryStateLabel(state)); err != nil {
+		if err := line(i18n.T("Workspace identity"), discoveryStateLabel(state)); err != nil {
 			return err
 		}
-		if err := line("实际 Workspace", identity["workspace_uuid"]); err != nil {
+		if err := line(i18n.T("Actual Workspace"), identity["workspace_uuid"]); err != nil {
 			return err
 		}
 	}
 	capabilities, _ := environment["capabilities"].(map[string]any)
 	capabilityState := discoveryStateLabel(formatCell(capabilities["status"]))
 	if capabilities["status"] == "verified" {
-		capabilityState = "已获取（支持情况见 lbctl capabilities）"
+		capabilityState = i18n.T("Retrieved (see lbctl capabilities for support)")
 	}
-	if err := line("能力清单", capabilityState); err != nil {
+	if err := line(i18n.T("Capability manifest"), capabilityState); err != nil {
 		return err
 	}
 	runtimeInfo, _ := environment["runtime"].(map[string]any)
-	if err := line("部署", lifecycleLabel(runtimeInfo)); err != nil {
+	if err := line(i18n.T("Deployment"), lifecycleLabel(runtimeInfo)); err != nil {
 		return err
 	}
 	if details, ok := runtimeInfo["details"].(map[string]any); ok {
 		if upgrade, ok := details["upgrade"].(map[string]any); ok && upgrade["phase"] != "completed" {
-			label := "已中断（" + formatCell(upgrade["phase"]) + "）"
+			label := i18n.T("Interrupted (") + formatCell(upgrade["phase"]) + i18n.Punct("）")
 			if upgrade["phase"] == "recovery_required" {
-				label = "需要恢复"
+				label = i18n.T("Recovery required")
 				if step := formatCell(upgrade["failure_step"]); step != "" && step != "-" {
 					label += " (" + step + ")"
 				}
 			}
-			if err := line("升级", label); err != nil {
+			if err := line(i18n.T("Upgrade"), label); err != nil {
 				return err
 			}
 		}
 	}
 	if binding := formatCell(runtimeInfo["binding"]); runtimeInfo["management"] != "cloud_managed" && binding != "" && binding != "none" && binding != "verified" && binding != "missing" {
-		if err := line("部署绑定", discoveryStateLabel(binding)); err != nil {
+		if err := line(i18n.T("Deployment binding"), discoveryStateLabel(binding)); err != nil {
 			return err
 		}
 	}
@@ -606,61 +626,61 @@ func renderActiveEnvironment(w io.Writer, environment map[string]any) error {
 func environmentTypeLabel(value string) string {
 	switch value {
 	case "cloud":
-		return "LangBot 云端"
+		return i18n.T("LangBot Cloud")
 	case "self_hosted":
-		return "自部署"
+		return i18n.T("Self-hosted")
 	default:
-		return "类型未知"
+		return i18n.T("Type unknown")
 	}
 }
 
 func discoveryStateLabel(value string) string {
 	switch value {
 	case "verified", "complete":
-		return "已验证"
+		return i18n.T("Verified")
 	case "partial":
-		return "部分完成"
+		return i18n.T("Partially completed")
 	case "not_checked":
-		return "未检查"
+		return i18n.T("Not checked")
 	case "failed":
-		return "失败"
+		return i18n.T("Failed")
 	case "mismatch":
-		return "不一致"
+		return i18n.T("Mismatch")
 	case "corrupt":
-		return "已损坏"
+		return i18n.T("Corrupt")
 	case "unreadable":
-		return "无法读取"
+		return i18n.T("Unable to read")
 	case "unavailable":
-		return "不可用"
+		return i18n.T("Unavailable")
 	default:
-		return "未知"
+		return i18n.T("Unknown")
 	}
 }
 
 func lifecycleLabel(info map[string]any) string {
 	switch formatCell(info["management"]) {
 	case "cloud_managed":
-		return "LangBot 云端托管"
+		return i18n.T("Hosted by LangBot Cloud")
 	case "local_managed":
 		driver := formatCell(info["driver"])
 		if driver == "docker_compose" {
 			driver = "Docker Compose"
 		} else if driver == "native_process" {
-			driver = "本机进程"
+			driver = i18n.T("Local process")
 		} else if driver == "native" {
-			driver = "原生部署"
+			driver = i18n.T("Native deployment")
 		}
 		if status := formatCell(info["status"]); status != "" {
 			return driver + " · " + localStatusLabel(status)
 		}
 		if info["driver"] == "native" {
-			return driver + " · lbctl 管理"
+			return driver + i18n.T(" · managed by lbctl")
 		}
-		return driver + " · 已接管"
+		return driver + i18n.T(" · adopted")
 	case "unbound":
-		return "未绑定本机部署"
+		return i18n.T("No local deployment bound")
 	default:
-		return "不可用"
+		return i18n.T("Unavailable")
 	}
 }
 
@@ -835,7 +855,7 @@ func renderResourceList(w io.Writer, key string, items []any) error {
 		return err
 	}
 	if len(items) == 0 {
-		_, err := fmt.Fprintln(w, "无记录")
+		_, err := fmt.Fprintln(w, i18n.T("No records"))
 		return err
 	}
 	fields := presentResourceFields(resourceFields(key), items)
@@ -863,18 +883,18 @@ func renderResourceList(w io.Writer, key string, items []any) error {
 			if field == "enable" || field == "enabled" {
 				if value, ok := row[field].(bool); ok {
 					if value {
-						line[i] = "已启用"
+						line[i] = i18n.T("Enabled")
 					} else {
-						line[i] = "已停用"
+						line[i] = i18n.T("Disabled")
 					}
 				}
 			}
 			if field == "is_default" {
 				if value, ok := row[field].(bool); ok {
 					if value {
-						line[i] = "是"
+						line[i] = i18n.T("Yes")
 					} else {
-						line[i] = "否"
+						line[i] = i18n.T("No")
 					}
 				}
 			}
@@ -938,10 +958,10 @@ func renderValueAt(w io.Writer, value any, label, indent string) error {
 		}
 	}
 	if label == fieldLabel("business_validation") && value == "not_run" {
-		value = "未执行"
+		value = i18n.T("Not executed")
 	}
 	if label == fieldLabel("validation_scope") && value == "identity_permissions_capabilities" {
-		value = "身份、权限和操作能力"
+		value = i18n.T("Identity, permissions and operation capabilities")
 	}
 	prefix := indent
 	if label != "" {
@@ -966,7 +986,7 @@ func renderValueAt(w io.Writer, value any, label, indent string) error {
 		return nil
 	case []any:
 		if len(v) == 0 {
-			_, err := fmt.Fprintln(w, prefix+"无记录")
+			_, err := fmt.Fprintln(w, prefix+i18n.T("No records"))
 			return err
 		}
 		scalar := true
@@ -1041,17 +1061,17 @@ func displayCell(value any) string {
 func localStatusLabel(value string) string {
 	switch value {
 	case "not_installed":
-		return "未安装"
+		return i18n.T("Not installed")
 	case "stopped":
-		return "已停止"
+		return i18n.T("Stopped")
 	case "starting":
-		return "启动中"
+		return i18n.T("Starting")
 	case "running":
-		return "运行中"
+		return i18n.T("Running")
 	case "degraded":
-		return "异常"
+		return i18n.T("Error")
 	case "unknown":
-		return "未知"
+		return i18n.T("Unknown")
 	default:
 		return value
 	}
@@ -1059,7 +1079,7 @@ func localStatusLabel(value string) string {
 
 func fieldLabel(field string) string {
 	if label, exists := humanFieldLabels[field]; exists {
-		return label
+		return i18n.T(label)
 	}
 	words := strings.Split(formatCell(field), "_")
 	for i, word := range words {
@@ -1138,46 +1158,46 @@ func cellWidth(value string) int {
 
 func actionSummary(data map[string]any) string {
 	if data["outcome_error"] == true {
-		return "操作未完整确认，请依据下方执行状态和回读结果处理。"
+		return i18n.T("Operation not fully confirmed; inspect execution state and readback results below.")
 	}
 	if data["dry_run"] == true {
 		if data["business_validation"] == "server_preview" {
-			return "服务端预览已完成，尚未执行安装。"
+			return i18n.T("Server preview completed; installation not performed.")
 		}
-		return "预检通过，尚未执行；仅确认所列检查，未确认服务端业务校验。"
+		return i18n.T("Preflight passed; not executed. Only listed checks confirmed, server business validation not confirmed.")
 	}
 	switch data["operation"] {
 	case "workspace.sandbox.check":
-		return "E2B 连接检查通过；未保存配置，未创建沙箱。"
+		return i18n.T("E2B connection check passed; configuration was not saved and no sandbox was created.")
 	case "workspace.sandbox.test":
-		return "临时 E2B 沙箱创建、执行和清理已通过；未保存配置。"
+		return i18n.T("Temporary E2B sandbox creation, execution and cleanup passed; configuration was not saved.")
 	}
 	if data["step"] == "completed" {
-		return "任务已完成，服务端结果如下。"
+		return i18n.T("Task completed; server result follows.")
 	}
 	if data["submitted"] == true {
-		return "请求已提交；请查看任务状态确认是否完成。"
+		return i18n.T("Request submitted; check task status to confirm completion.")
 	}
 	if data["verified"] == true {
-		return "操作已完成，回读验证通过。"
+		return i18n.T("Operation completed and readback verified.")
 	}
 	if verification, ok := data["verification"].(map[string]any); ok && verification["observable_fields_match"] == true {
-		return "操作已完成，可观察字段一致；隐藏字段未验证。"
+		return i18n.T("Operation completed; observable fields match, hidden fields were not verified.")
 	}
 	if data["server_write"] == false {
-		return "检查已完成，未写入服务端。"
+		return i18n.T("Checks completed; nothing written to the server.")
 	}
-	return "操作返回成功，具体执行与验证状态如下。"
+	return i18n.T("Operation returned success; execution and verification state follows.")
 }
 
 func credentialLabel(state string) string {
-	if label, ok := map[string]string{"available": "可用（未鉴权）", "missing": "变量未设置", "not_configured": "未配置", "invalid_configuration": "配置无效", "stdin_required": "等待 stdin"}[state]; ok {
+	if label, ok := map[string]string{"available": i18n.T("Available (unauthenticated)"), "missing": i18n.T("Variable is unset"), "not_configured": i18n.T("Not configured"), "invalid_configuration": i18n.T("Invalid configuration"), "stdin_required": i18n.T("Waiting for stdin")}[state]; ok {
 		return label
 	}
 	return state
 }
 func bindingLabel(state string) string {
-	if label, ok := map[string]string{"registered": "已登记", "unregistered": "未登记", "ambiguous": "存在多个匹配", "verified": "已验证"}[state]; ok {
+	if label, ok := map[string]string{"registered": i18n.T("Registered"), "unregistered": i18n.T("Unregistered"), "ambiguous": i18n.T("Multiple matches"), "verified": i18n.T("Verified")}[state]; ok {
 		return label
 	}
 	return state
@@ -1205,18 +1225,18 @@ func renderExperienceFooter(w io.Writer, value any, command string) error {
 	data, _ := envelope["data"].(map[string]any)
 	meta, _ := envelope["meta"].(map[string]any)
 	if selection, ok := meta["list_selection"].(map[string]any); ok {
-		if _, err := fmt.Fprintf(w, "显示 %s 条（共 %s 条，客户端筛选）\n", displayCell(selection["matched"]), displayCell(selection["total"])); err != nil {
+		if _, err := fmt.Fprintf(w, i18n.T("Showing %s items (%s total, client-side filter)\n"), displayCell(selection["matched"]), displayCell(selection["total"])); err != nil {
 			return err
 		}
 	}
 	if strings.HasSuffix(command, ".list") && commandListKey(command) != "" && command != "context.list" {
-		if _, err := fmt.Fprintln(w, "完整字段与未截断名称：在当前命令后加 -o json 或 -o yaml。"); err != nil {
+		if _, err := fmt.Fprintln(w, i18n.T("Full fields and untruncated names: append -o json or -o yaml to this command.")); err != nil {
 			return err
 		}
 	}
 	if command == "context.list" {
 		if items, ok := data["contexts"].([]any); ok && len(items) == 0 {
-			if _, err := fmt.Fprintln(w, "尚未保存环境。已有配置请用 --config <path> 或 LANGBOT_CONFIG；连接已有实例用 context add <name> --endpoint <url> --api-key-env <变量名>。"); err != nil {
+			if _, err := fmt.Fprintln(w, i18n.T("No saved environments. Use --config <path> or LANGBOT_CONFIG for existing configuration; connect with context add <name> --endpoint <url> --api-key-env <variable>.")); err != nil {
 				return err
 			}
 		}
@@ -1229,7 +1249,7 @@ func renderExperienceFooter(w io.Writer, value any, command string) error {
 			for _, arg := range argv {
 				parts = append(parts, quoteCommandArg(formatCell(arg)))
 			}
-			if _, err := fmt.Fprintln(w, "下一步（"+displayCell(item["description"])+"）："+strings.Join(parts, " ")); err != nil {
+			if _, err := fmt.Fprintln(w, i18n.T("Next steps (")+displayCell(item["description"])+i18n.Punct("）：")+strings.Join(parts, " ")); err != nil {
 				return err
 			}
 		}

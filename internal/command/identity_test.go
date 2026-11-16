@@ -37,7 +37,7 @@ func TestExecuteIdentityAcrossReadPreflight(t *testing.T) {
 	}))
 	defer server.Close()
 	var output bytes.Buffer
-	code := Execute(context.Background(), []string{"--endpoint", server.URL, "kb", "list"}, Dependencies{
+	code := executeChinese(context.Background(), []string{"--endpoint", server.URL, "kb", "list"}, Dependencies{
 		Version: "0.4.1", Out: &output, Err: &output,
 		DefaultConfigPath: func() (string, error) { return filepath.Join(t.TempDir(), "config.yaml"), nil },
 		LookupEnv: func(key string) (string, bool) {

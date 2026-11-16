@@ -13,6 +13,7 @@ import (
 
 	"github.com/gofrs/flock"
 	"github.com/langbot-app/langbot-cli/internal/endpoint"
+	"github.com/langbot-app/langbot-cli/internal/i18n"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -22,7 +23,7 @@ var envPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 func DefaultPath() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil || strings.TrimSpace(home) == "" {
-		return "", inputError("无法确定配置目录")
+		return "", inputError(i18n.T("Unable to determine configuration directory"))
 	}
 	return filepath.Join(home, ".config", "langbot", "config.yaml"), nil
 }
@@ -47,14 +48,14 @@ func (s Store) Load() (File, error) {
 		return emptyFile(), nil
 	}
 	if err != nil {
-		return File{}, inputError("读取配置文件失败")
+		return File{}, inputError(i18n.T("Failed to read configuration file"))
 	}
 	return decode(data)
 }
 
 func (s Store) Update(ctx context.Context, mutate func(*File) error) error {
 	if mutate == nil {
-		return inputError("配置更新函数不能为空")
+		return inputError(i18n.T("Configuration update function must not be nil"))
 	}
 	if ctx == nil {
 		ctx = context.Background()
@@ -67,7 +68,7 @@ func (s Store) Update(ctx context.Context, mutate func(*File) error) error {
 		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return inputError("创建配置目录失败")
+		return inputError(i18n.T("Failed to create configuration directory"))
 	}
 
 	lock := flock.New(path + ".lock")
@@ -76,12 +77,12 @@ func (s Store) Update(ctx context.Context, mutate func(*File) error) error {
 	locked, err := lock.TryLockContext(lockCtx, lockRetryPeriod)
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return networkError("等待配置锁超时或已取消")
+			return networkError(i18n.T("Configuration lock wait timed out or was cancelled"))
 		}
-		return inputError("获取配置锁失败")
+		return inputError(i18n.T("Failed to acquire configuration lock"))
 	}
 	if !locked {
-		return networkError("等待配置锁超时")
+		return networkError(i18n.T("Timed out waiting for configuration lock"))
 	}
 	defer func() { _ = lock.Unlock() }()
 	if err := rejectSymlink(path); err != nil {
@@ -103,7 +104,7 @@ func (s Store) Update(ctx context.Context, mutate func(*File) error) error {
 		return err
 	}
 	if err := atomicWrite(path, data); err != nil {
-		return inputError("写入配置文件失败")
+		return inputError(i18n.T("Failed to write configuration file"))
 	}
 	return nil
 }
@@ -114,7 +115,7 @@ func readUnlocked(path string) (File, error) {
 		return emptyFile(), nil
 	}
 	if err != nil {
-		return File{}, inputError("读取配置文件失败")
+		return File{}, inputError(i18n.T("Failed to read configuration file"))
 	}
 	return decode(data)
 }
@@ -130,24 +131,24 @@ func readData(path string) ([]byte, error) {
 		return nil, err
 	}
 	if len(data) > maxConfigBytes {
-		return nil, inputError("配置文件过大")
+		return nil, inputError(i18n.T("Configuration file is too large"))
 	}
 	return data, nil
 }
 
 func decode(data []byte) (File, error) {
 	if len(data) > maxConfigBytes {
-		return File{}, inputError("配置文件过大")
+		return File{}, inputError(i18n.T("Configuration file is too large"))
 	}
 	var file File
 	decoder := yaml.NewDecoder(bytes.NewReader(data))
 	decoder.KnownFields(true)
 	if err := decoder.Decode(&file); err != nil {
-		return File{}, inputError("配置文件格式无效")
+		return File{}, inputError(i18n.T("Invalid configuration file format"))
 	}
 	var extra any
 	if err := decoder.Decode(&extra); err != io.EOF {
-		return File{}, inputError("配置文件只能包含一个 YAML 文档")
+		return File{}, inputError(i18n.T("Configuration file must contain only one YAML document"))
 	}
 	if err := validateFile(file); err != nil {
 		return File{}, err
@@ -158,52 +159,52 @@ func decode(data []byte) (File, error) {
 func encode(file File) ([]byte, error) {
 	data, err := yaml.Marshal(file)
 	if err != nil {
-		return nil, inputError("序列化配置失败")
+		return nil, inputError(i18n.T("Failed to serialize configuration"))
 	}
 	if len(data) > maxConfigBytes {
-		return nil, inputError("配置文件过大")
+		return nil, inputError(i18n.T("Configuration file is too large"))
 	}
 	return data, nil
 }
 
 func validateFile(file File) error {
 	if file.Version != currentVersion {
-		return inputError("不支持的配置版本")
+		return inputError(i18n.T("Unsupported configuration version"))
 	}
 	if file.Contexts == nil {
-		return inputError("contexts 必须是对象")
+		return inputError(i18n.T("contexts must be an object"))
 	}
 	if file.CurrentContext != "" {
 		if _, ok := file.Contexts[file.CurrentContext]; !ok {
-			return inputError("current_context 不存在")
+			return inputError(i18n.T("current_context does not exist"))
 		}
 	}
 	for name, item := range file.Contexts {
 		if item.UserToken != "" && (len(item.UserToken) > maxSecretBytes || validateSecret(item.UserToken) != nil) {
-			return inputError("context user_token 无效")
+			return inputError(i18n.T("Invalid context user_token"))
 		}
 		if !namePattern.MatchString(name) {
-			return inputError("context 名称无效")
+			return inputError(i18n.T("Invalid context name"))
 		}
 		if strings.TrimSpace(item.Endpoint) == "" {
-			return inputError("context endpoint 不能为空")
+			return inputError(i18n.T("context endpoint must not be empty"))
 		}
 		if _, err := endpoint.Normalize(item.Endpoint); err != nil {
-			return inputError("context endpoint 无效")
+			return inputError(i18n.T("Invalid context endpoint"))
 		}
 		if item.Credential != nil {
 			if item.Credential.Type != "env" || !envPattern.MatchString(item.Credential.Name) {
-				return inputError("context credential 必须是有效的 env 引用")
+				return inputError(i18n.T("context credential must be a valid env reference"))
 			}
 		}
 		if item.Timeout != "" {
 			d, err := time.ParseDuration(item.Timeout)
 			if err != nil || d <= 0 {
-				return inputError("context timeout 无效")
+				return inputError(i18n.T("Invalid context timeout"))
 			}
 		}
 		if strings.ContainsAny(item.ExpectedWorkspaceUUID, "\r\n") {
-			return inputError("expected_workspace_uuid 无效")
+			return inputError(i18n.T("Invalid expected_workspace_uuid"))
 		}
 	}
 	return nil
@@ -248,13 +249,13 @@ func rejectSymlink(path string) error {
 		return nil
 	}
 	if err != nil {
-		return inputError("检查配置文件失败")
+		return inputError(i18n.T("Failed to inspect configuration file"))
 	}
 	if info.Mode()&os.ModeSymlink != 0 {
-		return inputError("不支持符号链接配置文件")
+		return inputError(i18n.T("Symbolic-link configuration files are not supported"))
 	}
 	if !info.Mode().IsRegular() {
-		return inputError("配置路径不是普通文件")
+		return inputError(i18n.T("Configuration path is not a regular file"))
 	}
 	return nil
 }

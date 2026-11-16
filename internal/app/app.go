@@ -20,6 +20,7 @@ import (
 	"github.com/langbot-app/langbot-cli/internal/config"
 	"github.com/langbot-app/langbot-cli/internal/deploy"
 	endpointutil "github.com/langbot-app/langbot-cli/internal/endpoint"
+	"github.com/langbot-app/langbot-cli/internal/i18n"
 	"github.com/langbot-app/langbot-cli/internal/result"
 )
 
@@ -176,12 +177,12 @@ func (s *Service) ContextShow(name string, overrides ...CheckOptions) (Result, e
 		}
 		name, err = writeContextName(file, options, s.deps.LookupEnv)
 		if err != nil {
-			return Result{}, result.New("input", "尚未选择环境；请运行 lbctl context list 和 lbctl context use <name>")
+			return Result{}, result.New("input", i18n.T("No environment selected; run lbctl context list and lbctl context use <name>"))
 		}
 	}
 	ctx, ok := file.Contexts[name]
 	if !ok {
-		return Result{}, result.New("not_found", "context 不存在")
+		return Result{}, result.New("not_found", i18n.T("context does not exist"))
 	}
 	saved := contextView(name, ctx, name == file.CurrentContext)
 	effective := map[string]any{}
@@ -190,7 +191,7 @@ func (s *Service) ContextShow(name string, overrides ...CheckOptions) (Result, e
 		options = overrides[0]
 	}
 	if options.ContextSet && options.Context != name {
-		return Result{}, result.New("input", "命令参数 context 与 --context 不一致")
+		return Result{}, result.New("input", i18n.T("Positional context does not match --context"))
 	}
 	conn, resolveErr := config.Resolve(file, config.Options{
 		Context: name, Endpoint: options.Endpoint, Timeout: options.Timeout,
@@ -221,13 +222,13 @@ func (s *Service) ContextAdd(name, endpoint, apiKeyEnv, expectedWorkspace, timeo
 		return Result{}, err
 	}
 	if strings.TrimSpace(endpoint) == "" {
-		return Result{}, result.New("input", "新增 context 必须提供 endpoint")
+		return Result{}, result.New("input", i18n.T("New context requires endpoint"))
 	}
 	var saved config.Context
 	var current string
 	err := s.update(func(file *config.File) error {
 		if _, ok := file.Contexts[name]; ok {
-			return result.New("precondition", "context 已存在")
+			return result.New("precondition", i18n.T("context already exists"))
 		}
 		ctx := config.Context{Endpoint: endpoint, ExpectedWorkspaceUUID: expectedWorkspace, Timeout: timeout}
 		if apiKeyEnv != "" {
@@ -249,23 +250,23 @@ func (s *Service) ContextUpdate(name, endpoint, apiKeyEnv, expectedWorkspace, ti
 		return Result{}, err
 	}
 	if !endpointSet && !apiKeySet && !expectedSet && !timeoutSet && !clearCredential && !clearBinding {
-		return Result{}, result.New("input", "update 至少需要一个修改项")
+		return Result{}, result.New("input", i18n.T("update requires at least one change"))
 	}
 	var saved config.Context
 	var current string
 	err := s.update(func(file *config.File) error {
 		ctx, ok := file.Contexts[name]
 		if !ok {
-			return result.New("not_found", "context 不存在")
+			return result.New("not_found", i18n.T("context does not exist"))
 		}
 		if endpointSet {
 			if strings.TrimSpace(endpoint) == "" {
-				return result.New("input", "endpoint 不能为空")
+				return result.New("input", i18n.T("endpoint must not be empty"))
 			}
 			oldEndpoint, oldErr := endpointutil.Normalize(ctx.Endpoint)
 			newEndpoint, newErr := endpointutil.Normalize(endpoint)
 			if oldErr != nil || newErr != nil {
-				return result.New("input", "endpoint 必须是有效的 HTTP(S) 服务根地址")
+				return result.New("input", i18n.T("endpoint must be a valid HTTP(S) service root URL"))
 			}
 			ctx.Endpoint = endpoint
 			if oldEndpoint != newEndpoint {
@@ -282,10 +283,10 @@ func (s *Service) ContextUpdate(name, endpoint, apiKeyEnv, expectedWorkspace, ti
 		}
 		if apiKeySet {
 			if clearCredential {
-				return result.New("input", "不能同时设置 --api-key-env 和 --clear-credential")
+				return result.New("input", i18n.T("Cannot combine --api-key-env and --clear-credential"))
 			}
 			if strings.TrimSpace(apiKeyEnv) == "" {
-				return result.New("input", "api-key-env 不能为空")
+				return result.New("input", i18n.T("api-key-env must not be empty"))
 			}
 			ctx.Credential = &config.Credential{Type: "env", Name: apiKeyEnv}
 		}
@@ -294,7 +295,7 @@ func (s *Service) ContextUpdate(name, endpoint, apiKeyEnv, expectedWorkspace, ti
 		}
 		if expectedSet {
 			if clearBinding {
-				return result.New("input", "不能同时设置 --expect-workspace 和 --clear-binding")
+				return result.New("input", i18n.T("Cannot combine --expect-workspace and --clear-binding"))
 			}
 			ctx.ExpectedWorkspaceUUID = expectedWorkspace
 		}
@@ -318,7 +319,7 @@ func (s *Service) ContextUse(name string) (Result, error) {
 	err := s.update(func(file *config.File) error {
 		ctx, ok := file.Contexts[name]
 		if !ok {
-			return result.New("not_found", "context 不存在")
+			return result.New("not_found", i18n.T("context does not exist"))
 		}
 		file.CurrentContext = name
 		saved = ctx
@@ -334,10 +335,10 @@ func (s *Service) ContextUse(name string) (Result, error) {
 func (s *Service) ContextRemove(name string, confirmed bool) (Result, error) {
 	err := s.update(func(file *config.File) error {
 		if _, ok := file.Contexts[name]; !ok {
-			return result.New("not_found", "context 不存在")
+			return result.New("not_found", i18n.T("context does not exist"))
 		}
 		if file.CurrentContext == name && !confirmed {
-			return result.New("input", "删除当前 context 需要 --yes")
+			return result.New("input", i18n.T("Deleting the current context requires --yes"))
 		}
 		delete(file.Contexts, name)
 		if file.CurrentContext == name {
@@ -368,21 +369,21 @@ type CheckOptions struct {
 func (s *Service) Check(ctx context.Context, options CheckOptions) (Result, error) {
 	if options.All {
 		if options.Name != "" || options.EndpointSet || options.APIKeyStdin || options.ContextSet {
-			return Result{}, result.New("input", "context check --all 不接受单目标覆盖参数")
+			return Result{}, result.New("input", i18n.T("context check --all does not accept single-target overrides"))
 		}
 		if _, ok := s.deps.LookupEnv("LANGBOT_ENDPOINT"); ok {
-			return Result{}, result.New("input", "context check --all 不接受 LANGBOT_ENDPOINT")
+			return Result{}, result.New("input", i18n.T("context check --all does not accept LANGBOT_ENDPOINT"))
 		}
 		if _, ok := s.deps.LookupEnv("LANGBOT_API_KEY"); ok {
-			return Result{}, result.New("input", "context check --all 不接受 LANGBOT_API_KEY")
+			return Result{}, result.New("input", i18n.T("context check --all does not accept LANGBOT_API_KEY"))
 		}
 		if _, ok := s.deps.LookupEnv("LANGBOT_CONTEXT"); ok {
-			return Result{}, result.New("input", "context check --all 不接受 LANGBOT_CONTEXT")
+			return Result{}, result.New("input", i18n.T("context check --all does not accept LANGBOT_CONTEXT"))
 		}
 		return s.checkAll(ctx, options)
 	}
 	if options.Name != "" && options.ContextSet && options.Name != options.Context {
-		return Result{}, result.New("input", "命令参数 context 与 --context 不一致")
+		return Result{}, result.New("input", i18n.T("Positional context does not match --context"))
 	}
 	configOptions := config.Options{
 		Context:     options.Context,
@@ -428,7 +429,7 @@ func (s *Service) Check(ctx context.Context, options CheckOptions) (Result, erro
 func (s *Service) localDiagnostics(dir string) (deploy.Diagnostics, error) {
 	resolved, err := s.resolveLocalDir(dir)
 	if err != nil {
-		return deploy.Diagnostics{}, result.New("input", "部署目录无效")
+		return deploy.Diagnostics{}, result.New("input", i18n.T("Invalid deployment directory"))
 	}
 	runner := s.deps.LocalRunner
 	if runner == nil {
@@ -452,7 +453,7 @@ func mapLocalError(err error) error {
 	if errors.As(err, &problem) {
 		return result.New(problem.Kind, problem.Msg)
 	}
-	return result.New("server", "本地部署检查失败")
+	return result.New("server", i18n.T("Local deployment check failed"))
 }
 
 func (s *Service) RawInfo(ctx context.Context, options CheckOptions, methodAndPath ...string) (Result, error) {
@@ -461,7 +462,7 @@ func (s *Service) RawInfo(ctx context.Context, options CheckOptions, methodAndPa
 		method, path = methodAndPath[0], methodAndPath[1]
 	}
 	if method != "GET" || path != "/api/v1/system/info" {
-		return Result{}, result.New("incompatible", "只允许读取已确认的 system/info 接口")
+		return Result{}, result.New("incompatible", i18n.T("Only the confirmed system/info endpoint is readable"))
 	}
 	file, err := s.load()
 	if err != nil {
@@ -487,7 +488,7 @@ func (s *Service) RawInfo(ctx context.Context, options CheckOptions, methodAndPa
 func (s *Service) APIRequest(ctx context.Context, method, path string, body map[string]any, options CheckOptions) (Result, error) {
 	operation, ok := api.ResolveOperation(method, path)
 	if !ok {
-		return Result{}, result.New("incompatible", "请求路径或方法未登记，拒绝作为通用 API 调用")
+		return Result{}, result.New("incompatible", i18n.T("Request path or method is not registered; generic API calls are not allowed"))
 	}
 	conn, identity, err := s.connectionWithIdentity(ctx, options)
 	meta := resourceMeta(conn, identity)
@@ -495,7 +496,7 @@ func (s *Service) APIRequest(ctx context.Context, method, path string, body map[
 		return Result{Meta: meta}, err
 	}
 	if operation.Permission != "" && !hasPermission(identity, operation.Permission) {
-		return Result{Meta: meta}, result.New("permission", "当前 API Key 缺少 "+operation.Permission+" 权限")
+		return Result{Meta: meta}, result.New("permission", i18n.T("Current API Key lacks ")+operation.Permission+i18n.T(" permission"))
 	}
 	capabilities, err := s.capabilities(ctx, conn)
 	if err != nil {
@@ -660,7 +661,7 @@ func (s *Service) TaskList(ctx context.Context, taskType, kind string, options C
 // TaskWait 等待异步任务进入终态，只在本地停止轮询。
 func (s *Service) TaskWait(ctx context.Context, identifier string, wait WaitOptions, options CheckOptions) (Result, error) {
 	if ctx != nil && ctx.Err() != nil {
-		return Result{Data: map[string]any{"task_id": identifier, "server_cancelled": false}}, taskStatusError("wait_cancelled", "等待已取消，服务端任务未被取消")
+		return Result{Data: map[string]any{"task_id": identifier, "server_cancelled": false}}, taskStatusError("wait_cancelled", i18n.T("Wait cancelled; server task was not cancelled"))
 	}
 	conn, identity, err := s.resourceConnection(ctx, options)
 	if err != nil {
@@ -698,17 +699,17 @@ func (s *Service) KnowledgeBaseIngest(
 	options CheckOptions,
 ) (Result, error) {
 	if strings.TrimSpace(identifier) == "" {
-		return Result{}, result.New("input", "知识库 ID 不能为空")
+		return Result{}, result.New("input", i18n.T("Knowledge-base ID must not be empty"))
 	}
 	if strings.TrimSpace(filename) == "" {
-		return Result{}, result.New("input", "上传文件不能为空")
+		return Result{}, result.New("input", i18n.T("Upload file must not be empty"))
 	}
 	fileInfo, err := os.Stat(filename)
 	if err != nil {
-		return Result{}, result.New("input", "无法读取上传文件")
+		return Result{}, result.New("input", i18n.T("Unable to read upload file"))
 	}
 	if !fileInfo.Mode().IsRegular() {
-		return Result{}, result.New("input", "上传路径必须是普通文件")
+		return Result{}, result.New("input", i18n.T("Upload path must be a regular file"))
 	}
 	preflight, base, err := s.prepareKnowledgeBaseIngest(ctx, identifier, wait.Wait && !dryRun, options)
 	if err != nil {
@@ -735,7 +736,7 @@ func (s *Service) ingestKnowledgeBaseFile(ctx context.Context, identifier, filen
 	}
 	file, err := os.Open(filename)
 	if err != nil {
-		return Result{Data: map[string]any{"step": "validated", "knowledge_base": base}, Meta: preflight.Meta()}, result.New("input", "无法读取上传文件")
+		return Result{Data: map[string]any{"step": "validated", "knowledge_base": base}, Meta: preflight.Meta()}, result.New("input", i18n.T("Unable to read upload file"))
 	}
 	defer file.Close()
 	fileID, err := client.UploadDocument(ctx, target, filepath.Base(filename), file)
@@ -817,14 +818,14 @@ func (s *Service) KnowledgeBaseGet(ctx context.Context, identifier string, optio
 
 func (s *Service) KnowledgeBaseCreate(ctx context.Context, body map[string]any, dryRun bool, options CheckOptions) (Result, error) {
 	if body == nil {
-		return Result{}, result.New("input", "请求体必须是 JSON object")
+		return Result{}, result.New("input", i18n.T("Request body must be a JSON object"))
 	}
 	if err := validateBodyFields(body, "name", "description", "knowledge_engine_plugin_id", "creation_settings", "retrieval_settings"); err != nil {
 		return Result{}, err
 	}
 	engineID, ok := body["knowledge_engine_plugin_id"].(string)
 	if !ok || strings.TrimSpace(engineID) == "" {
-		return Result{}, result.New("input", "知识库创建请求必须包含 knowledge_engine_plugin_id")
+		return Result{}, result.New("input", i18n.T("Knowledge-base creation requires knowledge_engine_plugin_id"))
 	}
 	preflight, err := s.WritePreflight(ctx, "knowledge_base.create", options)
 	if err != nil {
@@ -853,7 +854,7 @@ func (s *Service) KnowledgeBaseUpdate(ctx context.Context, identifier string, bo
 		return Result{}, err
 	}
 	if body == nil {
-		return Result{}, result.New("input", "请求体必须是 JSON object")
+		return Result{}, result.New("input", i18n.T("Request body must be a JSON object"))
 	}
 	if err := validateBodyFields(body, "uuid", "name", "description", "retrieval_settings"); err != nil {
 		return Result{}, err
@@ -862,7 +863,7 @@ func (s *Service) KnowledgeBaseUpdate(ctx context.Context, identifier string, bo
 		return Result{}, err
 	}
 	if len(withoutUUID(body)) == 0 {
-		return Result{}, result.New("input", "知识库更新请求没有可修改字段")
+		return Result{}, result.New("input", i18n.T("Knowledge-base update contains no editable fields"))
 	}
 	preflight, err := s.WritePreflight(ctx, "knowledge_base.update", options)
 	if err != nil {
@@ -890,7 +891,7 @@ func (s *Service) KnowledgeBaseDelete(ctx context.Context, identifier string, co
 		return Result{}, err
 	}
 	if !dryRun && !confirmed {
-		return Result{}, result.New("input", "删除知识库需要 --yes")
+		return Result{}, result.New("input", i18n.T("Deleting a knowledge base requires --yes"))
 	}
 	preflight, err := s.WritePreflight(ctx, "knowledge_base.delete", options)
 	if err != nil {
@@ -912,7 +913,7 @@ func (s *Service) KnowledgeBaseDelete(ctx context.Context, identifier string, co
 	if err != nil {
 		return Result{Data: data, Meta: preflight.Meta()}, readbackError(err)
 	}
-	return Result{Data: data, Meta: preflight.Meta()}, verificationError("删除后知识库仍可读取")
+	return Result{Data: data, Meta: preflight.Meta()}, verificationError(i18n.T("Knowledge base is still readable after deletion"))
 }
 
 func (s *Service) KnowledgeBaseFileList(ctx context.Context, identifier string, options CheckOptions) (Result, error) {
@@ -938,7 +939,7 @@ func (s *Service) KnowledgeBaseFileDelete(ctx context.Context, identifier, fileI
 		return Result{}, err
 	}
 	if !dryRun && !confirmed {
-		return Result{}, result.New("input", "删除知识库文件需要 --yes")
+		return Result{}, result.New("input", i18n.T("Deleting a knowledge-base file requires --yes"))
 	}
 	preflight, err := s.WritePreflight(ctx, "knowledge_base.file.delete", options)
 	if err != nil {
@@ -958,7 +959,7 @@ func (s *Service) KnowledgeBaseFileDelete(ctx context.Context, identifier, fileI
 	}
 	for _, file := range files {
 		if fileID == fileIdentifier(file) {
-			return Result{Data: data, Meta: preflight.Meta()}, verificationError("删除后知识库文件仍可读取")
+			return Result{Data: data, Meta: preflight.Meta()}, verificationError(i18n.T("Knowledge-base file is still readable after deletion"))
 		}
 	}
 	data["verified"] = true
@@ -970,11 +971,11 @@ func (s *Service) KnowledgeBaseRetrieve(ctx context.Context, identifier string, 
 		return Result{}, err
 	}
 	if body == nil {
-		return Result{}, result.New("input", "请求体必须是 JSON object")
+		return Result{}, result.New("input", i18n.T("Request body must be a JSON object"))
 	}
 	query, ok := body["query"].(string)
 	if !ok || strings.TrimSpace(query) == "" {
-		return Result{}, result.New("input", "知识库检索请求必须包含非空 query")
+		return Result{}, result.New("input", i18n.T("Knowledge-base search requires a non-empty query"))
 	}
 	preflight, err := s.readPreflight(ctx, "knowledge_base.retrieve", "resource.view", options)
 	if err != nil {
@@ -1016,7 +1017,7 @@ func (s *Service) MCPServerGet(ctx context.Context, name string, options CheckOp
 
 func (s *Service) MCPServerCreate(ctx context.Context, body map[string]any, dryRun bool, options CheckOptions) (Result, error) {
 	if body == nil {
-		return Result{}, result.New("input", "请求体必须是 JSON object")
+		return Result{}, result.New("input", i18n.T("Request body must be a JSON object"))
 	}
 	if err := validateBodyFields(body, "name", "enable", "mode", "extra_args", "readme"); err != nil {
 		return Result{}, err
@@ -1024,14 +1025,14 @@ func (s *Service) MCPServerCreate(ctx context.Context, body map[string]any, dryR
 	name, ok := body["name"].(string)
 	name = strings.TrimSpace(name)
 	if !ok || name == "" {
-		return Result{}, result.New("input", "MCP Server 请求体必须包含 name")
+		return Result{}, result.New("input", i18n.T("MCP Server request body must include name"))
 	}
 	if err := api.ValidateMCPServerName(name); err != nil {
 		return Result{}, err
 	}
 	mode, ok := body["mode"].(string)
 	if !ok || strings.TrimSpace(mode) == "" {
-		return Result{}, result.New("input", "MCP Server 创建请求必须包含 mode")
+		return Result{}, result.New("input", i18n.T("MCP Server creation requires mode"))
 	}
 	preflight, err := s.WritePreflight(ctx, "mcp_server.create", options)
 	if err != nil {
@@ -1053,7 +1054,7 @@ func (s *Service) MCPServerCreate(ctx context.Context, body map[string]any, dryR
 		return Result{Data: data, Meta: preflight.Meta()}, readbackError(err)
 	}
 	if server["uuid"] != written.UUID {
-		return Result{Data: data, Meta: preflight.Meta()}, verificationError("创建后回读到的 MCP Server UUID 不一致")
+		return Result{Data: data, Meta: preflight.Meta()}, verificationError(i18n.T("MCP Server UUID differs after creation"))
 	}
 	data["server_name"] = name
 	data["verified"] = true
@@ -1066,19 +1067,19 @@ func (s *Service) MCPServerUpdate(ctx context.Context, name string, body map[str
 		return Result{}, err
 	}
 	if body == nil {
-		return Result{}, result.New("input", "请求体必须是 JSON object")
+		return Result{}, result.New("input", i18n.T("Request body must be a JSON object"))
 	}
 	if err := validateBodyFields(body, "name", "enable", "mode", "extra_args", "readme"); err != nil {
 		return Result{}, err
 	}
 	if len(body) == 0 {
-		return Result{}, result.New("input", "MCP Server 更新请求没有可修改字段")
+		return Result{}, result.New("input", i18n.T("MCP Server update contains no editable fields"))
 	}
 	newName := name
 	if value, exists := body["name"]; exists {
 		value, ok := value.(string)
 		if !ok || strings.TrimSpace(value) == "" {
-			return Result{}, result.New("input", "MCP Server name 必须是非空字符串")
+			return Result{}, result.New("input", i18n.T("MCP Server name must be a non-empty string"))
 		}
 		newName = strings.TrimSpace(value)
 		if err := api.ValidateMCPServerName(newName); err != nil {
@@ -1113,7 +1114,7 @@ func (s *Service) MCPServerUpdate(ctx context.Context, name string, body map[str
 		return Result{Data: data, Meta: preflight.Meta()}, readbackError(err)
 	}
 	if server["uuid"] != uuid {
-		return Result{Data: data, Meta: preflight.Meta()}, verificationError("更新后回读到的 MCP Server UUID 不一致")
+		return Result{Data: data, Meta: preflight.Meta()}, verificationError(i18n.T("MCP Server UUID differs after update"))
 	}
 	data["verified"] = true
 	data["server"] = server
@@ -1125,7 +1126,7 @@ func (s *Service) MCPServerDelete(ctx context.Context, name string, confirmed, d
 		return Result{}, err
 	}
 	if !dryRun && !confirmed {
-		return Result{}, result.New("input", "删除 MCP Server 需要 --yes")
+		return Result{}, result.New("input", i18n.T("Deleting an MCP Server requires --yes"))
 	}
 	preflight, err := s.WritePreflight(ctx, "mcp_server.delete", options)
 	if err != nil {
@@ -1155,7 +1156,7 @@ func (s *Service) MCPServerDelete(ctx context.Context, name string, confirmed, d
 	if err != nil {
 		return Result{Data: data, Meta: preflight.Meta()}, readbackError(err)
 	}
-	return Result{Data: data, Meta: preflight.Meta()}, verificationError("删除后 MCP Server 仍可读取")
+	return Result{Data: data, Meta: preflight.Meta()}, verificationError(i18n.T("MCP Server is still readable after deletion"))
 }
 
 func (s *Service) MCPServerResources(ctx context.Context, name string, options CheckOptions) (Result, error) {
@@ -1177,11 +1178,11 @@ func (s *Service) MCPServerResourceRead(ctx context.Context, name string, body m
 		return Result{}, err
 	}
 	if body == nil {
-		return Result{}, result.New("input", "请求体必须是 JSON object")
+		return Result{}, result.New("input", i18n.T("Request body must be a JSON object"))
 	}
 	uri, ok := body["uri"].(string)
 	if !ok || strings.TrimSpace(uri) == "" {
-		return Result{}, result.New("input", "MCP 资源读取请求必须包含非空 uri")
+		return Result{}, result.New("input", i18n.T("MCP resource request must include a non-empty uri"))
 	}
 	return s.mcpRead(ctx, name, "mcp_server.resource_read", "resource.view", func(c api.Client, t api.Target) (any, error) { return c.MCPServerResourceRead(ctx, t, name, body) }, options)
 }
@@ -1191,7 +1192,7 @@ func (s *Service) MCPServerLogs(ctx context.Context, name, level string, limit i
 		return Result{}, err
 	}
 	if limit < 1 || limit > 500 {
-		return Result{}, result.New("input", "MCP 日志条数必须在 1 到 500 之间")
+		return Result{}, result.New("input", i18n.T("MCP log count must be between 1 and 500"))
 	}
 	return s.mcpRead(ctx, name, "mcp_server.logs", "audit.view", func(c api.Client, t api.Target) (any, error) { return c.MCPServerLogs(ctx, t, name, level, limit) }, options)
 }
@@ -1340,7 +1341,7 @@ func (s *Service) PluginLogs(ctx context.Context, author, name, level string, li
 		return Result{}, err
 	}
 	if limit <= 0 || limit > 500 {
-		return Result{}, result.New("input", "limit 必须在 1 到 500 之间")
+		return Result{}, result.New("input", i18n.T("limit must be between 1 and 500"))
 	}
 	preflight, err := s.readPreflight(ctx, "plugin.logs", "audit.view", options)
 	if err != nil {
@@ -1361,7 +1362,7 @@ func (s *Service) PluginConfigUpdate(ctx context.Context, author, name string, b
 		return Result{}, err
 	}
 	if body == nil {
-		return Result{}, result.New("input", "Plugin 配置必须是 JSON object")
+		return Result{}, result.New("input", i18n.T("Plugin configuration must be a JSON object"))
 	}
 	preflight, err := s.WritePreflight(ctx, "plugin.config.update", options)
 	if err != nil {
@@ -1406,7 +1407,7 @@ func (s *Service) PluginConfigUpdate(ctx context.Context, author, name string, b
 			if err != nil {
 				return Result{Data: data, Meta: preflight.Meta()}, readbackError(err)
 			}
-			return Result{Data: data, Meta: preflight.Meta()}, verificationError("更新后回读到的 Plugin 配置不一致")
+			return Result{Data: data, Meta: preflight.Meta()}, verificationError(i18n.T("Plugin configuration differs after update"))
 		case <-ticker.C:
 		}
 	}
@@ -1420,10 +1421,10 @@ func (s *Service) PluginDelete(ctx context.Context, author, name string, deleteD
 		return Result{}, err
 	}
 	if dryRun && wait {
-		return Result{}, result.New("input", "dry-run 不能等待异步任务")
+		return Result{}, result.New("input", i18n.T("dry-run cannot wait for asynchronous tasks"))
 	}
 	if !dryRun && !confirmed {
-		return Result{}, result.New("input", "删除 Plugin 需要 --yes")
+		return Result{}, result.New("input", i18n.T("Deleting a Plugin requires --yes"))
 	}
 	preflight, err := s.WritePreflight(ctx, "plugin.delete", options)
 	if err != nil {
@@ -1463,7 +1464,7 @@ func (s *Service) PluginDelete(ctx context.Context, author, name string, deleteD
 	if err != nil {
 		return finished, readbackError(err)
 	}
-	return finished, verificationError("删除任务完成后 Plugin 仍可读取")
+	return finished, verificationError(i18n.T("Plugin is still readable after the deletion task completed"))
 }
 
 func (s *Service) SkillList(ctx context.Context, options CheckOptions) (Result, error) {
@@ -1546,7 +1547,7 @@ func (s *Service) SkillPreview(ctx context.Context, name string, options CheckOp
 
 func (s *Service) SkillCreate(ctx context.Context, body map[string]any, dryRun bool, options CheckOptions) (Result, error) {
 	if body == nil {
-		return Result{}, result.New("input", "Skill 请求体必须是 JSON object")
+		return Result{}, result.New("input", i18n.T("Skill request body must be a JSON object"))
 	}
 	if err := validateBodyFields(body, "name", "display_name", "description", "instructions"); err != nil {
 		return Result{}, err
@@ -1554,10 +1555,10 @@ func (s *Service) SkillCreate(ctx context.Context, body map[string]any, dryRun b
 	rawName, ok := body["name"].(string)
 	name := strings.TrimSpace(rawName)
 	if !ok || name == "" {
-		return Result{}, result.New("input", "Skill 创建请求必须包含 name")
+		return Result{}, result.New("input", i18n.T("Skill creation requires name"))
 	}
 	if rawName != name {
-		return Result{}, result.New("input", "Skill name 不能包含首尾空白")
+		return Result{}, result.New("input", i18n.T("Skill name cannot have leading or trailing whitespace"))
 	}
 	if err := api.ValidateResourceID(name); err != nil {
 		return Result{}, err
@@ -1577,7 +1578,7 @@ func (s *Service) SkillCreate(ctx context.Context, body map[string]any, dryRun b
 		return Result{Meta: preflight.Meta()}, err
 	}
 	if written["name"] != name {
-		return Result{Meta: preflight.Meta()}, verificationError("创建响应中的 Skill 名称不一致")
+		return Result{Meta: preflight.Meta()}, verificationError(i18n.T("Skill name in creation response does not match"))
 	}
 	skill, err := client.SkillGet(ctx, target, name)
 	data := writeResultData("skill.create", "")
@@ -1587,7 +1588,7 @@ func (s *Service) SkillCreate(ctx context.Context, body map[string]any, dryRun b
 		return Result{Data: data, Meta: preflight.Meta()}, readbackError(err)
 	}
 	if !observableFieldsEqual(body, skill, "name", "display_name", "description", "instructions") {
-		return Result{Data: data, Meta: preflight.Meta()}, verificationError("创建后回读到的 Skill 内容不一致")
+		return Result{Data: data, Meta: preflight.Meta()}, verificationError(i18n.T("Skill content differs after creation"))
 	}
 	data["verified"] = true
 	data["skill"] = skill
@@ -1599,18 +1600,18 @@ func (s *Service) SkillUpdate(ctx context.Context, name string, body map[string]
 		return Result{}, err
 	}
 	if body == nil {
-		return Result{}, result.New("input", "Skill 请求体必须是 JSON object")
+		return Result{}, result.New("input", i18n.T("Skill request body must be a JSON object"))
 	}
 	if err := validateBodyFields(body, "name", "display_name", "description", "instructions"); err != nil {
 		return Result{}, err
 	}
 	if len(body) == 0 {
-		return Result{}, result.New("input", "Skill 更新请求没有可修改字段")
+		return Result{}, result.New("input", i18n.T("Skill update contains no editable fields"))
 	}
 	if value, exists := body["name"]; exists {
 		bodyName, ok := value.(string)
 		if !ok || bodyName != name {
-			return Result{}, result.New("input", "Skill 更新不支持改名，name 必须与命令参数一致")
+			return Result{}, result.New("input", i18n.T("Skill updates cannot rename; name must match the command argument"))
 		}
 	}
 	preflight, err := s.WritePreflight(ctx, "skill.update", options)
@@ -1637,7 +1638,7 @@ func (s *Service) SkillUpdate(ctx context.Context, name string, body map[string]
 		return Result{Data: data, Meta: preflight.Meta()}, readbackError(err)
 	}
 	if !observableFieldsEqual(body, skill, "name", "display_name", "description", "instructions") {
-		return Result{Data: data, Meta: preflight.Meta()}, verificationError("更新后回读到的 Skill 内容不一致")
+		return Result{Data: data, Meta: preflight.Meta()}, verificationError(i18n.T("Skill content differs after update"))
 	}
 	data["verified"] = true
 	data["skill"] = skill
@@ -1649,7 +1650,7 @@ func (s *Service) SkillDelete(ctx context.Context, name string, confirmed, dryRu
 		return Result{}, err
 	}
 	if !dryRun && !confirmed {
-		return Result{}, result.New("input", "删除 Skill 需要 --yes")
+		return Result{}, result.New("input", i18n.T("Deleting a Skill requires --yes"))
 	}
 	preflight, err := s.WritePreflight(ctx, "skill.delete", options)
 	if err != nil {
@@ -1678,7 +1679,7 @@ func (s *Service) SkillDelete(ctx context.Context, name string, confirmed, dryRu
 	if err != nil {
 		return Result{Data: data, Meta: preflight.Meta()}, readbackError(err)
 	}
-	return Result{Data: data, Meta: preflight.Meta()}, verificationError("删除后 Skill 仍可读取")
+	return Result{Data: data, Meta: preflight.Meta()}, verificationError(i18n.T("Skill is still readable after deletion"))
 }
 
 func (s *Service) SkillFileWrite(ctx context.Context, name, path, content string, dryRun bool, options CheckOptions) (Result, error) {
@@ -1715,7 +1716,7 @@ func (s *Service) SkillFileWrite(ctx context.Context, name, path, content string
 		return Result{Data: data, Meta: preflight.Meta()}, readbackError(err)
 	}
 	if !matches {
-		return Result{Data: data, Meta: preflight.Meta()}, verificationError("写入后回读到的 Skill 文件内容不一致")
+		return Result{Data: data, Meta: preflight.Meta()}, verificationError(i18n.T("Skill file content differs after write"))
 	}
 	data["verified"] = true
 	data["file"] = file
@@ -1744,7 +1745,7 @@ func (s *Service) pluginInstall(ctx context.Context, operation string, body map[
 		wait = true
 	}
 	if dryRun && wait {
-		return Result{}, result.New("input", "dry-run 不能等待异步任务")
+		return Result{}, result.New("input", i18n.T("dry-run cannot wait for asynchronous tasks"))
 	}
 	preflight, err := s.WritePreflight(ctx, operation, options)
 	if err != nil {
@@ -1774,7 +1775,7 @@ func (s *Service) pluginInstall(ctx context.Context, operation string, body map[
 	var pluginAuthor, pluginName string
 	if waitOptions.ConfirmPermissions {
 		if !preflight.Capabilities.Operations["operation.invoke"] || !preflight.Capabilities.Operations["plugin.permissions.confirm_api_key"] {
-			return Result{Data: data, Meta: preflight.Meta()}, result.New("incompatible", "安装后确认权限需要支持 operation.invoke 和 plugin.permissions.confirm_api_key 的 Core")
+			return Result{Data: data, Meta: preflight.Meta()}, result.New("incompatible", i18n.T("Post-install permission confirmation requires Core support for operation.invoke and plugin.permissions.confirm_api_key"))
 		}
 		if operation == "plugin.install.github" {
 			body, err = resolveGitHubPluginAsset(ctx, s.deps.Transport, body)
@@ -1791,7 +1792,7 @@ func (s *Service) pluginInstall(ctx context.Context, operation string, body map[
 	if filename != "" {
 		file, openErr := os.Open(filename)
 		if openErr != nil {
-			return Result{Data: data, Meta: preflight.Meta()}, result.New("input", "无法读取插件包")
+			return Result{Data: data, Meta: preflight.Meta()}, result.New("input", i18n.T("Unable to read plugin package"))
 		}
 		defer file.Close()
 		taskID, err = client.PluginInstallLocal(ctx, target, filepath.Base(filename), file)
@@ -1803,14 +1804,14 @@ func (s *Service) pluginInstall(ctx context.Context, operation string, body map[
 		taskID, err = client.PluginInstallGitHub(ctx, target, body)
 	} else if waitOptions.UseOperations {
 		if !preflight.Capabilities.Operations["operation.invoke"] {
-			return Result{Data: data, Meta: preflight.Meta()}, result.New("incompatible", "需要支持 operation.invoke 的 LangBot Core")
+			return Result{Data: data, Meta: preflight.Meta()}, result.New("incompatible", i18n.T("Requires LangBot Core with operation.invoke"))
 		}
 		var value any
 		value, err = client.OperationCall(ctx, target, operation, body)
 		if err == nil {
 			object, ok := value.(map[string]any)
 			if !ok || object["task_id"] == nil {
-				err = result.New("incompatible", "安装未返回 task_id")
+				err = result.New("incompatible", i18n.T("Installation did not return task_id"))
 			} else {
 				taskID = fmt.Sprint(object["task_id"])
 			}
@@ -1835,7 +1836,7 @@ func (s *Service) pluginInstall(ctx context.Context, operation string, body map[
 // PluginUpgrade 升级已安装插件。
 func (s *Service) PluginUpgrade(ctx context.Context, author, name string, dryRun, wait bool, waitOptions WaitOptions, options CheckOptions) (Result, error) {
 	if dryRun && wait {
-		return Result{}, result.New("input", "dry-run 不能等待异步任务")
+		return Result{}, result.New("input", i18n.T("dry-run cannot wait for asynchronous tasks"))
 	}
 	preflight, err := s.WritePreflight(ctx, "plugin.upgrade", options)
 	if err != nil {
@@ -1915,7 +1916,7 @@ func (s *Service) SkillInstallUpload(ctx context.Context, filename string, sourc
 	}
 	file, err := os.Open(filename)
 	if err != nil {
-		return Result{Meta: preflight.Meta()}, result.New("input", "无法读取 Skill ZIP 包")
+		return Result{Meta: preflight.Meta()}, result.New("input", i18n.T("Unable to read Skill ZIP package"))
 	}
 	defer file.Close()
 	client, target := s.writeClient(preflight)
@@ -1943,7 +1944,7 @@ func (s *Service) SkillInstallUpload(ctx context.Context, filename string, sourc
 // MCPServerTest 提交 MCP Server 测试任务。
 func (s *Service) MCPServerTest(ctx context.Context, name string, body map[string]any, dryRun, wait bool, waitOptions WaitOptions, options CheckOptions) (Result, error) {
 	if dryRun && wait {
-		return Result{}, result.New("input", "dry-run 不能等待异步任务")
+		return Result{}, result.New("input", i18n.T("dry-run cannot wait for asynchronous tasks"))
 	}
 	preflight, err := s.WritePreflight(ctx, "mcp_server.test", options)
 	if err != nil {
@@ -2034,17 +2035,17 @@ func skillFailureData(operation string, dryRun bool, err error) map[string]any {
 
 func validateRegularFile(filename string) error {
 	if strings.TrimSpace(filename) == "" || filename == "-" {
-		return result.New("input", "必须指定本地普通文件")
+		return result.New("input", i18n.T("A local regular file is required"))
 	}
 	info, err := os.Stat(filename)
 	if err != nil {
-		return result.New("input", "无法读取上传文件")
+		return result.New("input", i18n.T("Unable to read upload file"))
 	}
 	if !info.Mode().IsRegular() {
-		return result.New("input", "上传路径必须是普通文件")
+		return result.New("input", i18n.T("Upload path must be a regular file"))
 	}
 	if info.Size() > maxExtensionUploadBytes {
-		return result.New("input", "上传文件过大")
+		return result.New("input", i18n.T("Upload file is too large"))
 	}
 	return nil
 }
@@ -2069,14 +2070,14 @@ func waitForTask(ctx context.Context, client api.Client, target api.Target, iden
 		if err != nil {
 			if waitCtx.Err() != nil {
 				if ctx.Err() != nil {
-					return lastTask, taskStatusError("wait_cancelled", "等待已取消，服务端任务未被取消")
+					return lastTask, taskStatusError("wait_cancelled", i18n.T("Wait cancelled; server task was not cancelled"))
 				}
-				return lastTask, taskStatusError("wait_timeout", "等待异步任务超时")
+				return lastTask, taskStatusError("wait_timeout", i18n.T("Timed out waiting for asynchronous task"))
 			}
 			failure := result.AsError(err)
 			if failure.Kind == "not_found" {
 				failure.Type = "task_not_found"
-				failure.Message = "异步任务记录不存在或已被清理"
+				failure.Message = i18n.T("Asynchronous task record does not exist or was removed")
 			}
 			return nil, err
 		}
@@ -2086,9 +2087,9 @@ func waitForTask(ctx context.Context, client api.Client, target api.Target, iden
 		case "succeeded":
 			return taskValue, nil
 		case "failed":
-			return taskValue, taskStatusError("task_failed", "异步任务执行失败")
+			return taskValue, taskStatusError("task_failed", i18n.T("Asynchronous task failed"))
 		case "cancelled":
-			return taskValue, taskStatusError("task_cancelled", "异步任务已取消")
+			return taskValue, taskStatusError("task_cancelled", i18n.T("Asynchronous task cancelled"))
 		}
 		timer := time.NewTimer(interval)
 		select {
@@ -2097,9 +2098,9 @@ func waitForTask(ctx context.Context, client api.Client, target api.Target, iden
 				<-timer.C
 			}
 			if ctx.Err() != nil {
-				return taskValue, taskStatusError("wait_cancelled", "等待已取消，服务端任务未被取消")
+				return taskValue, taskStatusError("wait_cancelled", i18n.T("Wait cancelled; server task was not cancelled"))
 			}
-			return taskValue, taskStatusError("wait_timeout", "等待异步任务超时")
+			return taskValue, taskStatusError("wait_timeout", i18n.T("Timed out waiting for asynchronous task"))
 		case <-timer.C:
 		}
 	}
@@ -2113,7 +2114,7 @@ func taskStatusError(kind, message string) *result.Error {
 
 func partialIngestError(cause error) *result.Error {
 	failure := result.AsError(cause)
-	err := result.New(failure.Kind, "文件已上传，但知识库入库提交失败")
+	err := result.New(failure.Kind, i18n.T("File uploaded but knowledge-base ingestion submission failed"))
 	err.Type = "partial_write"
 	err.HTTPStatus = failure.HTTPStatus
 	err.ServerCode = failure.ServerCode
@@ -2123,7 +2124,7 @@ func partialIngestError(cause error) *result.Error {
 
 func (s *Service) BotCreate(ctx context.Context, body map[string]any, dryRun bool, options CheckOptions) (Result, error) {
 	if _, exists := body["uuid"]; exists {
-		return Result{}, result.New("input", "创建 Bot 时不能指定 uuid")
+		return Result{}, result.New("input", i18n.T("Cannot specify uuid when creating a Bot"))
 	}
 	preflight, err := s.WritePreflight(ctx, "bot.create", options)
 	if err != nil {
@@ -2178,7 +2179,7 @@ func (s *Service) BotDelete(ctx context.Context, uuid string, confirmed, dryRun 
 		return Result{}, err
 	}
 	if !dryRun && !confirmed {
-		return Result{}, result.New("input", "删除 Bot 需要 --yes")
+		return Result{}, result.New("input", i18n.T("Deleting a Bot requires --yes"))
 	}
 	preflight, err := s.WritePreflight(ctx, "bot.delete", options)
 	if err != nil {
@@ -2199,12 +2200,12 @@ func (s *Service) BotDelete(ctx context.Context, uuid string, confirmed, dryRun 
 	} else if err != nil {
 		return Result{Data: data, Meta: preflight.Meta()}, readbackError(err)
 	}
-	return Result{Data: data, Meta: preflight.Meta()}, verificationError("删除后资源仍可读取")
+	return Result{Data: data, Meta: preflight.Meta()}, verificationError(i18n.T("Resource is still readable after deletion"))
 }
 
 func (s *Service) PipelineApply(ctx context.Context, body map[string]any, dryRun bool, options CheckOptions) (Result, error) {
 	if body == nil {
-		return Result{}, result.New("input", "请求体必须是 JSON object")
+		return Result{}, result.New("input", i18n.T("Request body must be a JSON object"))
 	}
 	uuid, updating, err := optionalBodyUUID(body)
 	if err != nil {
@@ -2276,7 +2277,7 @@ func (s *Service) PipelineCopy(ctx context.Context, uuid string, dryRun bool, op
 	}
 	data := writeResultData("pipeline.copy", written.UUID)
 	if written.UUID == uuid {
-		return Result{Data: data, Meta: preflight.Meta()}, verificationError("复制响应未返回新的 Pipeline UUID")
+		return Result{Data: data, Meta: preflight.Meta()}, verificationError(i18n.T("Copy response did not return a new Pipeline UUID"))
 	}
 	pipeline, err := client.Pipeline(ctx, target, written.UUID)
 	if err != nil {
@@ -2299,7 +2300,7 @@ func (s *Service) PipelineDelete(ctx context.Context, uuid string, confirmed, dr
 		return Result{}, err
 	}
 	if !dryRun && !confirmed {
-		return Result{}, result.New("input", "删除 Pipeline 需要 --yes")
+		return Result{}, result.New("input", i18n.T("Deleting a Pipeline requires --yes"))
 	}
 	preflight, err := s.WritePreflight(ctx, "pipeline.delete", options)
 	if err != nil {
@@ -2320,7 +2321,7 @@ func (s *Service) PipelineDelete(ctx context.Context, uuid string, confirmed, dr
 	} else if err != nil {
 		return Result{Data: data, Meta: preflight.Meta()}, readbackError(err)
 	}
-	return Result{Data: data, Meta: preflight.Meta()}, verificationError("删除后资源仍可读取")
+	return Result{Data: data, Meta: preflight.Meta()}, verificationError(i18n.T("Resource is still readable after deletion"))
 }
 
 func (s *Service) writeClient(preflight WritePreflight) (api.Client, api.Target) {
@@ -2353,10 +2354,10 @@ func writeResultData(operation, uuid string) map[string]any {
 func requireCapability(preflight WritePreflight, operation string) error {
 	supported, known := preflight.Capabilities.Operations[operation]
 	if !known {
-		return result.New("precondition", "服务端未明确支持该操作")
+		return result.New("precondition", i18n.T("Server has not explicitly confirmed support for this operation"))
 	}
 	if !supported {
-		return result.New("precondition", "服务端明确不支持该操作")
+		return result.New("precondition", i18n.T("Server explicitly does not support this operation"))
 	}
 	return nil
 }
@@ -2368,7 +2369,7 @@ func optionalBodyUUID(body map[string]any) (string, bool, error) {
 	}
 	uuid, ok := value.(string)
 	if !ok || strings.TrimSpace(uuid) == "" {
-		return "", false, result.New("input", "uuid 必须是非空字符串")
+		return "", false, result.New("input", i18n.T("uuid must be a non-empty string"))
 	}
 	return uuid, true, nil
 }
@@ -2379,7 +2380,7 @@ func validateBodyUUID(body map[string]any, expected string) error {
 		return err
 	}
 	if exists && uuid != expected {
-		return result.New("input", "请求体 uuid 与命令参数不一致")
+		return result.New("input", i18n.T("Request body uuid does not match the command argument"))
 	}
 	return nil
 }
@@ -2409,12 +2410,12 @@ func validateBodyFields(body map[string]any, allowed ...string) error {
 		return nil
 	}
 	sort.Strings(unknown)
-	return result.New("input", "请求体包含不支持的字段: "+strings.Join(unknown, ", "))
+	return result.New("input", i18n.T("Request body contains unsupported field: ")+strings.Join(unknown, ", "))
 }
 
 func readbackError(cause error) *result.Error {
 	failure := result.AsError(cause)
-	err := result.New(failure.Kind, "写操作已返回成功，但回读验证失败")
+	err := result.New(failure.Kind, i18n.T("Write succeeded but readback verification failed"))
 	err.Type = "verification_failed"
 	err.HTTPStatus = failure.HTTPStatus
 	err.ServerCode = failure.ServerCode
@@ -2430,7 +2431,7 @@ func verificationError(message string) *result.Error {
 
 func partialWriteError(cause error) *result.Error {
 	failure := result.AsError(cause)
-	err := result.New(failure.Kind, "Pipeline 已创建，但完整配置未应用")
+	err := result.New(failure.Kind, i18n.T("Pipeline created, but full configuration was not applied"))
 	err.Type = "partial_write"
 	err.HTTPStatus = failure.HTTPStatus
 	err.ServerCode = failure.ServerCode
@@ -2444,7 +2445,7 @@ func (s *Service) resourceConnection(ctx context.Context, options CheckOptions) 
 		return conn, identity, err
 	}
 	if !hasPermission(identity, "resource.view") {
-		return conn, identity, result.New("permission", "当前 API Key 缺少 resource.view 权限")
+		return conn, identity, result.New("permission", i18n.T("Current API Key lacks resource.view permission"))
 	}
 	return conn, identity, nil
 }
@@ -2457,7 +2458,7 @@ func (s *Service) readPreflight(ctx context.Context, operation, permission strin
 		return preflight, err
 	}
 	if permission != "" && !hasPermission(identity, permission) {
-		return preflight, result.New("permission", "当前 API Key 缺少 "+permission+" 权限")
+		return preflight, result.New("permission", i18n.T("Current API Key lacks ")+permission+i18n.T(" permission"))
 	}
 	capabilities, err := s.capabilities(ctx, conn)
 	if err != nil {
@@ -2504,7 +2505,7 @@ func (s *Service) WritePreflight(ctx context.Context, operation string, options 
 // writePreflight 校验写操作所需的权限、能力和连接绑定。
 func (s *Service) writePreflight(ctx context.Context, operation, permission string, options CheckOptions) (WritePreflight, error) {
 	if options.EndpointSet {
-		return WritePreflight{}, result.New("precondition", "写操作不允许使用临时 endpoint")
+		return WritePreflight{}, result.New("precondition", i18n.T("Writes cannot use a temporary endpoint"))
 	}
 	file, err := s.load()
 	if err != nil {
@@ -2521,17 +2522,17 @@ func (s *Service) writePreflight(ctx context.Context, operation, permission stri
 	}
 	saved, ok := file.Contexts[contextName]
 	if !ok {
-		return WritePreflight{}, result.New("precondition", "写操作要求使用已保存的 context")
+		return WritePreflight{}, result.New("precondition", i18n.T("Writes require a saved context"))
 	}
 	if strings.TrimSpace(saved.ExpectedWorkspaceUUID) == "" {
-		return WritePreflight{}, result.New("precondition", "写操作要求 context 已绑定 Workspace")
+		return WritePreflight{}, result.New("precondition", i18n.T("Writes require a Workspace-bound context"))
 	}
 	conn, err := config.Resolve(file, configOptions, s.deps.LookupEnv)
 	if err != nil {
 		return WritePreflight{Connection: conn}, err
 	}
 	if conn.Temporary {
-		return WritePreflight{Connection: conn}, result.New("precondition", "写操作不允许使用临时连接")
+		return WritePreflight{Connection: conn}, result.New("precondition", i18n.T("Writes cannot use a temporary connection"))
 	}
 	conn, err = s.withCredential(ctx, conn, configOptions)
 	if err != nil {
@@ -2545,7 +2546,7 @@ func (s *Service) writePreflight(ctx context.Context, operation, permission stri
 		return WritePreflight{Connection: conn, Identity: identity}, err
 	}
 	if permission != "" && !hasPermission(identity, permission) {
-		return WritePreflight{Connection: conn, Identity: identity}, result.New("permission", "当前 API Key 缺少 "+permission+" 权限")
+		return WritePreflight{Connection: conn, Identity: identity}, result.New("permission", i18n.T("Current API Key lacks ")+permission+i18n.T(" permission"))
 	}
 	readPermission := "resource.view"
 	if operation == "workspace.sandbox.update" {
@@ -2554,7 +2555,7 @@ func (s *Service) writePreflight(ctx context.Context, operation, permission stri
 		readPermission = ""
 	}
 	if readPermission != "" && !hasPermission(identity, readPermission) {
-		return WritePreflight{Connection: conn, Identity: identity}, result.New("permission", "当前 API Key 缺少写后回读所需的 "+readPermission+" 权限")
+		return WritePreflight{Connection: conn, Identity: identity}, result.New("permission", i18n.T("Current API Key lacks the readback permission: ")+readPermission+i18n.T(" permission"))
 	}
 	capabilities, err := s.capabilities(ctx, conn)
 	if err != nil {
@@ -2569,7 +2570,7 @@ func (s *Service) writePreflight(ctx context.Context, operation, permission stri
 	}
 	if readback := readbackCapability(operation); readback != "" {
 		if err := requireCapability(preflight, readback); err != nil {
-			return preflight, result.New("precondition", "服务端未明确支持写后回读")
+			return preflight, result.New("precondition", i18n.T("Server has not explicitly confirmed read-after-write support"))
 		}
 	}
 	return preflight, nil
@@ -2617,20 +2618,20 @@ func readbackCapability(operation string) string {
 func writeContextName(file config.File, options CheckOptions, lookup func(string) (string, bool)) (string, error) {
 	if options.ContextSet {
 		if strings.TrimSpace(options.Context) == "" {
-			return "", result.New("input", "context 不能为空")
+			return "", result.New("input", i18n.T("context must not be empty"))
 		}
 		return options.Context, nil
 	}
 	if lookup != nil {
 		if value, present := lookup("LANGBOT_CONTEXT"); present {
 			if strings.TrimSpace(value) == "" {
-				return "", result.New("input", "LANGBOT_CONTEXT 为空")
+				return "", result.New("input", i18n.T("LANGBOT_CONTEXT is empty"))
 			}
 			return value, nil
 		}
 	}
 	if strings.TrimSpace(file.CurrentContext) == "" {
-		return "", result.New("precondition", "写操作要求使用已保存的 context")
+		return "", result.New("precondition", i18n.T("Writes require a saved context"))
 	}
 	return file.CurrentContext, nil
 }
@@ -2725,14 +2726,14 @@ func readCredential(ctx context.Context, reader io.Reader) (string, error) {
 	select {
 	case <-ctx.Done():
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			failure := result.New("network", "读取 API Key 超时；请通过 stdin 提供完整 Key 并关闭输入流，或改用环境变量")
+			failure := result.New("network", i18n.T("Timed out reading API Key; provide the complete Key via stdin and close the stream, or use an environment variable"))
 			failure.Reason = "stdin_timeout"
 			return "", failure
 		}
-		return "", result.New("network", "请求已取消")
+		return "", result.New("network", i18n.T("Request cancelled"))
 	case read := <-completed:
 		if read.err != nil {
-			return "", result.New("auth", "读取 API Key 失败")
+			return "", result.New("auth", i18n.T("Failed to read API Key"))
 		}
 		return read.value, nil
 	}
@@ -2798,11 +2799,11 @@ func validateBatchTimeout(options CheckOptions, lookup func(string) (string, boo
 		return nil
 	}
 	if strings.TrimSpace(value) == "" {
-		return result.New("input", "timeout 不能为空")
+		return result.New("input", i18n.T("timeout must not be empty"))
 	}
 	duration, err := time.ParseDuration(value)
 	if err != nil || duration <= 0 {
-		return result.New("input", "timeout 无效")
+		return result.New("input", i18n.T("Invalid timeout"))
 	}
 	return nil
 }
@@ -2893,7 +2894,7 @@ func (s *Service) checkAll(ctx context.Context, options CheckOptions) (Result, e
 func (s *Service) load() (config.File, error) {
 	path, err := s.deps.DefaultConfigPath()
 	if err != nil {
-		return config.File{}, result.New("input", "无法确定配置文件路径")
+		return config.File{}, result.New("input", i18n.T("Unable to determine configuration file path"))
 	}
 	file, err := (config.Store{Path: path}).Load()
 	if err != nil {
@@ -2908,7 +2909,7 @@ func (s *Service) load() (config.File, error) {
 func (s *Service) update(fn func(*config.File) error) error {
 	path, err := s.deps.DefaultConfigPath()
 	if err != nil {
-		return result.New("input", "无法确定配置文件路径")
+		return result.New("input", i18n.T("Unable to determine configuration file path"))
 	}
 	return (config.Store{Path: path}).Update(s.ctx, fn)
 }
@@ -2952,7 +2953,7 @@ func workspaceBindingError(conn config.Connection, identity api.Context) error {
 	if conn.ExpectedWorkspaceUUID == "" || conn.ExpectedWorkspaceUUID == identity.WorkspaceUUID {
 		return nil
 	}
-	err := result.New("precondition", "服务端 Workspace 与 context 预期不一致")
+	err := result.New("precondition", i18n.T("Server Workspace does not match context expectation"))
 	err.Type = "target_mismatch"
 	return err
 }
@@ -3019,7 +3020,7 @@ func sortedContextNames(file config.File) []string {
 func validateContextName(name string) error {
 	name = strings.TrimSpace(name)
 	if name == "" || name == "." || name == ".." || strings.ContainsAny(name, "/\\") {
-		return result.New("input", "context 名称无效")
+		return result.New("input", i18n.T("Invalid context name"))
 	}
 	return nil
 }

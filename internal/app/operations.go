@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/langbot-app/langbot-cli/internal/api"
+	"github.com/langbot-app/langbot-cli/internal/i18n"
 	"github.com/langbot-app/langbot-cli/internal/result"
 )
 
@@ -28,7 +29,7 @@ func (s *Service) OpenOperations(ctx context.Context, options CheckOptions, stre
 		return nil, err
 	}
 	if !capabilities.Operations["operation.invoke"] || stream && !capabilities.Operations["operation.stream"] {
-		return nil, result.New("incompatible", "需要支持 operation.invoke / operation.stream 的 LangBot Core（Cloud 或下一个 Core 版本）；现有命令仍可使用")
+		return nil, result.New("incompatible", i18n.T("Requires LangBot Core with operation.invoke / operation.stream (Cloud or next Core version); existing commands remain available"))
 	}
 	preflight.Capabilities = capabilities
 	return &OperationSession{Client: api.Client{Transport: s.deps.Transport}, Target: readTarget(preflight), preflight: preflight}, nil
@@ -46,14 +47,14 @@ func OperationWrites(description map[string]any) bool {
 
 func (session *OperationSession) Authorize(description map[string]any) error {
 	if permission, _ := description["permission"].(string); permission != "" && !hasPermission(session.preflight.Identity, permission) {
-		return result.New("permission", "当前 API Key 缺少 "+permission+" 权限")
+		return result.New("permission", i18n.T("Current API Key lacks ")+permission+i18n.T(" permission"))
 	}
 	if !OperationWrites(description) {
 		return nil
 	}
 	conn := session.preflight.Connection
 	if conn.Temporary || strings.TrimSpace(conn.ExpectedWorkspaceUUID) == "" {
-		return result.New("precondition", "写操作要求使用已绑定 Workspace 的保存 context")
+		return result.New("precondition", i18n.T("Writes require a saved, Workspace-bound context"))
 	}
 	return workspaceBindingError(conn, session.preflight.Identity)
 }

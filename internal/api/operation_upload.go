@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/langbot-app/langbot-cli/internal/i18n"
 	"github.com/langbot-app/langbot-cli/internal/result"
 )
 
@@ -16,7 +17,7 @@ func (c Client) OperationUpload(ctx context.Context, target Target, operation, f
 		"skill.zip.preview":         "/api/v1/skills/install/upload/preview",
 	}[operation]
 	if path == "" {
-		return nil, result.New("input", "未知上传操作")
+		return nil, result.New("input", i18n.T("Unknown upload operation"))
 	}
 	body, contentType, err := multipartBody(filename, file, nil, maxUploadBytes)
 	if err != nil {

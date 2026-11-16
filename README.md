@@ -33,6 +33,13 @@ English / [简体中文](README_CN.md) / [繁體中文](README_TW.md) / [日本�
 
 ---
 
+Output language is detected automatically (English or Simplified Chinese).
+Override it with `--lang en`, `--lang zh-Hans`, or `LBCTL_LANG`. Use `--verbose`
+for full installation subprocess output. The first run prints the terms and
+anonymous telemetry notice to stderr; disable telemetry with
+`LANGBOT_TELEMETRY=0` or `DO_NOT_TRACK=1`. JSON/YAML and schema output remain
+language-independent. See [output and localization](dev-docs/localization.md).
+
 The standalone LangBot command-line tool, provided as `lbctl`. It manages Workspace resources over HTTP, with multiple contexts, identity and capability discovery, resource management, RAG configuration discovery, Pipeline extensions and test runs, runtime records and Sandbox diagnostics, asynchronous task waiting, and installation, adoption, lifecycle management, and upgrades for native Python and Docker Compose deployments.
 
 Use a LangBot Core that provides:

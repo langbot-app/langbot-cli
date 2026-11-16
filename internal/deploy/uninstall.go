@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+
+	"github.com/langbot-app/langbot-cli/internal/i18n"
 )
 
 func PurgeData(dir string, record Record) (bool, string, error) {
@@ -20,11 +22,11 @@ func PurgeData(dir string, record Record) (bool, string, error) {
 		return false, "", nil
 	}
 	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return false, "", errors.New("数据目录在删除前发生变化")
+		return false, "", errors.New(i18n.T("Data directory changed before deletion"))
 	}
 	quarantine := filepath.Join(dir, ".purge-data-"+current.DeploymentID)
 	if _, err := os.Lstat(quarantine); !errors.Is(err, os.ErrNotExist) {
-		return false, quarantine, errors.New("发现未完成的数据清理现场")
+		return false, quarantine, errors.New(i18n.T("Found unfinished data cleanup state"))
 	}
 	if err := os.Rename(dataDir, quarantine); err != nil {
 		return false, "", err
@@ -43,10 +45,10 @@ func ValidatePurgeData(dir string, record Record) error {
 func validatedPurgeRecord(dir string, record Record) (Record, error) {
 	current, err := (Store{Dir: dir}).Read()
 	if err != nil || !samePurgeTarget(current, record) {
-		return Record{}, errors.New("部署记录已变更或受管标记无效")
+		return Record{}, errors.New(i18n.T("Deployment record changed or managed marker is invalid"))
 	}
 	if err := ValidateOwnedLayout(current, dir); err != nil {
-		return Record{}, errors.New("只有 lbctl 安装的默认部署可以自动清理数据")
+		return Record{}, errors.New(i18n.T("Only default deployments installed by lbctl support automatic data cleanup"))
 	}
 	dataDir := filepath.Clean(current.DataDir)
 	if err := validateRemovalBoundary(dir, dataDir); err != nil {
@@ -57,7 +59,7 @@ func validatedPurgeRecord(dir string, record Record) (Record, error) {
 		return current, nil
 	}
 	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return Record{}, errors.New("数据目录不存在、不是目录或为符号链接")
+		return Record{}, errors.New(i18n.T("Data directory is missing, not a directory or a symbolic link"))
 	}
 	if err := filepath.WalkDir(dataDir, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -68,7 +70,7 @@ func validatedPurgeRecord(dir string, record Record) (Record, error) {
 			return err
 		}
 		if info.Mode()&os.ModeSymlink != 0 {
-			return errors.New("数据目录包含符号链接，拒绝自动清理")
+			return errors.New(i18n.T("Data directory contains symbolic links; refusing automatic cleanup"))
 		}
 		return nil
 	}); err != nil {
@@ -76,7 +78,7 @@ func validatedPurgeRecord(dir string, record Record) (Record, error) {
 	}
 	quarantine := filepath.Join(dir, ".purge-data-"+current.DeploymentID)
 	if _, err := os.Lstat(quarantine); !errors.Is(err, os.ErrNotExist) {
-		return Record{}, errors.New("发现未完成的数据清理现场")
+		return Record{}, errors.New(i18n.T("Found unfinished data cleanup state"))
 	}
 	return current, nil
 }
@@ -93,22 +95,22 @@ func samePurgeTarget(current, requested Record) bool {
 func validateRemovalBoundary(dir, target string) error {
 	dir, err := filepath.Abs(filepath.Clean(dir))
 	if err != nil {
-		return errors.New("部署目录无效")
+		return errors.New(i18n.T("Invalid deployment directory"))
 	}
 	target, err = filepath.Abs(filepath.Clean(target))
 	if err != nil {
-		return errors.New("数据目录无效")
+		return errors.New(i18n.T("Invalid data directory"))
 	}
 	home, _ := os.UserHomeDir()
 	if filepath.Dir(target) == target || (home != "" && samePath(target, home)) {
-		return errors.New("拒绝删除文件系统根目录或用户主目录")
+		return errors.New(i18n.T("Refusing to delete filesystem root or user home directory"))
 	}
 	if samePath(target, dir) || !samePath(target, filepath.Join(dir, "data")) {
-		return errors.New("数据目录不在受管部署的固定边界内")
+		return errors.New(i18n.T("Data directory is outside the managed deployment boundary"))
 	}
 	rel, err := filepath.Rel(dir, target)
 	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return errors.New("数据目录逃逸受管部署边界")
+		return errors.New(i18n.T("Data directory escapes the managed deployment boundary"))
 	}
 	return nil
 }

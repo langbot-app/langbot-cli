@@ -7,6 +7,7 @@ import (
 	"github.com/langbot-app/langbot-cli/internal/api"
 	"github.com/langbot-app/langbot-cli/internal/config"
 	"github.com/langbot-app/langbot-cli/internal/endpoint"
+	"github.com/langbot-app/langbot-cli/internal/i18n"
 	"github.com/langbot-app/langbot-cli/internal/result"
 )
 
@@ -20,7 +21,7 @@ func (s *Service) AuthConnection(options CheckOptions) (config.Connection, error
 		return conn, err
 	}
 	if conn.Temporary || conn.Context == "" {
-		return conn, result.New("precondition", "登录需要保存的 context；请先运行 lbctl context add")
+		return conn, result.New("precondition", i18n.T("Login requires a saved context; run lbctl context add first"))
 	}
 	return conn, nil
 }
@@ -30,7 +31,7 @@ func (s *Service) SaveMemberToken(ctx context.Context, conn config.Connection, t
 		selected, ok := file.Contexts[conn.Context]
 		normalized, err := endpoint.Normalize(selected.Endpoint)
 		if !ok || err != nil || normalized != conn.Endpoint {
-			return result.New("precondition", "context 已改变，请重新登录")
+			return result.New("precondition", i18n.T("context changed; log in again"))
 		}
 		selected.UserToken = token
 		file.Contexts[conn.Context] = selected

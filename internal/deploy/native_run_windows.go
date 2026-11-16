@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/langbot-app/langbot-cli/internal/i18n"
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
 )
@@ -42,11 +43,11 @@ func nativeRunEnabled(record Record) (bool, error) {
 func installNativeRun(record Record, binary, dir string) error {
 	key, _, err := registry.CreateKey(registry.CURRENT_USER, nativeRunPath, registry.SET_VALUE)
 	if err != nil {
-		return fmt.Errorf("HKCU Run: %w", err)
+		return fmt.Errorf(i18n.T("HKCU Run: %w"), err)
 	}
 	defer key.Close()
 	if err := writeNativeRun(key, record, binary, dir); err != nil {
-		return fmt.Errorf("HKCU Run: %w", err)
+		return fmt.Errorf(i18n.T("HKCU Run: %w"), err)
 	}
 	return nil
 }
@@ -57,11 +58,11 @@ func removeNativeRun(record Record) error {
 		return nil
 	}
 	if err != nil {
-		return fmt.Errorf("HKCU Run: %w", err)
+		return fmt.Errorf(i18n.T("HKCU Run: %w"), err)
 	}
 	defer key.Close()
 	if err := deleteNativeRun(key, record); err != nil {
-		return fmt.Errorf("HKCU Run: %w", err)
+		return fmt.Errorf(i18n.T("HKCU Run: %w"), err)
 	}
 	return nil
 }

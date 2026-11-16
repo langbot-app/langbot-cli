@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -21,6 +22,7 @@ import (
 	"time"
 
 	"github.com/gofrs/flock"
+	"github.com/langbot-app/langbot-cli/internal/i18n"
 	"github.com/langbot-app/langbot-cli/internal/telemetry"
 )
 
@@ -40,7 +42,7 @@ var UVAssets = map[string]UVAsset{
 func EnsureUV(ctx context.Context, tools, region string, out io.Writer) (string, error) {
 	asset, ok := UVAssets[CurrentPlatform()]
 	if !ok {
-		return "", fmt.Errorf("unsupported platform %s", CurrentPlatform())
+		return "", fmt.Errorf(i18n.T("unsupported platform %s"), CurrentPlatform())
 	}
 	dir := filepath.Join(tools, "uv", UVVersion)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -73,12 +75,12 @@ func EnsureUV(ctx context.Context, tools, region string, out io.Writer) (string,
 		addresses[0], addresses[1] = addresses[1], addresses[0]
 	}
 	for _, address := range addresses {
-		fmt.Fprintln(out, "Downloading", address)
+		fmt.Fprintln(out, i18n.Human("Downloading"), address)
 		archive, err = Fetch(ctx, client, address, 100<<20)
 		if err == nil {
 			sum := sha256.Sum256(archive)
 			if hex.EncodeToString(sum[:]) != asset.SHA256 {
-				err = fmt.Errorf("uv checksum mismatch")
+				err = errors.New(i18n.T("uv checksum mismatch"))
 				continue
 			}
 			break
@@ -131,7 +133,7 @@ func extractUV(data []byte, asset, name string) ([]byte, error) {
 			}
 		}
 	}
-	return nil, fmt.Errorf("uv executable absent from archive")
+	return nil, errors.New(i18n.T("uv executable absent from archive"))
 }
 
 func NativePython(dir, version string) string {
@@ -187,7 +189,7 @@ func CheckNativePorts(record Record) error {
 	ports := []struct {
 		name string
 		port int
-	}{{"HTTP", record.Port}, {"Plugin Runtime 调试", 5401}, {"Box", 5410}}
+	}{{"HTTP", record.Port}, {i18n.T("Plugin Runtime debug"), 5401}, {"Box", 5410}}
 	seen := map[int]string{}
 	for _, item := range ports {
 		if item.port != 0 {
@@ -232,11 +234,11 @@ func probeNativePort(port int) error {
 
 func PrepareNative(ctx context.Context, dir string, record Record, out io.Writer) error {
 	if !releaseVersionPattern.MatchString(record.CoreVersion) {
-		return fmt.Errorf("invalid stable version")
+		return errors.New(i18n.T("invalid stable version"))
 	}
 	for _, extra := range record.Extras {
 		if extra != "seekdb" && extra != "milvus" && extra != "valkey" {
-			return fmt.Errorf("unsupported extra %s", extra)
+			return fmt.Errorf(i18n.T("unsupported extra %s"), extra)
 		}
 	}
 	telemetry.SetStep(ctx, "download_uv")
@@ -278,7 +280,7 @@ func PrepareNative(ctx context.Context, dir string, record Record, out io.Writer
 	}
 	for _, index := range indexes {
 		telemetry.SetStep(ctx, "install_package")
-		fmt.Fprintln(out, "Installing", packageName, "from", index)
+		fmt.Fprintln(out, i18n.Human("Installing"), packageName, i18n.Human("from"), index)
 		err = run("pip", "install", "--python", NativePython(dir, record.CoreVersion), "--index-url", index, packageName)
 		if err == nil {
 			return nil
@@ -301,7 +303,7 @@ func PrepareNative(ctx context.Context, dir string, record Record, out io.Writer
 	if len(record.Extras) > 0 {
 		wheel += "[" + strings.Join(record.Extras, ",") + "]"
 	}
-	fmt.Fprintln(out, "Retrying LangBot wheel from PyPI; dependencies use", record.PyPIIndex)
+	fmt.Fprintln(out, i18n.Human("Retrying LangBot wheel from PyPI; dependencies use"), record.PyPIIndex)
 	return run("pip", "install", "--python", NativePython(dir, record.CoreVersion), "--index-url", record.PyPIIndex, wheel)
 }
 
@@ -324,5 +326,5 @@ func langbotWheel(data []byte) (string, error) {
 			return file.URL, nil
 		}
 	}
-	return "", fmt.Errorf("LangBot wheel not found on PyPI")
+	return "", errors.New(i18n.T("LangBot wheel not found on PyPI"))
 }

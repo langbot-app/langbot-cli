@@ -3,7 +3,10 @@ package deploy
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"github.com/langbot-app/langbot-cli/internal/i18n"
+	"github.com/langbot-app/langbot-cli/internal/progress"
 	"io"
 	"net/http"
 	"strings"
@@ -64,9 +67,9 @@ func LatestCore(ctx context.Context, client *http.Client) (string, error) {
 		if latest != "" {
 			return latest, nil
 		}
-		lastErr = fmt.Errorf("no stable Core release")
+		lastErr = errors.New(i18n.T("no stable Core release"))
 	}
-	return "", fmt.Errorf("cannot resolve latest Core release: %v", lastErr)
+	return "", fmt.Errorf(i18n.T("cannot resolve latest Core release: %v"), lastErr)
 }
 
 func Fetch(ctx context.Context, client *http.Client, address string, limit int64) ([]byte, error) {
@@ -81,11 +84,11 @@ func Fetch(ctx context.Context, client *http.Client, address string, limit int64
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("%s: HTTP %d", address, resp.StatusCode)
+		return nil, fmt.Errorf(i18n.T("%s: HTTP %d"), address, resp.StatusCode)
 	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
+	data, err := io.ReadAll(io.LimitReader(progress.Download(ctx, resp.Body, resp.ContentLength), limit+1))
 	if int64(len(data)) > limit {
-		return nil, fmt.Errorf("download exceeds size limit")
+		return nil, errors.New(i18n.T("download exceeds size limit"))
 	}
 	return data, err
 }

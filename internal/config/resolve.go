@@ -9,6 +9,7 @@ import (
 	"unicode"
 
 	"github.com/langbot-app/langbot-cli/internal/endpoint"
+	"github.com/langbot-app/langbot-cli/internal/i18n"
 	"github.com/langbot-app/langbot-cli/internal/result"
 )
 
@@ -24,7 +25,7 @@ func Resolve(file File, opts Options, lookup func(string) (string, bool)) (Conne
 	}
 	selected, hasContext := file.Contexts[contextName]
 	if contextSet && !hasContext {
-		return Connection{}, inputError("指定的 context 不存在")
+		return Connection{}, inputError(i18n.T("Specified context does not exist"))
 	}
 
 	endpointValue, endpointOverride, err := selectEndpoint(opts, getenv, selected, hasContext)
@@ -33,7 +34,7 @@ func Resolve(file File, opts Options, lookup func(string) (string, bool)) (Conne
 	}
 	normalizedEndpoint, err := endpoint.Normalize(endpointValue)
 	if err != nil {
-		return Connection{}, inputError("endpoint 无效")
+		return Connection{}, inputError(i18n.T("Invalid endpoint"))
 	}
 
 	changedTarget := !hasContext || endpointOverride && normalizedEndpoint != mustNormalize(selected.Endpoint)
@@ -80,7 +81,7 @@ func (c Connection) WithCredential(opts Options, lookup func(string) (string, bo
 	copy.APIKey = ""
 	if opts.APIKeyStdin {
 		if stdin == nil {
-			return copy, authError("无法读取 stdin 中的 API Key")
+			return copy, authError(i18n.T("Unable to read API Key from stdin"))
 		}
 		value, err := readSecret(stdin)
 		if err != nil {
@@ -97,7 +98,7 @@ func (c Connection) WithCredential(opts Options, lookup func(string) (string, bo
 		return copy, nil
 	}
 	if copy.credentialType != "env" {
-		return copy, authError("不支持的凭据来源")
+		return copy, authError(i18n.T("Unsupported credential source"))
 	}
 	getenv := envLookup(lookup)
 	value, ok := getenv(copy.credentialRef)
@@ -105,7 +106,7 @@ func (c Connection) WithCredential(opts Options, lookup func(string) (string, bo
 		return copy, result.AuthSetupError("environment_variable_unavailable", copy.credentialRef)
 	}
 	if len(value) > maxSecretBytes {
-		return copy, authError("API Key 过长")
+		return copy, authError(i18n.T("API Key is too long"))
 	}
 	if err := validateSecret(value); err != nil {
 		return copy, err
@@ -117,13 +118,13 @@ func (c Connection) WithCredential(opts Options, lookup func(string) (string, bo
 func selectContext(file File, opts Options, getenv func(string) (string, bool)) (string, bool, error) {
 	if opts.ContextSet {
 		if strings.TrimSpace(opts.Context) == "" {
-			return "", true, inputError("context 不能为空")
+			return "", true, inputError(i18n.T("context must not be empty"))
 		}
 		return opts.Context, true, nil
 	}
 	if value, present := getenv("LANGBOT_CONTEXT"); present {
 		if strings.TrimSpace(value) == "" {
-			return "", true, inputError("LANGBOT_CONTEXT 为空")
+			return "", true, inputError(i18n.T("LANGBOT_CONTEXT is empty"))
 		}
 		return value, true, nil
 	}
@@ -136,18 +137,18 @@ func selectContext(file File, opts Options, getenv func(string) (string, bool)) 
 func selectEndpoint(opts Options, getenv func(string) (string, bool), selected Context, hasContext bool) (string, bool, error) {
 	if opts.EndpointSet {
 		if strings.TrimSpace(opts.Endpoint) == "" {
-			return "", true, inputError("endpoint 不能为空")
+			return "", true, inputError(i18n.T("endpoint must not be empty"))
 		}
 		return opts.Endpoint, true, nil
 	}
 	if value, present := getenv("LANGBOT_ENDPOINT"); present {
 		if strings.TrimSpace(value) == "" {
-			return "", true, inputError("LANGBOT_ENDPOINT 为空")
+			return "", true, inputError(i18n.T("LANGBOT_ENDPOINT is empty"))
 		}
 		return value, true, nil
 	}
 	if !hasContext {
-		return "", false, inputError("未选择 context 且未提供 endpoint")
+		return "", false, inputError(i18n.T("No context selected and no endpoint provided"))
 	}
 	return selected.Endpoint, false, nil
 }
@@ -167,11 +168,11 @@ func applyTimeout(connection *Connection, opts Options, getenv func(string) (str
 		return nil
 	}
 	if strings.TrimSpace(value) == "" {
-		return inputError("timeout 不能为空")
+		return inputError(i18n.T("timeout must not be empty"))
 	}
 	duration, err := time.ParseDuration(value)
 	if err != nil || duration <= 0 {
-		return inputError("timeout 无效")
+		return inputError(i18n.T("Invalid timeout"))
 	}
 	connection.Timeout = duration
 	return nil
@@ -195,10 +196,10 @@ func mustNormalize(value string) string {
 func readSecret(reader io.Reader) (string, error) {
 	data, err := io.ReadAll(io.LimitReader(reader, maxSecretBytes+1))
 	if err != nil {
-		return "", authError("读取 API Key 失败")
+		return "", authError(i18n.T("Failed to read API Key"))
 	}
 	if len(data) > maxSecretBytes {
-		return "", authError("API Key 过长")
+		return "", authError(i18n.T("API Key is too long"))
 	}
 	value := strings.TrimSpace(string(bytes.TrimPrefix(data, []byte("\ufeff"))))
 	if value == "" {
@@ -212,10 +213,10 @@ func readSecret(reader io.Reader) (string, error) {
 
 func validateSecret(value string) error {
 	if strings.TrimSpace(value) == "" {
-		return authError("API Key 为空")
+		return authError(i18n.T("API Key is empty"))
 	}
 	if strings.IndexFunc(value, unicode.IsControl) >= 0 {
-		return authError("API Key 包含非法字符")
+		return authError(i18n.T("API Key contains invalid characters"))
 	}
 	return nil
 }
