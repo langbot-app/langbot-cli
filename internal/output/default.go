@@ -78,6 +78,17 @@ func renderDefault(w io.Writer, value any, command string) error {
 			view[key] = item
 		}
 		data = view
+		for _, action := range []string{"retry", "rollback"} {
+			argv, _ := object[action+"_argv"].([]any)
+			steps, _ := meta["next_steps"].([]any)
+			for _, step := range steps {
+				item, _ := step.(map[string]any)
+				next, _ := item["argv"].([]any)
+				if len(argv) > 0 && len(next) >= len(argv) && reflect.DeepEqual(next[len(next)-len(argv):], argv) {
+					delete(view, action+"_command")
+				}
+			}
+		}
 		if envelope["ok"] == false && isAction(view) {
 			view["outcome_error"] = true
 		}
@@ -398,7 +409,8 @@ func renderLocalAction(w io.Writer, data map[string]any) error {
 		if data["dry_run"] == true {
 			line = i18n.T("Installation plan: LangBot ") + version + " → " + endpoint
 		} else if data["step"] != nil {
-			line = i18n.T("Installation failed\nFailed step: ") + displayCell(data["step"])
+			step := displayCell(data["step"])
+			line = i18n.T("Installation failed\nFailed step: ") + progress.StepTitle(step) + " (" + step + ")"
 			for _, field := range [][2]string{{"log_path", i18n.T("Log")}, {"runtime_log_path", i18n.T("Runtime log")}, {"retry_command", i18n.T("Retry")}, {"rollback_command", i18n.T("Rollback")}} {
 				if value, ok := data[field[0]].(string); ok && value != "" {
 					line += "\n" + field[1] + i18n.Punct("：") + value

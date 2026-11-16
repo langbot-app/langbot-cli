@@ -8,7 +8,7 @@ func init() {
 		"Output language: en or zh-Hans (auto-detected by default)": "输出语言：en 或 zh-Hans（默认自动检测）",
 		"Show full subprocess output":                               "显示完整子进程输出",
 		"Resolve version":                                           "确定版本", "Validate target": "检查目标", "Check ports": "检查端口",
-		"Save deployment record": "保存部署记录", "Download uv": "下载 uv", "Install Python 3.12": "安装 Python 3.12",
+		"Prepare logs": "准备日志", "Save deployment record": "保存部署记录", "Download uv": "下载 uv", "Install Python 3.12": "安装 Python 3.12",
 		"Create virtual environment": "创建虚拟环境", "Install LangBot packages": "安装 LangBot 依赖",
 		"Register startup": "注册自启", "Start service": "启动服务", "Stop service": "停止服务",
 		"Check service health": "检查服务健康", "Remove startup": "删除自启", "Remove data": "清理数据",

@@ -1,18 +1,26 @@
 package progress
 
-import "context"
+import (
+	"context"
+	"github.com/langbot-app/langbot-cli/internal/i18n"
+)
 
 func StepID(ctx context.Context, step string) {
+	Step(ctx, StepTitle(step))
+}
+
+func StepTitle(step string) string {
 	title, ok := stepTitles[step]
 	if !ok {
 		title = step
 	}
-	Step(ctx, title)
+	return i18n.T(title)
 }
 
 var stepTitles = map[string]string{
-	"register": "Register deployment",
-	"stopping": "Stop service", "stopped": "Verify stopped services", "backup_verified": "Verify backup",
+	"prepare_logs": "Prepare logs",
+	"register":     "Register deployment",
+	"stopping":     "Stop service", "stopped": "Verify stopped services", "backup_verified": "Verify backup",
 	"switching": "Write deployment assets", "compose_switched": "Write deployment assets", "starting": "Start service",
 	"verifying": "Check service health", "completed": "Completed", "stop_readback": "Verify stopped services",
 	"backup_preflight": "Check backup prerequisites", "compose_changed": "Verify deployment assets",

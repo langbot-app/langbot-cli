@@ -5,11 +5,56 @@ import (
 	"fmt"
 	"github.com/langbot-app/langbot-cli/internal/deploy"
 	"github.com/langbot-app/langbot-cli/internal/result"
+	"github.com/langbot-app/langbot-cli/internal/telemetry"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
+
+func TestNativePackageFailureStepMatchesTelemetry(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fixture")
+	}
+	for _, enabled := range []bool{false, true} {
+		t.Run(fmt.Sprint(enabled), func(t *testing.T) {
+			root := t.TempDir()
+			t.Setenv("LANGBOT_HOME", root)
+			uvDir := filepath.Join(root, "tools", "uv", deploy.UVVersion)
+			if err := os.MkdirAll(uvDir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(uvDir, "uv"), []byte("#!/bin/sh\nif [ \"$1\" = pip ]; then echo package-failed >&2; exit 1; fi\nexit 0\n"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) }))
+			defer server.Close()
+			client := telemetry.New(telemetry.Options{Home: t.TempDir(), LookupEnv: func(key string) (string, bool) {
+				if key == "LANGBOT_TELEMETRY" && !enabled {
+					return "0", true
+				}
+				if key == "LBCTL_TELEMETRY_ENDPOINT" {
+					return server.URL, true
+				}
+				return "", false
+			}})
+			defer client.Close()
+			ctx, operation := client.Begin(context.Background(), "install")
+			service := New(Dependencies{LocalLocatorPath: filepath.Join(root, "locator.yaml")})
+			value, err := service.installNative(ctx, InstallOptions{Dir: filepath.Join(root, "instance"), Version: "v4.11.7", Port: freeLifecyclePort(t), Region: "global"})
+			if err == nil {
+				t.Fatal("expected package failure")
+			}
+			data := value.Data.(map[string]any)
+			if data["step"] != "install_package" || enabled && operation.Event.Step != data["step"] {
+				t.Fatalf("inconsistent package failure: %+v, %+v", data, operation)
+			}
+		})
+	}
+}
 
 func TestNativeMutationErrorClassification(t *testing.T) {
 	for _, test := range []struct {
@@ -42,11 +87,11 @@ func TestNativeInstallFailureDiagnostics(t *testing.T) {
 		t.Fatal("expected prepare failure")
 	}
 	data := value.Data.(map[string]any)
-	if data["step"] != "prepare_runtime" {
+	if data["step"] != "download_uv" {
 		t.Fatalf("%+v: %v", data, err)
 	}
 	log, readErr := os.ReadFile(data["log_path"].(string))
-	if readErr != nil || !strings.Contains(string(log), "prepare_runtime") {
+	if readErr != nil || !strings.Contains(string(log), "download_uv") {
 		t.Fatalf("%s: %v", log, readErr)
 	}
 	if !strings.Contains(data["retry_command"].(string), nativeShellQuote(dir)) || !strings.Contains(data["rollback_command"].(string), "--dir") {
@@ -61,7 +106,7 @@ func TestNativeInstallFailureDiagnostics(t *testing.T) {
 	}
 	value, err = service.installNative(context.Background(), InstallOptions{Dir: dir, Port: record.Port, Region: "global"})
 	data = value.Data.(map[string]any)
-	if err == nil || data["step"] != "prepare_runtime" || data["version"] != record.CoreVersion {
+	if err == nil || data["step"] != "download_uv" || data["version"] != record.CoreVersion {
 		t.Fatalf("retry did not resume recorded version: %+v: %v", data, err)
 	}
 	saved, readErr := (deploy.Store{Dir: dir}).Read()

@@ -26,6 +26,7 @@ func (s *Service) nativeOutput() io.Writer {
 }
 
 func (s *Service) installNative(ctx context.Context, options InstallOptions) (Result, error) {
+	ctx = telemetry.TrackSteps(ctx)
 	telemetry.SetEnvironment(ctx, "native", "", options.Region, options.Version)
 	timeout, err := operationTimeout(options.Timeout, options.TimeoutSet, 20*time.Minute)
 	if err != nil {
@@ -128,8 +129,7 @@ func (s *Service) installNative(ctx context.Context, options InstallOptions) (Re
 		return Result{Data: data}, nil
 	}
 	locator := deploy.Locator{Path: s.deps.LocalLocatorPath}
-	step := "register"
-	telemetry.SetStep(ctx, step)
+	telemetry.SetStep(ctx, "register")
 	logPath := filepath.Join(dir, "logs", "install.log")
 	var installLog *os.File
 	defer func() {
@@ -152,8 +152,7 @@ func (s *Service) installNative(ctx context.Context, options InstallOptions) (Re
 			} else if err := deploy.ValidateInstallTarget(dir, true); err != nil {
 				return err
 			}
-			step = "write_record"
-			telemetry.SetStep(ctx, step)
+			telemetry.SetStep(ctx, "write_record")
 			if err := (deploy.Store{Dir: dir}).Write(ctx, record); err != nil {
 				return err
 			}
@@ -164,7 +163,7 @@ func (s *Service) installNative(ctx context.Context, options InstallOptions) (Re
 			if err := os.MkdirAll(record.DataDir, 0o700); err != nil {
 				return err
 			}
-			step = "prepare_runtime"
+			telemetry.SetStep(ctx, "prepare_logs")
 			if err := os.MkdirAll(filepath.Dir(logPath), 0o700); err != nil {
 				return err
 			}
@@ -176,17 +175,14 @@ func (s *Service) installNative(ctx context.Context, options InstallOptions) (Re
 			if err := deploy.PrepareNative(ctx, dir, record, io.MultiWriter(progress.Output(ctx, s.nativeOutput()), installLog)); err != nil {
 				return err
 			}
-			step = "install_service"
 			telemetry.SetStep(ctx, "install_service")
 			if err := deploy.InstallNativeService(ctx, dir, record); err != nil {
 				return err
 			}
-			step = "start"
 			telemetry.SetStep(ctx, "start_service")
 			if err := deploy.NativeStart(ctx, dir, record); err != nil {
 				return err
 			}
-			step = "health"
 			telemetry.SetStep(ctx, "health_check")
 			if err := deploy.WaitNativeHealth(ctx, record, s.deps.LocalHTTP); err != nil {
 				return err
@@ -208,7 +204,7 @@ func (s *Service) installNative(ctx context.Context, options InstallOptions) (Re
 		data["status"] = map[string]any{"status": "running"}
 		installAutostartData(data, record, dir)
 	} else {
-		data["step"] = step
+		data["step"] = telemetry.CurrentStep(ctx)
 		for key, path := range map[string]string{"log_path": logPath, "runtime_log_path": filepath.Join(dir, "logs", "langbot.log")} {
 			if info, statErr := os.Stat(path); statErr == nil && info.Mode().IsRegular() {
 				data[key] = path
@@ -216,7 +212,7 @@ func (s *Service) installNative(ctx context.Context, options InstallOptions) (Re
 		}
 		nativeInstallRecovery(data, dir, record, data["changed"] == true)
 		if installLog != nil {
-			fmt.Fprintf(installLog, "%s: %v\n", step, err)
+			fmt.Fprintf(installLog, "%s: %v\n", telemetry.CurrentStep(ctx), err)
 		}
 	}
 	return Result{Data: data}, nativeMutationError(err)

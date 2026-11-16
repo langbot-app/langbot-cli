@@ -7,6 +7,7 @@ import (
 
 	"github.com/langbot-app/langbot-cli/internal/deploy"
 	"github.com/langbot-app/langbot-cli/internal/i18n"
+	"github.com/langbot-app/langbot-cli/internal/progress"
 )
 
 func TestNativeLifecycleRendering(t *testing.T) {
@@ -65,7 +66,7 @@ func TestNativeInstallFailureOmitsUnavailableDetails(t *testing.T) {
 		if err := renderLocalAction(&out, map[string]any{"action": "install", "step": step}); err != nil {
 			t.Fatal(err)
 		}
-		if !strings.Contains(out.String(), "失败步骤："+step) {
+		if !strings.Contains(out.String(), "失败步骤："+progress.StepTitle(step)+" ("+step+")") {
 			t.Fatal(out.String())
 		}
 		for _, absent := range []string{"<nil>", "日志：", "回滚：", "重试："} {
