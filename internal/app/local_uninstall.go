@@ -42,13 +42,18 @@ func (s *Service) Uninstall(ctx context.Context, options UninstallOptions) (Resu
 			if current.DeploymentID != record.DeploymentID {
 				return result.New("precondition", "deployment changed")
 			}
-			telemetry.SetStep(ctx, "stop_service")
-			if err := deploy.NativeStop(operationCtx, diagnostics.Dir, current); err != nil {
-				return err
+			if current.Uninstalled && !options.PurgeData {
+				return nil
 			}
-			telemetry.SetStep(ctx, "remove_service")
-			if err := deploy.RemoveNativeService(operationCtx, current); err != nil {
-				return err
+			if !current.Uninstalled {
+				telemetry.SetStep(ctx, "stop_service")
+				if err := deploy.NativeStop(operationCtx, diagnostics.Dir, current); err != nil {
+					return err
+				}
+				telemetry.SetStep(ctx, "remove_service")
+				if err := deploy.RemoveNativeService(operationCtx, current); err != nil {
+					return err
+				}
 			}
 			if options.PurgeData {
 				telemetry.SetStep(ctx, "purge_data")
@@ -60,7 +65,11 @@ func (s *Service) Uninstall(ctx context.Context, options UninstallOptions) (Resu
 				}
 			}
 			telemetry.SetStep(ctx, "remove_venvs")
-			return os.RemoveAll(filepath.Join(diagnostics.Dir, "venvs"))
+			if err := os.RemoveAll(filepath.Join(diagnostics.Dir, "venvs")); err != nil {
+				return err
+			}
+			current.Uninstalled = true
+			return diagnostics.Store.Write(operationCtx, current)
 		})
 		return Result{Data: map[string]any{"action": "uninstall", "driver": record.Driver, "data_preserved": !options.PurgeData,
 			"backups_preserved": true, "record_preserved": true, "project_removed": err == nil, "purge_data": options.PurgeData}}, nativeMutationError(err)

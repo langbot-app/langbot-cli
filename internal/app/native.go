@@ -80,13 +80,14 @@ func (s *Service) installNative(ctx context.Context, options InstallOptions) (Re
 	}
 	if existing, err := (deploy.Store{Dir: dir}).Read(); err == nil {
 		if existing.Driver != deploy.DriverNative || existing.CoreVersion != record.CoreVersion || existing.Port != record.Port {
-			data := map[string]any{"action": "install", "step": "validate_target"}
+			data := map[string]any{"action": "install", "step": "validate_target", "preflight": true}
 			if existing.Driver == deploy.DriverNative {
 				nativeInstallRecovery(data, dir, existing, false)
 			}
 			return Result{Data: data}, result.New("precondition", fmt.Sprintf("deployment already exists (%s, %s, port %d); reuse its installation options or use lbctl start --endpoint %s", existing.Driver, existing.CoreVersion, existing.Port, nativeShellQuote(existing.Endpoint)))
 		}
 		record = existing
+		record.Uninstalled = false
 		if !deploy.NativeRunning(dir) {
 			record.ServiceManager = deploy.NativeInstallManager(record)
 		}
@@ -101,15 +102,23 @@ func (s *Service) installNative(ctx context.Context, options InstallOptions) (Re
 	telemetry.SetStep(ctx, "register")
 	if err := s.checkDeploymentRegistration(dir, record); err != nil {
 		data["step"] = "register"
+		data["preflight"] = true
 		return Result{Data: data}, err
 	}
 	if !deploy.NativeRunning(dir) {
 		telemetry.SetStep(ctx, "check_ports")
 		if err := deploy.CheckNativePorts(record); err != nil {
 			data["step"] = "check_ports"
+			data["preflight"] = true
+			data["checks"] = append(data["checks"].([]deploy.Check), deploy.Check{Name: "ports", Status: "error", Reason: err.Error()})
+			var conflict *deploy.NativePortError
+			if errors.As(err, &conflict) {
+				data["conflict_port"] = conflict.Port
+			}
 			nativeInstallRecovery(data, dir, record, false)
 			return Result{Data: data}, result.New("precondition", err.Error())
 		}
+		data["checks"] = append(data["checks"].([]deploy.Check), deploy.Check{Name: "ports", Status: "ok", Reason: "原生部署端口可用"})
 	}
 	if options.DryRun {
 		data["dry_run"] = true
@@ -221,8 +230,8 @@ func nativeInstallRecovery(data map[string]any, dir string, record deploy.Record
 	}
 	data["retry_command"], data["retry_argv"] = command, args
 	if rollback {
-		data["rollback_command"] = "lbctl uninstall --endpoint " + nativeShellQuote(record.Endpoint) + " --yes"
-		data["rollback_argv"] = []string{"uninstall", "--endpoint", record.Endpoint, "--yes"}
+		data["rollback_command"] = "lbctl uninstall --dir " + nativeShellQuote(dir) + " --yes"
+		data["rollback_argv"] = []string{"uninstall", "--dir", dir, "--yes"}
 	}
 }
 
@@ -279,6 +288,12 @@ func nativeMutationError(err error) error {
 	var typed *result.Error
 	if errors.As(err, &typed) {
 		return typed
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, deploy.ErrNativeInterrupted) {
+		return result.New("interrupted", err.Error())
+	}
+	if errors.Is(err, deploy.ErrNativeDependency) {
+		return result.New("dependency", err.Error())
 	}
 	return result.New("server", err.Error())
 }

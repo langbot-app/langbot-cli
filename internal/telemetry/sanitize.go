@@ -31,10 +31,14 @@ func SanitizeError(value string) string {
 		return candidate
 	})
 	value = strings.ToValidUTF8(value, "")
-	if len(value) > 2048 {
-		value = value[:2048]
+	for len(value) > 1024 {
+		if _, tail, found := strings.Cut(value, "\n"); found {
+			value = tail
+			continue
+		}
+		value = value[len(value)-1024:]
 		for !utf8.ValidString(value) {
-			value = value[:len(value)-1]
+			value = value[1:]
 		}
 	}
 	return value

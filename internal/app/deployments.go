@@ -74,6 +74,9 @@ func (s *Service) checkDeploymentRegistration(dir string, candidate deploy.Recor
 		if err != nil {
 			return result.New("precondition", "已有本机部署记录不可用，请先诊断")
 		}
+		if record.Uninstalled {
+			continue
+		}
 		if sameLocalEndpoint(record.Endpoint, candidate.Endpoint) ||
 			(record.ComposeProject != "" && record.ComposeProject == candidate.ComposeProject) ||
 			(record.InstanceUUID != "" && record.InstanceUUID == candidate.InstanceUUID) {

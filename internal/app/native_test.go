@@ -2,12 +2,30 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"github.com/langbot-app/langbot-cli/internal/deploy"
+	"github.com/langbot-app/langbot-cli/internal/result"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestNativeMutationErrorClassification(t *testing.T) {
+	for _, test := range []struct {
+		err  error
+		want string
+	}{
+		{fmt.Errorf("uv: %w", deploy.ErrNativeDependency), "dependency"},
+		{fmt.Errorf("%w: %w", deploy.ErrNativeDependency, deploy.ErrNativeInterrupted), "interrupted"},
+		{fmt.Errorf("uv: %w", context.Canceled), "interrupted"},
+		{fmt.Errorf("uv: %w", context.DeadlineExceeded), "interrupted"},
+	} {
+		if got := result.AsError(nativeMutationError(test.err)).Type; got != test.want {
+			t.Fatalf("%v: %s != %s", test.err, got, test.want)
+		}
+	}
+}
 
 func TestNativeInstallFailureDiagnostics(t *testing.T) {
 	root := t.TempDir()
@@ -31,7 +49,7 @@ func TestNativeInstallFailureDiagnostics(t *testing.T) {
 	if readErr != nil || !strings.Contains(string(log), "prepare_runtime") {
 		t.Fatalf("%s: %v", log, readErr)
 	}
-	if !strings.Contains(data["retry_command"].(string), nativeShellQuote(dir)) || !strings.Contains(data["rollback_command"].(string), "--endpoint") {
+	if !strings.Contains(data["retry_command"].(string), nativeShellQuote(dir)) || !strings.Contains(data["rollback_command"].(string), "--dir") {
 		t.Fatalf("invalid recovery commands: %+v", data)
 	}
 	if data["runtime_log_path"] != nil {

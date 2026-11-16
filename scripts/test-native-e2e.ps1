@@ -9,7 +9,7 @@ $installed = $false
 
 function Invoke-Lbctl {
     param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments)
-    $target = if ($Arguments[0] -in @('install', 'autostart')) { @('--dir', $instanceDir) } else { @('--endpoint', $endpoint) }
+    $target = if ('--name' -in $Arguments -or '--dir' -in $Arguments) { @() } elseif ($Arguments[0] -in @('install', 'autostart')) { @('--dir', $instanceDir) } else { @('--endpoint', $endpoint) }
     $output = & lbctl @Arguments @target --output json
     if ($LASTEXITCODE -ne 0) { throw "lbctl $Arguments failed: $output" }
     $envelope = ($output -join "`n") | ConvertFrom-Json
@@ -122,7 +122,7 @@ try {
     if ($LASTEXITCODE -eq 0) { throw 'Duplicate supervisor acquired the lock' }
     if ([int](Get-Content (Join-Path $instanceDir 'native.pid')) -ne $supervisorId) { throw 'Duplicate changed PID ownership' }
     Assert-Health
-    Invoke-Lbctl @('uninstall', '--yes') | Out-Null
+    Invoke-Lbctl @('uninstall', '--name', 'default', '--yes') | Out-Null
     $installed = $false
     Assert-RunValue $false
     if (Get-Process -Id $supervisorId -ErrorAction SilentlyContinue) { throw 'Supervisor survived uninstall' }
@@ -130,6 +130,17 @@ try {
         if (Get-Process -Id $child.ProcessId -ErrorAction SilentlyContinue) { throw 'Python survived uninstall' }
     }
     Write-Host 'Windows native lifecycle, login console, PID/lock and registry checks passed'
+    $installed = $true
+    Invoke-Lbctl @('install', '--name', 'replacement', '--driver', 'native', '--region', 'global', '--version', 'v4.11.7', '--port', '15300', '--yes', '--timeout', '15m') | Out-Null
+    Assert-Health
+    if ((Get-Content $marker) -ne 'resume-preserved') { throw 'Reinstallation lost old data' }
+    Invoke-Lbctl @('stop', '--name', 'replacement') | Out-Null
+    Invoke-Lbctl @('start', '--name', 'replacement') | Out-Null
+    Invoke-Lbctl @('restart', '--name', 'replacement') | Out-Null
+    Assert-Health
+    Invoke-Lbctl @('uninstall', '--name', 'replacement', '--yes') | Out-Null
+    $installed = $false
+    Write-Host 'Uninstall then reinstall under a new name: same port, WebUI HTTP 200, old data preserved'
 } finally {
     if ($installed) {
         & lbctl uninstall --endpoint $endpoint --yes --output json

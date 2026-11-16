@@ -531,6 +531,29 @@ func (s *Service) runLifecycle(ctx context.Context, action string, options Lifec
 
 func (s *Service) lifecycleTarget(ctx context.Context, options CheckOptions) (deploy.Record, deploy.Diagnostics, error) {
 	telemetry.SetStep(ctx, "resolve_target")
+	if options.LocalName != "" || options.LocalDir != "" {
+		if options.ContextSet || options.EndpointSet || options.APIKeyStdin {
+			return deploy.Record{}, deploy.Diagnostics{}, result.New("input", "--name/--dir cannot be combined with connection flags")
+		}
+		dir, err := s.namedLocalDir(options.LocalName, options.LocalDir)
+		if err != nil {
+			return deploy.Record{}, deploy.Diagnostics{}, err
+		}
+		diagnostics, err := s.localDiagnostics(dir)
+		if err != nil {
+			return deploy.Record{}, diagnostics, err
+		}
+		record, err := diagnostics.Store.Read()
+		if err != nil {
+			return record, diagnostics, nativeMutationError(err)
+		}
+		if record.Driver != deploy.DriverNative && record.Driver != deploy.DriverDockerCompose {
+			return record, diagnostics, result.New("incompatible", "unsupported local deployment driver")
+		}
+		telemetry.SetEnvironment(ctx, record.Driver, record.ServiceManager, record.Region, record.CoreVersion)
+		telemetry.SetStep(ctx, "preflight")
+		return record, diagnostics, nil
+	}
 	resolved, discoveryErr := s.discoverActiveEnvironment(ctx, options, false)
 	if discoveryErr != nil && result.AsError(discoveryErr).Kind != "network" {
 		return deploy.Record{}, deploy.Diagnostics{}, discoveryErr

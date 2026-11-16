@@ -1375,11 +1375,13 @@ func newAdoptCommand(service *app.Service, deps Dependencies, flags *globalFlags
 }
 
 func newLifecycleCommand(service *app.Service, deps Dependencies, flags *globalFlags, action string) *cobra.Command {
+	var name, dir string
 	short := map[string]string{"start": "启动本机受管部署", "stop": "停止本机受管部署", "restart": "重启本机受管部署"}[action]
-	return &cobra.Command{
+	command := &cobra.Command{
 		Use: action, Short: short, Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			options := app.LifecycleOptions{CheckOptions: connectionOptions(flags)}
+			options.LocalName, options.LocalDir = name, dir
 			return emitCall(deps, flags, func() (app.Result, error) {
 				switch action {
 				case "start":
@@ -1392,6 +1394,9 @@ func newLifecycleCommand(service *app.Service, deps Dependencies, flags *globalF
 			})
 		},
 	}
+	command.Flags().StringVar(&name, "name", "", "本机实例名称")
+	command.Flags().StringVar(&dir, "dir", "", "本机部署目录")
+	return command
 }
 
 func newUpgradeCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
@@ -1418,6 +1423,7 @@ func newUpgradeCommand(service *app.Service, deps Dependencies, flags *globalFla
 
 func newUninstallCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
 	var purgeData, yes bool
+	var name, dir string
 	cmd := &cobra.Command{
 		Use: "uninstall", Short: "卸载本机受管部署", Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -1425,14 +1431,18 @@ func newUninstallCommand(service *app.Service, deps Dependencies, flags *globalF
 				return emitCommand(deps, flags, app.Result{}, result.New("precondition", "卸载会删除受管容器和网络，请显式传入 --yes"))
 			}
 			return emitCall(deps, flags, func() (app.Result, error) {
+				options := connectionOptions(flags)
+				options.LocalName, options.LocalDir = name, dir
 				return service.Uninstall(cmd.Context(), app.UninstallOptions{
-					CheckOptions: connectionOptions(flags), PurgeData: purgeData, Yes: yes,
+					CheckOptions: options, PurgeData: purgeData, Yes: yes,
 				})
 			})
 		},
 	}
 	cmd.Flags().BoolVar(&purgeData, "purge-data", false, "同时清理 lbctl 受管数据目录")
 	cmd.Flags().BoolVar(&yes, "yes", false, "确认卸载")
+	cmd.Flags().StringVar(&name, "name", "", "本机实例名称")
+	cmd.Flags().StringVar(&dir, "dir", "", "本机部署目录")
 	return cmd
 }
 
@@ -1778,7 +1788,10 @@ func enrichResult(deps Dependencies, flags *globalFlags, value app.Result, err e
 			if flags.commandPath == "install" {
 				label := "检查安装前置条件与参数"
 				if data["step"] == "check_ports" {
-					label = "先释放冲突端口；HTTP 端口可用 --port 更换，5401/5410 冲突可改用 --driver docker"
+					label = "先释放冲突端口，或用 --port 更换 HTTP 端口"
+					if port := data["conflict_port"]; port == 5401 || port == 5410 {
+						label = "先释放 5401/5410 冲突端口，或改用 --driver docker"
+					}
 				}
 				add(label, base, "install", "--help")
 			} else if e.Message == "服务端未明确支持该操作" || e.Message == "服务端明确不支持该操作" {

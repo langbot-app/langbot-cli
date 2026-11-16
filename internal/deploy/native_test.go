@@ -70,9 +70,13 @@ func TestNativePortsRejectRuntimeConflicts(t *testing.T) {
 }
 
 func TestProbeNativePortRejectsListeningSockets(t *testing.T) {
-	for _, address := range []string{":0", "127.0.0.1:0", "[::1]:0"} {
+	for _, address := range []string{":0", "0.0.0.0:0", "127.0.0.1:0", "[::1]:0"} {
 		t.Run(address, func(t *testing.T) {
-			listener, err := net.Listen("tcp", address)
+			network := "tcp"
+			if address == "0.0.0.0:0" {
+				network = "tcp4"
+			}
+			listener, err := net.Listen(network, address)
 			if err != nil {
 				if address == "[::1]:0" {
 					t.Skipf("IPv6 unavailable: %v", err)

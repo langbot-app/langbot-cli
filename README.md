@@ -157,6 +157,8 @@ Native services use systemd (user units for non-root), launchd LaunchAgents, or 
 
 Rerun `lbctl install` with the same name and port to repair a failed native installation. Without `--version`, an existing native deployment retains its recorded Core version, identity, and data while missing runtime dependencies and service registration are repaired. Use `lbctl upgrade --yes` to change Core versions. Registration conflicts identify the existing deployment and print a command to resume that instance instead.
 
+Use `--name <instance>` or `--dir <directory>` with `start`, `stop`, `restart`, `uninstall`, and `autostart` to select a local instance independently of the current context. Do not combine these local selectors with connection flags. A successful native uninstall preserves its record and data but releases its endpoint registration, allowing another name or directory to reuse that port.
+
 Native upgrades prepare a new venv before stopping the service, back up data while excluding rebuildable caches/venvs, and check `/healthz` after switching. A failed health check restores the previous version and data. The newest three backups are retained. Uninstall preserves data and backups unless `--purge-data` is explicitly passed.
 
 On Windows, the supervisor releases its console before acquiring the instance lock or starting Python. Login startup can briefly flash a console, but leaves no persistent console window. Python and process-tree cleanup run without a console window; closing the launching terminal does not stop the instance.

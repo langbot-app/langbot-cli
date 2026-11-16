@@ -45,6 +45,12 @@ func TestNativePortConflictRecovery(t *testing.T) {
 		if strings.Contains(output.String(), "<nil>") || strings.Contains(output.String(), "install.log") || strings.Contains(output.String(), "langbot.log") {
 			t.Fatal(output.String())
 		}
+		if strings.Contains(output.String(), "使用 Docker") || strings.Contains(output.String(), "--driver docker") {
+			t.Fatalf("HTTP conflict suggested Docker: %s", output.String())
+		}
+		if format == "" && (!strings.Contains(output.String(), "1 项失败（端口）") || !strings.Contains(output.String(), "预检阶段没有改动任何文件")) {
+			t.Fatal(output.String())
+		}
 		if format == "json" {
 			var envelope struct {
 				Data map[string]any `json:"data"`
@@ -61,6 +67,79 @@ func TestNativePortConflictRecovery(t *testing.T) {
 					t.Fatal(output.String())
 				}
 			}
+		}
+	}
+}
+
+func TestRecoveryArgvParsesAndUninstallReleasesEndpoint(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("LANGBOT_HOME", root)
+	t.Setenv("LBCTL_NO_UPDATE_CHECK", "1")
+	if err := os.WriteFile(filepath.Join(root, "tools"), []byte("blocked"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+	listener.Close()
+	locator := filepath.Join(root, "locator.yaml")
+	dir := filepath.Join(root, "custom instance")
+	service := app.New(app.Dependencies{LocalLocatorPath: locator})
+	value, err := service.Install(t.Context(), app.InstallOptions{Driver: "native", Name: "original", Dir: dir, Version: "v4.11.7", Port: port, Region: "global"})
+	if err == nil {
+		t.Fatal("expected runtime preparation failure")
+	}
+	data := value.Data.(map[string]any)
+	for _, key := range []string{"retry_argv", "rollback_argv"} {
+		args := data[key].([]string)
+		rootCommand := newRoot(normalizeDependencies(Dependencies{}), &globalFlags{}, service)
+		command, rest, err := rootCommand.Find(args)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := command.ParseFlags(rest); err != nil {
+			t.Fatalf("suggested command %v: %v", args, err)
+		}
+		if err := command.ValidateArgs(command.Flags().Args()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	store := deploy.Store{Dir: dir}
+	record, err := store.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	record.ServiceManager = "process"
+	if err := store.Write(t.Context(), record); err != nil {
+		t.Fatal(err)
+	}
+	deps := Dependencies{Out: io.Discard, Err: io.Discard, LocalLocatorPath: locator, LookupEnv: func(string) (string, bool) { return "", false }, DefaultConfigPath: func() (string, error) { return filepath.Join(root, "config.yaml"), nil }}
+	for _, args := range [][]string{data["rollback_argv"].([]string), {"uninstall", "--endpoint", record.Endpoint, "--yes"}, {"uninstall", "--name", "original", "--yes"}} {
+		record.Uninstalled = false
+		if err := store.Write(t.Context(), record); err != nil {
+			t.Fatal(err)
+		}
+		if code := Execute(t.Context(), args, deps); code != 0 {
+			t.Fatalf("recovery command %v exited %d", args, code)
+		}
+		saved, err := store.Read()
+		if err != nil || !saved.Uninstalled || saved.DeploymentID != record.DeploymentID {
+			t.Fatalf("uninstall did not preserve and release record: %+v: %v", saved, err)
+		}
+	}
+	_, err = service.Install(t.Context(), app.InstallOptions{Driver: "native", Name: "replacement", Dir: filepath.Join(root, "replacement"), Version: record.CoreVersion, Port: port, Region: "global", DryRun: true})
+	if err != nil {
+		t.Fatalf("uninstalled endpoint still reserved: %v", err)
+	}
+	for _, action := range []string{"start", "stop", "restart", "uninstall"} {
+		args := []string{action, "--name", "original", "--endpoint", record.Endpoint, "--yes"}
+		if action != "uninstall" {
+			args = args[:len(args)-1]
+		}
+		if code := Execute(t.Context(), args, deps); code != 2 {
+			t.Fatalf("conflicting target selectors %v exited %d", args, code)
 		}
 	}
 }

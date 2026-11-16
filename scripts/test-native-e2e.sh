@@ -32,9 +32,9 @@ test "$(curl -s -o /dev/null -w '%{http_code}' "$endpoint/")" = 200
 printf 'Autostart disabled without stopping WebUI\n'
 lbctl status --output json
 lbctl logs --tail 5 --output json
-lbctl stop --output json
-lbctl start --output json
-lbctl restart --output json
+lbctl stop --name default --output json
+lbctl start --name default --output json
+lbctl restart --name default --output json
 lbctl autostart status --output json | grep '"autostart": false'
 printf 'data-preserved\n' > "$LANGBOT_HOME/instances/default/data/e2e-marker"
 lbctl upgrade --version v4.11.8 --yes --timeout 15m --output json
@@ -47,6 +47,11 @@ if printf '%s\n' "$autostart" | grep -q '"supported": true'; then
     lbctl autostart status --output json | grep '"autostart": true'
 fi
 lbctl doctor --output json
-lbctl uninstall --yes --output json
+lbctl uninstall --name default --yes --output json
 test "$(cat "$LANGBOT_HOME/instances/default/data/e2e-marker")" = data-preserved
 printf 'Uninstall: stopped, data preserved\n'
+lbctl install --name replacement --driver native --region "$region" --version v4.11.7 --port 15300 --yes --timeout 15m --output json
+test "$(curl -s -o /dev/null -w '%{http_code}' "$endpoint/")" = 200
+test "$(cat "$LANGBOT_HOME/instances/default/data/e2e-marker")" = data-preserved
+lbctl uninstall --name replacement --yes --output json
+printf 'Uninstall then reinstall under a new name: same port, WebUI HTTP 200, old data preserved\n'

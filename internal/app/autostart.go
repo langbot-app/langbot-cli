@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/langbot-app/langbot-cli/internal/deploy"
@@ -9,20 +10,49 @@ import (
 	"github.com/langbot-app/langbot-cli/internal/telemetry"
 )
 
+func (s *Service) namedLocalDir(name, dir string) (string, error) {
+	if name != "" && dir != "" {
+		return "", result.New("input", "--name and --dir are mutually exclusive")
+	}
+	if name == "" {
+		return s.resolveLocalDir(dir)
+	}
+	fallback, err := deploy.InstanceDir(name)
+	if err != nil {
+		return "", result.New("input", err.Error())
+	}
+	dirs, err := (deploy.Locator{Path: s.deps.LocalLocatorPath}).Directories()
+	if err != nil {
+		return "", err
+	}
+	matched := ""
+	for _, candidate := range dirs {
+		record, readErr := (deploy.Store{Dir: candidate}).Read()
+		if errors.Is(readErr, deploy.ErrNotInstalled) || errors.Is(readErr, deploy.ErrNotManaged) {
+			continue
+		}
+		if readErr != nil {
+			return "", readErr
+		}
+		if record.Name == name {
+			if matched != "" && matched != candidate {
+				return "", result.New("precondition", "multiple local deployments have this name; use --dir")
+			}
+			matched = candidate
+		}
+	}
+	if matched != "" {
+		return matched, nil
+	}
+	return fallback, nil
+}
+
 func (s *Service) Autostart(ctx context.Context, action, name, dir, timeout string) (Result, error) {
 	telemetry.SetStep(ctx, "resolve_target")
 	if action != "status" && action != "enable" && action != "disable" {
 		return Result{}, result.New("input", "unknown autostart action")
 	}
-	if name != "" && dir != "" {
-		return Result{}, result.New("input", "--name and --dir are mutually exclusive")
-	}
-	var err error
-	if name != "" {
-		dir, err = deploy.InstanceDir(name)
-	} else {
-		dir, err = s.resolveLocalDir(dir)
-	}
+	dir, err := s.namedLocalDir(name, dir)
 	if err != nil {
 		return Result{}, err
 	}
@@ -41,6 +71,13 @@ func (s *Service) Autostart(ctx context.Context, action, name, dir, timeout stri
 		}
 		telemetry.SetEnvironment(ctx, record.Driver, record.ServiceManager, record.Region, record.CoreVersion)
 		telemetry.SetStep(ctx, "autostart_"+action)
+		if record.Uninstalled {
+			if action != "status" {
+				return result.New("precondition", "deployment is uninstalled; reinstall before changing autostart")
+			}
+			info = deploy.AutostartInfo{Enabled: false, Supported: record.ServiceManager != "process", Mechanism: record.ServiceManager}
+			return nil
+		}
 		if action != "status" {
 			if err := deploy.ChangeAutostart(ctx, dir, record, action == "enable", s.localRunner()); err != nil {
 				return err

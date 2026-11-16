@@ -20,6 +20,9 @@ v4.11.7, then reruns install without `--version`. It verifies that the missing
 venv and service are installed while preserving the deployment ID, recorded
 version, and data. The Windows PowerShell harness covers the same recovery.
 Both run in the three-platform native E2E CI matrix.
+They also uninstall the original instance and install a replacement under a new
+name on the same port, checking WebUI health and preservation of the old data.
+Named lifecycle commands cover both standard and custom instance directories.
 
 The shell harness checks WebUI HTTP 200, exercises
 status/logs/start/stop/restart, upgrades to v4.11.8 while retaining a data marker,

@@ -440,7 +440,14 @@ func renderLocalAction(w io.Writer, data map[string]any) error {
 		}
 	}
 	if action == "install" && data["step"] != nil {
-		return nil
+		if data["preflight"] == true {
+			if _, err := fmt.Fprintln(w, "预检阶段没有改动任何文件。"); err != nil {
+				return err
+			}
+		}
+		if data["step"] != "check_ports" {
+			return nil
+		}
 	}
 	if action == "install" && data["dry_run"] != true && data["changed"] == true && state == "running" && data["step"] == nil {
 		if enabled, ok := data["autostart"].(bool); ok {
@@ -484,6 +491,10 @@ func renderLocalAction(w io.Writer, data map[string]any) error {
 			}
 			if failed == 0 {
 				_, err := fmt.Fprintf(w, "预检：%d 项通过\n", len(checks))
+				return err
+			}
+			if data["step"] == "check_ports" {
+				_, err := fmt.Fprintf(w, "预检：%d 项通过，%d 项失败（端口）\n", len(checks)-failed, failed)
 				return err
 			}
 		}
