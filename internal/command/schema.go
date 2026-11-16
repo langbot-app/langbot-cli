@@ -437,7 +437,7 @@ func modelMeta(operation string, requiredFlags ...string) schemaCommandMeta {
 		meta.Operations = append(meta.Operations, preconditionTemplate("model.{type}.get", modelTypes))
 	}
 	if operation == "list" {
-		meta.Operations = append(meta.Operations, schemaOperation{Template: "model.{type}.list", Values: modelTypes, When: &schemaCondition{Flag: "type", Absent: true}})
+		meta.Operations = append(meta.Operations, schemaOperation{Template: "model.{type}.list", Values: []string{"llm", "embedding", "rerank"}, When: &schemaCondition{Flag: "type", Absent: true}})
 	} else {
 		meta.RequiredFlags["type"] = true
 	}

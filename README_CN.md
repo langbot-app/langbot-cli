@@ -604,4 +604,4 @@ lbctl plugin permissions confirm <author> <name> --capability storage.plugin --o
 
 操作目录按权限、principal 和 exposure 过滤，不等于全部友好命令。目录隐藏但 CLI 已登记的操作可使用固定契约调用，最终权限仍由 Core 校验。Codex 登录、Assistant、Pipeline 迁移、Workspace 成员/邀请管理等 account-only 操作会被 Core 拒绝 API Key 调用。知识库迁移旧路由同样要求成员身份，`preview` 对应 `/api/v1/knowledge/migration/status`。本 CLI 使用 API Key，不绕过这些限制。
 
-图片、插件本地包/配置文件、Skill ZIP 预览/安装继续使用已有 multipart 路由。图片读取依赖 Core 将存储的二进制内容正确序列化为操作响应。system wizard 属于 WebUI 引导进度，不是无界面资源管理操作，因此不提供对应命令。
+图片、插件本地包/配置文件、Skill ZIP 预览/安装继续使用已有 multipart 路由。实测 Core 通用入口读取 PNG 时返回 HTTP 500，`file image get` 需要 Core 支持二进制安全的响应序列化。system wizard 属于 WebUI 引导进度，不是无界面资源管理操作，因此不提供对应命令。
