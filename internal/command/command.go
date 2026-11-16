@@ -21,10 +21,12 @@ import (
 	"github.com/langbot-app/langbot-cli/internal/output"
 	"github.com/langbot-app/langbot-cli/internal/requestbody"
 	"github.com/langbot-app/langbot-cli/internal/result"
+	"github.com/langbot-app/langbot-cli/internal/telemetry"
 	"github.com/spf13/cobra"
 )
 
 type Dependencies struct {
+	Telemetry         *telemetry.Client
 	In                io.Reader
 	Out               io.Writer
 	Err               io.Writer
@@ -42,6 +44,8 @@ type Dependencies struct {
 }
 
 type globalFlags struct {
+	operationError error
+
 	asMember    bool
 	listView    listViewOptions
 	config      string
@@ -76,7 +80,34 @@ func Execute(ctx context.Context, args []string, deps Dependencies) int {
 	root := newRoot(deps, flags, service)
 	root.AddCommand(newUpdateCommand(deps, flags))
 	root.SetArgs(args)
+	var operation *telemetry.Operation
+	if selected, _, _ := root.Find(args); selected != nil && selected.Parent() == root {
+		switch selected.Name() {
+		case "install", "upgrade", "uninstall", "start", "restart", "update":
+			if !hasHelpFlag(args) {
+				ctx, operation = deps.Telemetry.Begin(ctx, selected.Name())
+			}
+		}
+	}
 	executed, err := root.ExecuteContextC(ctx)
+	if operation != nil {
+		operationErr := err
+		if operationErr == nil {
+			operationErr = flags.operationError
+		}
+		if operationErr == nil && flags.exitCode != 0 {
+			operationErr = fmt.Errorf("output failed")
+		}
+		code := ""
+		if operationErr != nil {
+			code = result.AsError(operationErr).Type
+		}
+		var typed *result.Error
+		if err != nil && !errors.As(err, &typed) {
+			code = "input"
+		}
+		operation.Finish(operationErr, code)
+	}
 	passiveUpdateNotice(deps, flags)
 	if err != nil {
 		selectOutput(executed, flags)
@@ -1555,6 +1586,7 @@ func newIdentityCommand(service *app.Service, deps Dependencies, flags *globalFl
 }
 
 func emitCommand(deps Dependencies, flags *globalFlags, value app.Result, err error) error {
+	flags.operationError = err
 	flags.exitCode = emit(deps, flags, value, err)
 	return nil
 }

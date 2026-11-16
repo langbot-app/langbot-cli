@@ -9,6 +9,7 @@ import (
 
 	"github.com/langbot-app/langbot-cli/internal/deploy"
 	"github.com/langbot-app/langbot-cli/internal/result"
+	"github.com/langbot-app/langbot-cli/internal/telemetry"
 )
 
 type UninstallOptions struct {
@@ -41,13 +42,16 @@ func (s *Service) Uninstall(ctx context.Context, options UninstallOptions) (Resu
 			if current.DeploymentID != record.DeploymentID {
 				return result.New("precondition", "deployment changed")
 			}
+			telemetry.SetStep(ctx, "stop_service")
 			if err := deploy.NativeStop(operationCtx, diagnostics.Dir, current); err != nil {
 				return err
 			}
+			telemetry.SetStep(ctx, "remove_service")
 			if err := deploy.RemoveNativeService(operationCtx, current); err != nil {
 				return err
 			}
 			if options.PurgeData {
+				telemetry.SetStep(ctx, "purge_data")
 				if current.DataDir != filepath.Join(diagnostics.Dir, "data") {
 					return result.New("precondition", "invalid data directory")
 				}
@@ -55,6 +59,7 @@ func (s *Service) Uninstall(ctx context.Context, options UninstallOptions) (Resu
 					return err
 				}
 			}
+			telemetry.SetStep(ctx, "remove_venvs")
 			return os.RemoveAll(filepath.Join(diagnostics.Dir, "venvs"))
 		})
 		return Result{Data: map[string]any{"action": "uninstall", "driver": record.Driver, "data_preserved": !options.PurgeData,
@@ -83,6 +88,7 @@ func (s *Service) Uninstall(ctx context.Context, options UninstallOptions) (Resu
 			"record_preserved": true, "backups_preserved": true,
 		}
 		response = Result{Data: data}
+		telemetry.SetStep(ctx, "compose_down")
 		command, commandErr := diagnostics.Runner.Compose(operationCtx, current, "down", "--remove-orphans")
 		readbackCtx, readbackCancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		defer readbackCancel()
@@ -98,6 +104,7 @@ func (s *Service) Uninstall(ctx context.Context, options UninstallOptions) (Resu
 		}
 		data["project_removed"] = true
 		if options.PurgeData {
+			telemetry.SetStep(ctx, "purge_data")
 			purged, recoveryPath, purgeErr := deploy.PurgeData(diagnostics.Dir, current)
 			data["data_purged"] = purged
 			if recoveryPath != "" {

@@ -8,6 +8,7 @@ import (
 
 	"github.com/langbot-app/langbot-cli/internal/command"
 	"github.com/langbot-app/langbot-cli/internal/deploy"
+	"github.com/langbot-app/langbot-cli/internal/telemetry"
 )
 
 var (
@@ -31,11 +32,14 @@ func main() {
 		}
 		return
 	}
+	reporter := telemetry.New(telemetry.Options{Version: version})
 	code := command.Execute(ctx, os.Args[1:], command.Dependencies{
-		In: os.Stdin, Out: os.Stdout, Err: os.Stderr,
+		Telemetry: reporter,
+		In:        os.Stdin, Out: os.Stdout, Err: os.Stderr,
 		LookupEnv: os.LookupEnv,
 		Version:   version, Commit: commit, BuildDate: buildDate,
 	})
+	reporter.Close()
 	stop()
 	os.Exit(code)
 }

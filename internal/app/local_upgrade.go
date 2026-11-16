@@ -12,6 +12,7 @@ import (
 	"github.com/langbot-app/langbot-cli/internal/api"
 	"github.com/langbot-app/langbot-cli/internal/deploy"
 	"github.com/langbot-app/langbot-cli/internal/result"
+	"github.com/langbot-app/langbot-cli/internal/telemetry"
 )
 
 const upgradeTimeout = 20 * time.Minute
@@ -30,6 +31,7 @@ func (s *Service) Upgrade(ctx context.Context, options UpgradeOptions) (Result, 
 		return Result{}, result.New("precondition", "升级需要显式 --yes")
 	}
 	targetVersion := strings.TrimSpace(options.Version)
+	telemetry.SetStep(ctx, "resolve_version")
 	if targetVersion == "" {
 		var err error
 		targetVersion, err = s.latestRelease(ctx)
@@ -178,6 +180,7 @@ func (s *Service) Upgrade(ctx context.Context, options UpgradeOptions) (Result, 
 			return nil
 		}
 		fail := func(step, message string) error {
+			telemetry.SetStep(ctx, step)
 			state.Phase = "recovery_required"
 			state.FailureStep = step
 			_ = deploy.WriteUpgradeState(diagnostics.Dir, state)

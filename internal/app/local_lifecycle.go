@@ -24,6 +24,7 @@ import (
 	"github.com/langbot-app/langbot-cli/internal/deploy"
 	endpointutil "github.com/langbot-app/langbot-cli/internal/endpoint"
 	"github.com/langbot-app/langbot-cli/internal/result"
+	"github.com/langbot-app/langbot-cli/internal/telemetry"
 )
 
 var ansiEscapePattern = regexp.MustCompile(`\x1b\[[0-9;]*[A-Za-z]`)
@@ -73,6 +74,7 @@ type LocalLogsOptions struct {
 }
 
 func (s *Service) Install(ctx context.Context, options InstallOptions) (Result, error) {
+	telemetry.SetEnvironment(ctx, options.Driver, "", options.Region, options.Version)
 	if options.Driver == deploy.DriverNative {
 		return s.installNative(ctx, options)
 	}
@@ -87,6 +89,7 @@ func (s *Service) Install(ctx context.Context, options InstallOptions) (Result, 
 		return Result{}, result.New("input", "部署目录无效")
 	}
 	version := strings.TrimSpace(options.Version)
+	telemetry.SetStep(ctx, "resolve_version")
 	if version == "" {
 		version, err = s.latestRelease(operationCtx)
 		if err != nil {
@@ -108,11 +111,13 @@ func (s *Service) Install(ctx context.Context, options InstallOptions) (Result, 
 		}
 	}
 	deploy.ApplyRegion(&settings)
+	telemetry.SetEnvironment(ctx, "docker", settings.ServiceManager, settings.Region, version)
 	if err := assets.SetImageRepository(settings.ImageRepository); err != nil {
 		return Result{}, result.New("input", err.Error())
 	}
 	assets.SetPackageIndex(settings.PyPIIndex)
 	runner := s.localRunner()
+	telemetry.SetStep(ctx, "preflight")
 	checks, preflightErr := deploy.PreflightInstall(operationCtx, assets, runner)
 	plan := installPlanData(assets, checks)
 	for key, value := range map[string]any{"url": assets.Record("", "").Endpoint, "driver": deploy.DriverDockerCompose, "instance_dir": dir, "version": version, "name": options.Name, "region": settings.Region, "service_manager": "docker_compose"} {
@@ -143,6 +148,7 @@ func (s *Service) Install(ctx context.Context, options InstallOptions) (Result, 
 			if occupiedErr != nil || occupied {
 				return result.New("precondition", "受管 Compose project 不可用")
 			}
+			telemetry.SetStep(ctx, "pull_image")
 			pull, pullErr := runner.Docker(operationCtx, "pull", assets.Image)
 			if pullErr != nil {
 				return mapDockerCommandError(pull, pullErr, "拉取官方镜像失败")
@@ -158,6 +164,7 @@ func (s *Service) Install(ctx context.Context, options InstallOptions) (Result, 
 			record := assets.Record(deploymentID, imageDigest)
 			record.Name, record.Region, record.PyPIIndex, record.PythonMirror, record.ImageRepository, record.ServiceManager = settings.Name, settings.Region, settings.PyPIIndex, settings.PythonMirror, settings.ImageRepository, settings.ServiceManager
 			store := deploy.Store{Dir: assets.Dir}
+			telemetry.SetStep(ctx, "write_record")
 			if err := store.Write(operationCtx, record); err != nil {
 				return mapStoreWriteError(err)
 			}
@@ -167,6 +174,7 @@ func (s *Service) Install(ctx context.Context, options InstallOptions) (Result, 
 			if err := locator.Write(assets.Dir); err != nil {
 				return result.New("server", "写入本机部署定位记录失败")
 			}
+			telemetry.SetStep(ctx, "compose_up")
 			command, commandErr := runner.Compose(operationCtx, record, "up", "-d")
 			if commandErr != nil {
 				readbackCtx, readbackCancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
@@ -180,6 +188,7 @@ func (s *Service) Install(ctx context.Context, options InstallOptions) (Result, 
 				response = Result{Data: map[string]any{"action": "install", "changed": true, "step": "compose_up_failed", "record": record, "status": status}}
 				return uncertainDockerError(command, commandErr, "安装命令结果无法确认")
 			}
+			telemetry.SetStep(ctx, "health_check")
 			if err := s.waitForLocalHTTP(operationCtx, record.Endpoint); err != nil {
 				response = Result{Data: lifecycleFailureData("install", record, "health_check_failed")}
 				return result.New("result_unknown", "容器已启动，但 LangBot HTTP 健康状态未确认")
@@ -487,6 +496,7 @@ func (s *Service) runLifecycle(ctx context.Context, action string, options Lifec
 			return result.New("precondition", "部署未运行，请使用 start")
 		}
 		args := map[string][]string{"start": {"up", "-d"}, "stop": {"stop"}, "restart": {"restart"}}[action]
+		telemetry.SetStep(ctx, "compose_"+action)
 		command, commandErr := diagnostics.Runner.Compose(operationCtx, current, args...)
 		if commandErr == nil && (action == "start" || action == "restart") {
 			_ = s.waitForLocalHTTP(operationCtx, current.Endpoint)
@@ -517,6 +527,7 @@ func (s *Service) runLifecycle(ctx context.Context, action string, options Lifec
 }
 
 func (s *Service) lifecycleTarget(ctx context.Context, options CheckOptions) (deploy.Record, deploy.Diagnostics, error) {
+	telemetry.SetStep(ctx, "resolve_target")
 	resolved, discoveryErr := s.discoverActiveEnvironment(ctx, options, false)
 	if discoveryErr != nil && result.AsError(discoveryErr).Kind != "network" {
 		return deploy.Record{}, deploy.Diagnostics{}, discoveryErr
@@ -536,6 +547,8 @@ func (s *Service) lifecycleTarget(ctx context.Context, options CheckOptions) (de
 	if resolved.Record.Driver != deploy.DriverDockerCompose && resolved.Record.Driver != deploy.DriverNative {
 		return deploy.Record{}, deploy.Diagnostics{}, result.New("incompatible", "当前本机部署不支持 Docker Compose 生命周期操作")
 	}
+	telemetry.SetEnvironment(ctx, resolved.Record.Driver, resolved.Record.ServiceManager, resolved.Record.Region, resolved.Record.CoreVersion)
+	telemetry.SetStep(ctx, "preflight")
 	return resolved.Record, *resolved.Diagnostics, nil
 }
 

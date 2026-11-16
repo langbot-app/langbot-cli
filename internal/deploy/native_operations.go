@@ -12,6 +12,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/langbot-app/langbot-cli/internal/telemetry"
 )
 
 func NativeCapabilities() []Check {
@@ -121,6 +123,7 @@ func nativeCopyData(ctx context.Context, source, target string) error {
 }
 
 func BackupNative(ctx context.Context, dir string, record Record) (string, error) {
+	telemetry.SetStep(ctx, "backup_data")
 	root := filepath.Join(dir, "backups")
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		return "", err
@@ -171,6 +174,7 @@ func upgradeNative(ctx context.Context, dir string, current Record, version stri
 	if err := operations.prepare(ctx, dir, next, out); err != nil {
 		return "", err
 	}
+	telemetry.SetStep(ctx, "stop_service")
 	if err := operations.stop(ctx, dir, current); err != nil {
 		return "", err
 	}
@@ -180,11 +184,14 @@ func upgradeNative(ctx context.Context, dir string, current Record, version stri
 		return "", err
 	}
 	store := Store{Dir: dir}
+	telemetry.SetStep(ctx, "write_record")
 	err = store.Write(ctx, next)
 	if err == nil {
+		telemetry.SetStep(ctx, "start_service")
 		err = operations.start(ctx, dir, next)
 	}
 	if err == nil {
+		telemetry.SetStep(ctx, "health_check")
 		healthCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 		err = operations.health(healthCtx, next, client)
 		cancel()

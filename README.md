@@ -163,6 +163,8 @@ Core 4.11.x native deployments require exclusive runtime ports 5401 (plugin debu
 
 Update notices read a local cache only; a timeout-bounded detached check refreshes it at most daily. Notices appear only on a terminal, never for JSON/YAML, `CI`, or `LBCTL_NO_UPDATE_CHECK=1`. `status` includes current/latest lbctl and Core versions when cached. `install --output json` includes `url`, `driver`, `instance_dir`, `version`, `name`, `region`, and `service_manager`.
 
+Lifecycle commands send anonymous operation outcomes and redacted failure details directly to LangBot Space, even when Core cannot start. Set `LANGBOT_TELEMETRY=0` or `DO_NOT_TRACK=1` to opt out. See [lifecycle telemetry](dev-docs/telemetry.md) for collected fields, timeout guarantees, and local testing.
+
 Discover and register multiple local LangBot Compose instances:
 
 ```sh
