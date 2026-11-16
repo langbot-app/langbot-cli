@@ -30,6 +30,7 @@ type Display struct {
 	visible           bool
 	pending           []string
 	seen              map[string]bool
+	phases            map[string]string
 	start             time.Time
 	done, exited      chan struct{}
 	once              sync.Once
@@ -256,9 +257,9 @@ func (reader *downloadReader) Read(data []byte) (int, error) {
 		reader.last = time.Now()
 		if display, ok := reader.ctx.Value(contextKey{}).(*Display); ok {
 			display.mu.Lock()
-			text := fmt.Sprintf("%d bytes", reader.read)
+			text := byteSize(reader.read)
 			if reader.total > 0 {
-				text += fmt.Sprintf(" / %d bytes (%d%%)", reader.total, reader.read*100/reader.total)
+				text += fmt.Sprintf(" / %s (%d%%)", byteSize(reader.total), reader.read*100/reader.total)
 			}
 			display.tail = text
 			if display.verbose && !display.carriage {
@@ -268,4 +269,16 @@ func (reader *downloadReader) Read(data []byte) (int, error) {
 		}
 	}
 	return count, err
+}
+
+func byteSize(size int64) string {
+	for _, unit := range []struct {
+		bytes int64
+		name  string
+	}{{1 << 30, "GiB"}, {1 << 20, "MiB"}, {1 << 10, "KiB"}} {
+		if size >= unit.bytes {
+			return fmt.Sprintf("%.1f %s", float64(size)/float64(unit.bytes), unit.name)
+		}
+	}
+	return fmt.Sprintf("%d B", size)
 }

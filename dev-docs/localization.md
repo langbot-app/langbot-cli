@@ -30,12 +30,16 @@ disables telemetry independently of language and notice state.
 Progress is on stderr and stays silent for operations shorter than 400 ms.
 Completed steps use a leading check mark and right-aligned elapsed time;
 the active step shows its position in the operation plan. Repeated registration
-checks share one visible step. TTYs use one animated line with elapsed time and the
+checks share one visible step. Native installation has six visible phases:
+prerequisites, uv download, Python, packages, service startup and health.
+Internal steps update the active region without adding completed rows;
+telemetry and failure diagnostics retain their fine-grained identifiers.
+TTYs use one animated line with elapsed time and the
 latest subprocess line. Redirected output, `NO_COLOR`, `TERM=dumb`, JSON/YAML
 output and consoles without Windows VT support use plain lines. `--verbose`
 shows full subprocess output; otherwise failures show the captured tail.
 Installation logs retain full subprocess output. Downloads show byte counts
-and percentages when the server supplies a content length.
+and percentages when the server supplies a content length, using KiB/MiB/GiB.
 
 Panels use terminal cell widths rather than rune or byte counts. CJK, fullwidth
 punctuation and emoji occupy two cells; middle dots, arrows and checks occupy
@@ -96,5 +100,9 @@ also launch deployment; preserve those additional steps when synchronizing:
 - Copy the PowerShell outer exception handler for clean stderr failures.
   It sets `$LASTEXITCODE = 1` and returns without terminating an interactive
   `irm ... | iex` shell; wrappers should propagate that code when needed.
+- Keep the PowerShell source ASCII-only, without a BOM. Chinese strings use
+  runtime character escapes so Windows PowerShell 5.1 can execute an HTTP
+  `text/plain` response without charset metadata. The Windows CI fixture runs
+  `irm | iex` in both languages with successful and failed downloads.
 - Preserve existing network-region detection, mirror selection and deployment
   arguments. These changes do not alter network policy.

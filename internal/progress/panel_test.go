@@ -2,6 +2,7 @@ package progress
 
 import (
 	"bytes"
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -92,6 +93,26 @@ func TestStepTotalsAlignmentAndDuplicates(t *testing.T) {
 	display.Finish(true)
 	if !strings.Contains(active, "[2/12]") || Width(active) != 76 || strings.Count(out.String(), "Register deployment") != 1 || strings.Contains(out.String(), "Working") || strings.Contains(out.String(), "...") {
 		t.Fatal(active, out.String())
+	}
+}
+
+func TestNativeInstallUsesSixVisiblePhases(t *testing.T) {
+	var out bytes.Buffer
+	display := New(&out, func(string) (string, bool) { return "", false }, false, false)
+	ctx := WithContext(context.Background(), display)
+	NativeInstallPlan(ctx)
+	display.mu.Lock()
+	display.created = time.Now().Add(-time.Second)
+	display.mu.Unlock()
+	for _, step := range []string{"resolve_version", "validate_target", "register", "check_ports", "register", "write_record", "prepare_logs", "download_uv", "install_python", "create_venv", "install_package", "install_service", "start_service", "health_check"} {
+		StepID(ctx, step)
+	}
+	display.Finish(true)
+	if strings.Count(out.String(), "✓") != 6 || display.number != 6 || display.total != 6 {
+		t.Fatal(out.String())
+	}
+	if got := byteSize(21699161); got != "20.7 MiB" {
+		t.Fatal(got)
 	}
 }
 

@@ -40,6 +40,9 @@ jobs:
             $errors | ForEach-Object { Write-Error $_.Message }
             exit 1
           }
+      - name: Test PowerShell 5.1 installer without HTTP charset
+        if: runner.os == 'Windows'
+        run: python scripts/test-installer-ps51.py
   native-e2e:
     strategy:
       fail-fast: false

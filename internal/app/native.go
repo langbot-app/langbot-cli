@@ -27,7 +27,7 @@ func (s *Service) nativeOutput() io.Writer {
 
 func (s *Service) installNative(ctx context.Context, options InstallOptions) (Result, error) {
 	ctx = telemetry.TrackSteps(ctx)
-	progress.Plan(ctx, 12)
+	progress.NativeInstallPlan(ctx)
 	telemetry.SetEnvironment(ctx, "native", "", options.Region, options.Version)
 	timeout, err := operationTimeout(options.Timeout, options.TimeoutSet, 20*time.Minute)
 	if err != nil {

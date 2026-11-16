@@ -2,6 +2,7 @@ package i18n
 
 func init() {
 	for key, value := range map[string]string{
+		"Prepare Python runtime":                                                  "准备 Python 运行环境",
 		"Production-grade AI messaging bot platform · Open source":                "生产级 AI 即时通信机器人开发平台 · 开源",
 		"Website langbot.app · Docs docs.langbot.app · Plugins space.langbot.app": "官网 langbot.app · 文档 docs.langbot.app · 插件市场 space.langbot.app",
 		"Working": "处理中", "LangBot is ready": "LangBot 已就绪", "Native deployment": "原生部署",

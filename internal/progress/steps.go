@@ -6,10 +6,46 @@ import (
 )
 
 func StepID(ctx context.Context, step string) {
+	if display, ok := ctx.Value(contextKey{}).(*Display); ok {
+		display.mu.Lock()
+		phase := display.phases[step]
+		display.mu.Unlock()
+		if phase != "" {
+			display.Step(phase)
+			display.mu.Lock()
+			display.tail = StepTitle(step)
+			display.mu.Unlock()
+			return
+		}
+	}
 	if step == "prepare_logs" {
 		return
 	}
 	Step(ctx, StepTitle(step))
+}
+
+func NativeInstallPlan(ctx context.Context) {
+	if display, ok := ctx.Value(contextKey{}).(*Display); ok {
+		display.mu.Lock()
+		defer display.mu.Unlock()
+		display.total = 6
+		display.phases = map[string]string{}
+		for _, phase := range []struct {
+			title string
+			steps []string
+		}{
+			{"Check prerequisites", []string{"resolve_version", "validate_target", "register", "check_ports", "write_record", "prepare_logs"}},
+			{"Download uv", []string{"download_uv"}},
+			{"Install Python 3.12", []string{"install_python", "create_venv"}},
+			{"Install LangBot packages", []string{"install_package"}},
+			{"Start service", []string{"install_service", "start_service"}},
+			{"Check service health", []string{"health_check"}},
+		} {
+			for _, step := range phase.steps {
+				display.phases[step] = phase.title
+			}
+		}
+	}
 }
 
 func StepTitle(step string) string {

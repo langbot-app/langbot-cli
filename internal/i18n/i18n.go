@@ -109,15 +109,6 @@ func Human(key string) string {
 	}
 	if Current() == Chinese {
 		if value, ok := chinese[key]; ok && value != "" {
-			if index := strings.Index(value, " / "); index >= 0 && (key == "Autostart enabled" || key == "Autostart disabled" || strings.TrimSpace(key) == "Instance name" || key == "Instance directory" || key == "Manage startup" || key == "Autostart ") {
-				if key == "Autostart " {
-					return value[:index] + " "
-				}
-				return value[:index]
-			}
-			if key == "Disable: %v\n" {
-				return "关闭：%v\n"
-			}
 			return value
 		}
 	}
@@ -136,6 +127,13 @@ func Source(key string) string {
 var originals = func() map[string]string {
 	values := make(map[string]string, len(chinese))
 	for key, value := range chinese {
+		values[key] = value
+	}
+	for key, value := range map[string]string{
+		"Autostart enabled": "已开启开机/登录自启 / Autostart enabled", "Autostart disabled": "自启未开启 / Autostart disabled",
+		"Instance name ": "本机实例名称 / Instance name", "Instance directory": "本机部署目录 / Instance directory",
+		"Manage startup": "管理开机/登录自启 / Manage startup", "Autostart ": "自启 / Autostart ", "Disable: %v\n": "关闭 / Disable: %v\n",
+	} {
 		values[key] = value
 	}
 	return values

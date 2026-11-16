@@ -105,6 +105,31 @@ func TestMultipleAdoptionsAndLifecycleSelectCorrectDeployment(t *testing.T) {
 	if err != nil || status.Data.(ActiveEnvironment).Runtime.DeploymentID != ids["first"] {
 		t.Fatalf("status=%+v error=%v", status, err)
 	}
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("AppData", t.TempDir())
+	checks := 0
+	service.deps.LatestRelease = func(context.Context) (string, error) {
+		checks++
+		return "v4.11.8", nil
+	}
+	human := options
+	human.Human = true
+	updated, updateErr := service.Status(ctx, human)
+	encoded, _ := json.Marshal(updated.Data)
+	if updateErr != nil || checks != 1 || !strings.Contains(string(encoded), `"latest":"v4.11.8"`) {
+		t.Fatalf("human update check: %s, %v, calls=%d", encoded, updateErr, checks)
+	}
+	service.deps.LatestRelease = func(context.Context) (string, error) { checks++; return "", context.DeadlineExceeded }
+	if _, updateErr := service.Status(ctx, human); updateErr != nil {
+		t.Fatalf("failed version check affected status: %v", updateErr)
+	}
+	checks = 0
+	service.Status(ctx, options)
+	human.Endpoint = "https://remote.example"
+	service.Status(ctx, human)
+	if checks != 0 {
+		t.Fatalf("update check ran for machine or remote status: %d", checks)
+	}
 	if _, err := service.Stop(ctx, LifecycleOptions{}); err != nil {
 		t.Fatal(err)
 	}
