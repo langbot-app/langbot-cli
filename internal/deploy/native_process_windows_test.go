@@ -22,8 +22,12 @@ func TestNativeWindowsConsole(t *testing.T) {
 		if mode == "attached" && before == 0 {
 			t.Fatal("helper did not receive a console")
 		}
-		if mode == "child" && before != 0 {
-			t.Fatal("native child received a console")
+		if mode == "child" {
+			window, _, _ := windows.NewLazySystemDLL("kernel32.dll").NewProc("GetConsoleWindow").Call()
+			visible, _, _ := windows.NewLazySystemDLL("user32.dll").NewProc("IsWindowVisible").Call(window)
+			if visible != 0 {
+				t.Fatal("native child received a visible console window")
+			}
 		}
 		if err := releaseNativeConsole(); err != nil {
 			t.Fatal(err)
@@ -46,6 +50,9 @@ func TestNativeWindowsConsole(t *testing.T) {
 				detachNative(command)
 			case "child":
 				configureNativeChild(command)
+				if command.SysProcAttr.CreationFlags&windows.CREATE_NO_WINDOW == 0 {
+					t.Fatal("native child is missing CREATE_NO_WINDOW")
+				}
 			}
 			if output, err := command.CombinedOutput(); err != nil {
 				t.Fatalf("%v: %s", err, output)

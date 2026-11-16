@@ -40,16 +40,22 @@ function Assert-Health {
     Write-Host 'Health and WebUI HTTP 200'
 }
 
-function Assert-NoConsole {
-    param([int]$ProcessId)
+function Assert-NoConsoleWindow {
+    param([int]$ProcessId, [bool]$Detached = $false)
     $probe = @'
 import ctypes, sys
 kernel = ctypes.WinDLL('kernel32', use_last_error=True)
 kernel.FreeConsole()
-assert not kernel.AttachConsole(int(sys.argv[1])), 'process still has a console'
-assert ctypes.get_last_error() == 6, ctypes.get_last_error()
+if kernel.AttachConsole(int(sys.argv[1])):
+    assert sys.argv[2] != 'True', 'supervisor still has a console'
+    kernel.GetConsoleWindow.restype = ctypes.c_void_p
+    user = ctypes.WinDLL('user32')
+    user.IsWindowVisible.argtypes = [ctypes.c_void_p]
+    assert not user.IsWindowVisible(kernel.GetConsoleWindow()), 'visible console window'
+else:
+    assert ctypes.get_last_error() == 6, ctypes.get_last_error()
 '@
-    & (Join-Path $instanceDir 'venvs/v4.11.7/Scripts/python.exe') -c $probe $ProcessId
+    & (Join-Path $instanceDir 'venvs/v4.11.7/Scripts/python.exe') -c $probe $ProcessId $Detached.ToString()
     if ($LASTEXITCODE -ne 0) { throw "Console probe failed for $ProcessId" }
 }
 
@@ -95,10 +101,10 @@ try {
     Assert-Health
     $supervisorId = [int](Get-Content (Join-Path $instanceDir 'native.pid'))
     if ($supervisorId -ne $supervisor.Id) { throw 'Wrong supervisor owns PID file' }
-    Assert-NoConsole $supervisorId
+    Assert-NoConsoleWindow $supervisorId $true
     $children = @(Get-CimInstance Win32_Process -Filter "ParentProcessId = $supervisorId" | Where-Object Name -eq 'python.exe')
     if ($children.Count -ne 1) { throw 'Expected one Python child' }
-    Assert-NoConsole $children[0].ProcessId
+    Assert-NoConsoleWindow $children[0].ProcessId
     & lbctl _native-run $instanceDir
     if ($LASTEXITCODE -eq 0) { throw 'Duplicate supervisor acquired the lock' }
     if ([int](Get-Content (Join-Path $instanceDir 'native.pid')) -ne $supervisorId) { throw 'Duplicate changed PID ownership' }
