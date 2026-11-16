@@ -6,9 +6,11 @@ import (
 
 	"github.com/langbot-app/langbot-cli/internal/deploy"
 	"github.com/langbot-app/langbot-cli/internal/result"
+	"github.com/langbot-app/langbot-cli/internal/telemetry"
 )
 
 func (s *Service) Autostart(ctx context.Context, action, name, dir, timeout string) (Result, error) {
+	telemetry.SetStep(ctx, "resolve_target")
 	if action != "status" && action != "enable" && action != "disable" {
 		return Result{}, result.New("input", "unknown autostart action")
 	}
@@ -37,6 +39,8 @@ func (s *Service) Autostart(ctx context.Context, action, name, dir, timeout stri
 		if err != nil {
 			return err
 		}
+		telemetry.SetEnvironment(ctx, record.Driver, record.ServiceManager, record.Region, record.CoreVersion)
+		telemetry.SetStep(ctx, "autostart_"+action)
 		if action != "status" {
 			if err := deploy.ChangeAutostart(ctx, dir, record, action == "enable", s.localRunner()); err != nil {
 				return err

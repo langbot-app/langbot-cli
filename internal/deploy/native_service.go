@@ -347,6 +347,9 @@ func (log *rotatingLog) Write(data []byte) (int, error) {
 }
 
 func NativeServe(ctx context.Context, dir string) error {
+	if err := releaseNativeConsole(); err != nil {
+		return err
+	}
 	record, err := (Store{Dir: dir}).Read()
 	if err != nil {
 		return err

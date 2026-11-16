@@ -157,6 +157,8 @@ Native services use systemd (user units for non-root), launchd LaunchAgents, or 
 
 Native upgrades prepare a new venv before stopping the service, back up data while excluding rebuildable caches/venvs, and check `/healthz` after switching. A failed health check restores the previous version and data. The newest three backups are retained. Uninstall preserves data and backups unless `--purge-data` is explicitly passed.
 
+On Windows, the supervisor releases its console before acquiring the instance lock or starting Python. Login startup can briefly flash a console, but leaves no persistent console window. Python and process-tree cleanup run without a console window; closing the launching terminal does not stop the instance.
+
 Use `lbctl autostart status|enable|disable` to inspect or change login/boot startup without stopping the running instance. Select a named instance with `--name mybot`, or an explicit directory with `--dir`. Status reports the mechanism and its unit/plist/registry/Compose location. Explicitly disabling startup persists `autostart: false` in the deployment record: start, restart, and upgrade preserve that preference. On Windows, a normal stop removes the Run entry temporarily; a later start restores it only if autostart was not explicitly disabled. On macOS, disabling removes the login plist without unloading the running job; subsequent manual starts use a detached process. The process-only fallback cannot enable login startup and reports `supported: false`.
 
 New Docker installations use `restart: unless-stopped`. For lbctl-generated Compose deployments, autostart toggles rewrite the Compose restart policy and apply `docker update --restart=...` to existing containers without stopping/recreating them. Disabled instances use `restart: "no"`, including after upgrade. Existing installations without an explicit preference retain their previous policy until changed. Adopted/custom Compose layouts remain readable through `autostart status`, but modifying their startup policy requires editing their Compose configuration directly; lbctl does not regenerate user-owned service definitions.
@@ -412,7 +414,7 @@ Local waiting and server-side task lifecycles are independent; continue checking
 
 ## Privacy
 
-lbctl does not report any data or send telemetry requests. Existing requests to your own LangBot include a client identifier (`lbctl/<version> (<os>/<arch>)`) and the canonical command path, without arguments or flag values. Managed deployments record `LANGBOT_DEPLOY_SOURCE=lbctl` and the CLI version in `LANGBOT_DEPLOY_TOOL_VERSION`; upgrades refresh these values while preserving your other environment settings. Core-side telemetry is controlled centrally by `space.disable_telemetry`.
+Lifecycle commands report anonymous outcomes and redacted errors to Space; set `LANGBOT_TELEMETRY=0` or `DO_NOT_TRACK=1` to opt out. See [lifecycle telemetry](dev-docs/telemetry.md) for collected fields and delivery limits. Existing requests to your own LangBot include a client identifier (`lbctl/<version> (<os>/<arch>)`) and the canonical command path, without arguments or flag values. Managed deployments record `LANGBOT_DEPLOY_SOURCE=lbctl` and the CLI version in `LANGBOT_DEPLOY_TOOL_VERSION`; upgrades refresh these values while preserving your other environment settings. Core-side telemetry is controlled separately by `space.disable_telemetry`.
 
 ## Controlled API access
 

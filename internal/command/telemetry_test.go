@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 
@@ -16,7 +17,7 @@ import (
 )
 
 func TestLifecycleFailureTelemetry(t *testing.T) {
-	for _, name := range []string{"install", "upgrade", "uninstall", "start", "stop", "restart", "update", "self-update"} {
+	for _, name := range []string{"install", "upgrade", "uninstall", "start", "stop", "restart", "update", "self-update", "autostart status", "autostart enable", "autostart disable"} {
 		t.Run(name, func(t *testing.T) {
 			var mutex sync.Mutex
 			var events []telemetry.Event
@@ -33,7 +34,7 @@ func TestLifecycleFailureTelemetry(t *testing.T) {
 			reporter := telemetry.New(telemetry.Options{Home: t.TempDir(), Version: "test", LookupEnv: func(key string) (string, bool) {
 				return server.URL, key == "LBCTL_TELEMETRY_ENDPOINT"
 			}})
-			code := Execute(t.Context(), []string{name, "--not-a-valid-flag"}, Dependencies{Telemetry: reporter, Out: io.Discard, Err: io.Discard})
+			code := Execute(t.Context(), append(strings.Fields(name), "--not-a-valid-flag"), Dependencies{Telemetry: reporter, Out: io.Discard, Err: io.Discard})
 			reporter.Close()
 			mutex.Lock()
 			defer mutex.Unlock()

@@ -42,7 +42,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     env:
@@ -54,18 +54,32 @@ jobs:
         with:
           go-version: '1.26.8'
           cache: true
-      - run: |
+      - if: runner.os != 'Windows'
+        run: |
           go build -o "$RUNNER_TEMP/bin/lbctl" ./cmd/lbctl
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
           echo "LANGBOT_HOME=$RUNNER_TEMP/lang517-native" >> "$GITHUB_ENV"
-      - run: sh scripts/test-native-e2e.sh
-      - if: failure()
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $bin = Join-Path $env:RUNNER_TEMP '中文 bin'
+          New-Item -ItemType Directory -Force $bin | Out-Null
+          go build -o "$bin/lbctl.exe" ./cmd/lbctl
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $bin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          "LANGBOT_HOME=$env:RUNNER_TEMP/lang517-native" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - if: runner.os != 'Windows'
+        run: sh scripts/test-native-e2e.sh
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/test-native-e2e.ps1
+      - if: failure() && runner.os != 'Windows'
         run: lbctl uninstall --yes --output json
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: native-logs-${{ matrix.os }}
-          path: ${{ runner.temp }}/lang517-native/instances/default/logs/
+          path: ${{ runner.temp }}/lang517-native/instances/*/logs/
   build:
     runs-on: ubuntu-latest
     steps:

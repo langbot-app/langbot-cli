@@ -256,7 +256,9 @@ func configureCommandCancellation(command *exec.Cmd) {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		if err := exec.CommandContext(ctx, "taskkill.exe", "/PID", fmt.Sprint(command.Process.Pid), "/T", "/F").Run(); err != nil {
+		killer := exec.CommandContext(ctx, "taskkill.exe", "/PID", fmt.Sprint(command.Process.Pid), "/T", "/F")
+		hideNativeConsole(killer)
+		if err := killer.Run(); err != nil {
 			return command.Process.Kill()
 		}
 		return nil

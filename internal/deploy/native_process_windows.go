@@ -1,11 +1,27 @@
 package deploy
 
 import (
+	"fmt"
 	"os/exec"
 	"syscall"
 
 	"golang.org/x/sys/windows"
 )
+
+func releaseNativeConsole() error {
+	result, _, err := windows.NewLazySystemDLL("kernel32.dll").NewProc("FreeConsole").Call()
+	if result == 0 {
+		return fmt.Errorf("FreeConsole: %w", err)
+	}
+	return nil
+}
+
+func hideNativeConsole(command *exec.Cmd) {
+	if command.SysProcAttr == nil {
+		command.SysProcAttr = &syscall.SysProcAttr{}
+	}
+	command.SysProcAttr.CreationFlags |= windows.CREATE_NO_WINDOW
+}
 
 func detachNative(command *exec.Cmd) {
 	command.SysProcAttr = &syscall.SysProcAttr{CreationFlags: windows.CREATE_NEW_PROCESS_GROUP | windows.DETACHED_PROCESS}
@@ -24,4 +40,7 @@ func nativePIDAlive(pid int) bool {
 	return windows.GetExitCodeProcess(handle, &code) == nil && code == 259
 }
 
-func configureNativeChild(command *exec.Cmd) { configureCommandCancellation(command) }
+func configureNativeChild(command *exec.Cmd) {
+	configureCommandCancellation(command)
+	hideNativeConsole(command)
+}
