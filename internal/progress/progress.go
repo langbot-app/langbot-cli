@@ -133,6 +133,9 @@ func (display *Display) complete(success bool) {
 		return
 	}
 	display.clear()
+	if display.title == i18n.Human("Working") {
+		return
+	}
 	marker := "✓"
 	if !success {
 		marker = "✗"

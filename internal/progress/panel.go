@@ -121,7 +121,7 @@ func textWidth(out io.Writer) int {
 
 func Brand(out io.Writer) {
 	for index, line := range BrandLines() {
-		for _, part := range wrap(line, textWidth(out)) {
+		for _, part := range wrapBrand(line, textWidth(out)) {
 			if index == 0 && styled(out) {
 				part = strings.Replace(part, "LangBot", "\x1b[1;36mLangBot\x1b[0m", 1)
 			} else if index > 0 && styled(out) {
@@ -131,6 +131,18 @@ func Brand(out io.Writer) {
 		}
 	}
 	fmt.Fprintln(out)
+}
+
+func wrapBrand(line string, width int) []string {
+	const suffix = " · Open source"
+	if width > 0 && Width(line) > width && strings.HasSuffix(line, suffix) {
+		lines := wrap(strings.TrimSuffix(line, suffix), width)
+		if Width(strings.TrimSpace(suffix)) <= width {
+			lines = append(lines, strings.TrimSpace(suffix))
+		}
+		return lines
+	}
+	return wrap(line, width)
 }
 
 func Dim(out io.Writer, text string) {

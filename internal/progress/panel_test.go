@@ -3,9 +3,12 @@ package progress
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/langbot-app/langbot-cli/internal/i18n"
 )
 
 func TestLabelsAlignDisplayColumns(t *testing.T) {
@@ -20,6 +23,42 @@ func TestLabelsAlignDisplayColumns(t *testing.T) {
 				t.Fatal(line, width, column)
 			}
 			column = width
+		}
+	}
+}
+
+func TestBrandKeepsOpenSourceTogether(t *testing.T) {
+	defer i18n.Use(i18n.English)()
+	for _, width := range []int{56, 60, 70, 76, 96, 0} {
+		lines := wrapBrand(BrandLines()[0], width)
+		if !strings.Contains(strings.Join(lines, "\n"), "· Open source") {
+			t.Fatal(lines)
+		}
+		for _, line := range lines {
+			if width > 0 && Width(line) > width {
+				t.Fatal(width, line)
+			}
+		}
+	}
+}
+
+func TestWorkingProgressLeavesNoCompletedLine(t *testing.T) {
+	for _, lang := range []string{i18n.English, i18n.Chinese} {
+		for _, success := range []bool{true, false} {
+			t.Run(fmt.Sprintf("%s/%t", lang, success), func(t *testing.T) {
+				defer i18n.Use(lang)()
+				var out bytes.Buffer
+				display := New(&out, func(string) (string, bool) { return "", false }, false, false)
+				display.Step("Working")
+				display.mu.Lock()
+				display.created = time.Now().Add(-time.Second)
+				display.animated, display.painted = true, true
+				display.mu.Unlock()
+				display.Finish(success)
+				if out.String() != "\r\x1b[2K\x1b[1A\r\x1b[2K" {
+					t.Fatal(out.String())
+				}
+			})
 		}
 	}
 }

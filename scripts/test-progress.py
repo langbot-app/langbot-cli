@@ -32,6 +32,7 @@ thread.start()
 try:
     for name, terminal, overrides, machine in [
         ("tty", True, {}, False),
+        ("status", True, {}, False),
         ("no-color", True, {"NO_COLOR": "1"}, False),
         ("dumb", True, {"TERM": "dumb"}, False),
         ("json", True, {}, True),
@@ -44,6 +45,8 @@ try:
             env.pop("NO_COLOR", None)
             env.update(overrides)
             args = [binary, "version", "--server", "--endpoint", f"http://127.0.0.1:{server.server_port}"]
+            if name == "status":
+                args = [binary, "status", "--endpoint", f"http://127.0.0.1:{server.server_port}"]
             if name.startswith("instant"):
                 args = [binary, "version"]
             if machine:
@@ -76,9 +79,10 @@ try:
                 result = subprocess.run(args, env=env, capture_output=True, text=True, timeout=15)
                 assert result.returncode == 0, result.stdout + result.stderr
                 text = result.stdout + result.stderr
-            assert ("\x1b[2K" in text) == (name == "tty"), (name, text)
+            assert ("\x1b[2K" in text) == (name in ("tty", "status")), (name, text)
             if name.startswith("instant"):
                 assert "✓" not in text and "Working" not in text and "处理中" not in text, (name, text)
+            assert "✓ Working" not in text and "✓ 处理中" not in text, (name, text)
             print(name + ": PASS\n" + text)
 finally:
     server.shutdown()

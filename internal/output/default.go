@@ -787,7 +787,7 @@ func renderAction(w io.Writer, data map[string]any) error {
 		switch key {
 		case "bot", "pipeline", "base", "knowledge_base", "provider", "model", "server", "plugin", "skill":
 			if resource, ok := item.(map[string]any); ok {
-				if _, err := fmt.Fprintln(w, fieldLabel(key)+":"); err != nil {
+				if _, err := fmt.Fprintln(w, fmt.Sprintf(i18n.T("%s:"), fieldLabel(key))); err != nil {
 					return err
 				}
 				if err := renderFields(w, resource, []string{"uuid", "author", "name"}); err != nil {
@@ -924,7 +924,7 @@ func resourceFields(key string) []string {
 }
 
 func renderResourceList(w io.Writer, key string, items []any) error {
-	if _, err := fmt.Fprintln(w, fieldLabel(key)+":"); err != nil {
+	if _, err := fmt.Fprintln(w, fmt.Sprintf(i18n.T("%s:"), fieldLabel(key))); err != nil {
 		return err
 	}
 	if len(items) == 0 {
@@ -1041,7 +1041,7 @@ func renderValueAt(w io.Writer, value any, label, indent string) error {
 	}
 	prefix := indent
 	if label != "" {
-		prefix += label + ": "
+		prefix += fmt.Sprintf(i18n.T("%s: "), label)
 	}
 	switch v := value.(type) {
 	case map[string]any:
@@ -1050,7 +1050,7 @@ func renderValueAt(w io.Writer, value any, label, indent string) error {
 			return err
 		}
 		if label != "" {
-			if _, err := fmt.Fprintln(w, indent+label+":"); err != nil {
+			if _, err := fmt.Fprintln(w, indent+fmt.Sprintf(i18n.T("%s:"), label)); err != nil {
 				return err
 			}
 		}
@@ -1081,7 +1081,7 @@ func renderValueAt(w io.Writer, value any, label, indent string) error {
 			return err
 		}
 		if label != "" {
-			if _, err := fmt.Fprintln(w, indent+label+":"); err != nil {
+			if _, err := fmt.Fprintln(w, indent+fmt.Sprintf(i18n.T("%s:"), label)); err != nil {
 				return err
 			}
 		}
@@ -1095,7 +1095,7 @@ func renderValueAt(w io.Writer, value any, label, indent string) error {
 		// 正文保留换行，其他控制字符仍按终端安全规则转义。
 		if strings.Contains(v, "\n") {
 			if label != "" {
-				if _, err := fmt.Fprintln(w, indent+label+":"); err != nil {
+				if _, err := fmt.Fprintln(w, indent+fmt.Sprintf(i18n.T("%s:"), label)); err != nil {
 					return err
 				}
 			}
@@ -1193,7 +1193,7 @@ func renderCells(w io.Writer, rows [][]string) error {
 				}
 			}
 			for i, cell := range row {
-				if _, err := fmt.Fprintf(w, "%s: %s\n", rows[0][i], cell); err != nil {
+				if _, err := fmt.Fprintf(w, i18n.T("%s: %s\n"), rows[0][i], cell); err != nil {
 					return err
 				}
 			}

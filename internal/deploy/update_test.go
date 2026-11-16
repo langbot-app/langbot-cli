@@ -28,7 +28,7 @@ func TestUpdateCacheSharesDeadlineAndDoesNotCacheFailure(t *testing.T) {
 	if err := RefreshUpdateCacheWith(ctx, check, check); err == nil {
 		t.Fatal("failed check succeeded")
 	}
-	if len(started) != 2 || !ReadUpdateCache().CheckedAt.IsZero() {
+	if len(started) != 2 || !ReadUpdateCache().LBCTLCheckedAt.IsZero() || !ReadUpdateCache().CoreCheckedAt.IsZero() {
 		t.Fatal("checks were not shared or failure was cached")
 	}
 	lbctl := func(context.Context) (string, error) { return "v0.5.3", nil }
@@ -37,11 +37,56 @@ func TestUpdateCacheSharesDeadlineAndDoesNotCacheFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	cache := ReadUpdateCache()
-	if cache.LBCTL != "v0.5.3" || cache.Core != "v4.11.8" || time.Since(cache.CheckedAt) > time.Minute {
+	if cache.LBCTL != "v0.5.3" || cache.Core != "v4.11.8" || cache.NeedsRefresh() {
 		t.Fatalf("cache=%+v", cache)
 	}
 	if err := RefreshUpdateCacheWith(context.Background(), check, check); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestUpdateCacheRefreshesEachReleaseIndependently(t *testing.T) {
+	for _, failed := range []string{"lbctl", "core"} {
+		t.Run(failed, func(t *testing.T) {
+			t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+			t.Setenv("AppData", t.TempDir())
+			t.Setenv("HOME", t.TempDir())
+			calls := map[string]int{"lbctl": 0, "core": 0}
+			lbctlCalls, coreCalls := 0, 0
+			check := func(name string, count *int) func(context.Context) (string, error) {
+				return func(context.Context) (string, error) {
+					*count++
+					if name == failed && *count == 1 {
+						return "", fmt.Errorf("offline")
+					}
+					return "v1.0.0", nil
+				}
+			}
+			lbctl, core := check("lbctl", &lbctlCalls), check("core", &coreCalls)
+			if err := RefreshUpdateCacheWith(context.Background(), lbctl, core); err != nil {
+				t.Fatal(err)
+			}
+			partial := ReadUpdateCache()
+			if !partial.NeedsRefresh() || partial.LBCTLCheckedAt.IsZero() != (failed == "lbctl") || partial.CoreCheckedAt.IsZero() != (failed == "core") {
+				t.Fatalf("partial cache: %+v", partial)
+			}
+			if err := RefreshUpdateCacheWith(context.Background(), lbctl, core); err != nil {
+				t.Fatal(err)
+			}
+			calls["lbctl"], calls["core"] = lbctlCalls, coreCalls
+			for name, count := range calls {
+				want := 1
+				if name == failed {
+					want = 2
+				}
+				if count != want {
+					t.Fatalf("%s checks=%d, want %d", name, count, want)
+				}
+			}
+			if ReadUpdateCache().NeedsRefresh() {
+				t.Fatal("successful cache is stale")
+			}
+		})
 	}
 }
 

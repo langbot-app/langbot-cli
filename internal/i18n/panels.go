@@ -7,6 +7,7 @@ func init() {
 		"Production-grade platform for building agentic IM bots · Open source":    "生产级 AI 即时通信机器人开发平台 · 开源",
 		"Website langbot.app · Docs docs.langbot.app · Plugins space.langbot.app": "官网 langbot.app · 文档 docs.langbot.app · 插件市场 space.langbot.app",
 		"Working": "处理中", "LangBot is ready": "LangBot 已就绪", "Native deployment": "原生部署",
+		"%s:": "%s：", "%s: ": "%s：", "%s: %s\n": "%s：%s\n",
 		"Next steps": "下一步", "Commands": "常用", "Disable startup": "关闭自启",
 		"Update available: %s (%s)": "可更新到 %s（%s）", " (up to date)": "（最新）",
 		"No installation log was created during preflight.": "预检阶段没有生成安装日志。",

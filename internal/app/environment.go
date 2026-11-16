@@ -82,7 +82,7 @@ func (s *Service) Status(ctx context.Context, options CheckOptions) (Result, err
 	if resolved.Connection.Timeout > 0 {
 		budget = min(budget, resolved.Connection.Timeout-time.Since(started))
 	}
-	if err == nil && budget > 0 && options.Human && resolved.LocalMatch && disabled != "1" && (cache.Core == "" || cache.LBCTL == "" || time.Since(cache.CheckedAt) > 24*time.Hour) {
+	if err == nil && budget > 0 && options.Human && resolved.LocalMatch && disabled != "1" && cache.NeedsRefresh() {
 		checkCtx, cancel := context.WithTimeout(ctx, budget)
 		_ = deploy.RefreshUpdateCacheWith(checkCtx, (deploy.Updater{Client: s.deps.LocalHTTP}).Latest, s.latestRelease)
 		cache = deploy.ReadUpdateCache()

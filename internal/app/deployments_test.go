@@ -128,7 +128,7 @@ func TestMultipleAdoptionsAndLifecycleSelectCorrectDeployment(t *testing.T) {
 	if updateErr != nil || checks != 1 || !strings.Contains(string(encoded), `"latest":"v4.11.8"`) {
 		t.Fatalf("human update check: %s, %v, calls=%d", encoded, updateErr, checks)
 	}
-	if cache := deploy.ReadUpdateCache(); cache.Core != "v4.11.8" || cache.LBCTL != "v0.5.3" || cache.CheckedAt.IsZero() {
+	if cache := deploy.ReadUpdateCache(); cache.Core != "v4.11.8" || cache.LBCTL != "v0.5.3" || cache.NeedsRefresh() {
 		t.Fatalf("update cache not persisted: %+v", cache)
 	}
 	service.Status(ctx, human)

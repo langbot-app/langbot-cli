@@ -191,10 +191,15 @@ func packageUpgradeCommand(ctx context.Context, binary string) string {
 }
 
 type UpdateCache struct {
-	CheckedAt time.Time         `json:"checked_at"`
-	LBCTL     string            `json:"lbctl"`
-	Core      string            `json:"core"`
-	Instances map[string]string `json:"instances"`
+	LBCTLCheckedAt time.Time         `json:"lbctl_checked_at"`
+	CoreCheckedAt  time.Time         `json:"core_checked_at"`
+	LBCTL          string            `json:"lbctl"`
+	Core           string            `json:"core"`
+	Instances      map[string]string `json:"instances"`
+}
+
+func (cache UpdateCache) NeedsRefresh() bool {
+	return cache.LBCTL == "" || cache.Core == "" || time.Since(cache.LBCTLCheckedAt) >= 24*time.Hour || time.Since(cache.CoreCheckedAt) >= 24*time.Hour
 }
 
 func UpdateCachePath() (string, error) {
@@ -241,7 +246,7 @@ func RefreshUpdateCacheWith(ctx context.Context, latestLBCTL, latestCore func(co
 	}
 	defer lock.Unlock()
 	cache := ReadUpdateCache()
-	if cache.LBCTL != "" && cache.Core != "" && time.Since(cache.CheckedAt) < 24*time.Hour {
+	if !cache.NeedsRefresh() {
 		return nil
 	}
 	var lbctl, core string
@@ -250,24 +255,27 @@ func RefreshUpdateCacheWith(ctx context.Context, latestLBCTL, latestCore func(co
 	checks.Add(2)
 	go func() {
 		defer checks.Done()
-		lbctl, lbctlErr = latestLBCTL(ctx)
+		if cache.LBCTL == "" || time.Since(cache.LBCTLCheckedAt) >= 24*time.Hour {
+			lbctl, lbctlErr = latestLBCTL(ctx)
+		}
 	}()
 	go func() {
 		defer checks.Done()
-		core, coreErr = latestCore(ctx)
+		if cache.Core == "" || time.Since(cache.CoreCheckedAt) >= 24*time.Hour {
+			core, coreErr = latestCore(ctx)
+		}
 	}()
 	checks.Wait()
 	if lbctlErr != nil && coreErr != nil {
 		return errors.Join(lbctlErr, coreErr)
 	}
-	if lbctlErr == nil {
+	if lbctlErr == nil && lbctl != "" {
 		cache.LBCTL = lbctl
+		cache.LBCTLCheckedAt = time.Now().UTC()
 	}
-	if coreErr == nil {
+	if coreErr == nil && core != "" {
 		cache.Core = core
-	}
-	if lbctlErr == nil && coreErr == nil {
-		cache.CheckedAt = time.Now().UTC()
+		cache.CoreCheckedAt = time.Now().UTC()
 	}
 	cache.Instances = map[string]string{}
 	if dirs, err := (Locator{}).Directories(); err == nil {
@@ -285,7 +293,7 @@ func RefreshUpdateCacheWith(ctx context.Context, latestLBCTL, latestCore func(co
 }
 
 func StartUpdateRefresh() error {
-	if time.Since(ReadUpdateCache().CheckedAt) < 24*time.Hour {
+	if !ReadUpdateCache().NeedsRefresh() {
 		return nil
 	}
 	binary, err := os.Executable()

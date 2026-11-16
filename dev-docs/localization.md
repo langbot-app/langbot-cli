@@ -53,6 +53,9 @@ Local human-readable status checks CLI and Core releases together with a shared
 two-second budget, bounded by the remaining connection timeout. Successful
 checks populate the shared 24-hour update cache; failures stay silent and do
 not mark failed lookups fresh. Remote and machine output do not trigger checks.
+CLI and Core use independent `lbctl_checked_at` and `core_checked_at` timestamps;
+only missing or expired entries are checked again. A successful lookup stays
+cached even when the other lookup fails. Legacy caches refresh once.
 Summary label values align by display width. ASCII words wrap intact where
 they fit, while redirected brand and informational lines are not hard-wrapped.
 
@@ -62,6 +65,8 @@ without VT uses carriage-return-only refresh. Plain output has no heartbeat.
 The CLI never hides the cursor and clears the active region on completion or
 cancellation. Summary and status panels use a thin left accent at 60 columns or more;
 narrow terminals and plain output use unboxed lines.
+Generic working indicators are transient and do not leave a completed row.
+The English brand keeps `· Open source` together on a separate line when needed.
 
 Install/upgrade show the product, resolved target version, deployment method,
 region selection source, instance directory and port. The success panel links
@@ -104,6 +109,11 @@ also launch deployment; preserve those additional steps when synchronizing:
 - Copy locale precedence and propagation through `LBCTL_LANG`.
 - Copy bilingual numbered download/verification/install messages.
 - Copy the bilingual product heading and website/docs/plugin links.
+- Set `LBCTL_NO_BRAND=1` only while invoking `lbctl install` after the landing
+  heading. Shell: `export LBCTL_NO_BRAND=1` before both `exec "$lbctl" install`
+  branches. PowerShell: save
+  `$env:LBCTL_NO_BRAND`, set it to `'1'`, invoke the CLI in `try`, and restore
+  the original value in `finally`. Other deployment output stays enabled.
 - Copy the PowerShell outer exception handler for clean stderr failures.
   It sets `$LASTEXITCODE = 1` and returns without terminating an interactive
   `irm ... | iex` shell; wrappers should propagate that code when needed.
