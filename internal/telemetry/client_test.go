@@ -24,11 +24,25 @@ func TestSanitizeError(t *testing.T) {
 		}
 	}
 	clean := SanitizeError(strings.Repeat("失败", 1000))
-	if len(clean) > 2048 || !utf8.ValidString(clean) {
+	if len(clean) > 1024 || !utf8.ValidString(clean) {
 		t.Fatalf("invalid truncation: %d", len(clean))
 	}
 	if clean := SanitizeError("download failed: exit status 1"); clean != "download failed: exit status 1" {
 		t.Fatal(clean)
+	}
+}
+
+func TestSanitizeErrorKeepsCompleteTailLines(t *testing.T) {
+	line := strings.Repeat("download progress ", 10)
+	message := strings.Repeat(line+"\n", 30) + "final dependency failure"
+	clean := SanitizeError(message)
+	if len(clean) > 1024 || !strings.HasSuffix(clean, "final dependency failure") {
+		t.Fatalf("invalid tail: %q", clean)
+	}
+	for _, retained := range strings.Split(clean, "\n") {
+		if retained != line && retained != "final dependency failure" {
+			t.Fatalf("partial line: %q", retained)
+		}
 	}
 }
 

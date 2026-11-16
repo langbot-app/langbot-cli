@@ -58,6 +58,23 @@ func TestNativeInstallFailureRendering(t *testing.T) {
 	}
 }
 
+func TestNativeInstallFailureOmitsUnavailableDetails(t *testing.T) {
+	for _, step := range []string{"check_ports", "register", "write_record"} {
+		var out bytes.Buffer
+		if err := renderLocalAction(&out, map[string]any{"action": "install", "step": step}); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(out.String(), "失败步骤："+step) {
+			t.Fatal(out.String())
+		}
+		for _, absent := range []string{"<nil>", "日志：", "回滚：", "重试："} {
+			if strings.Contains(out.String(), absent) {
+				t.Fatal(out.String())
+			}
+		}
+	}
+}
+
 func TestInstallAutostartHint(t *testing.T) {
 	var out bytes.Buffer
 	err := renderLocalAction(&out, map[string]any{"action": "install", "changed": true, "status": map[string]any{"status": "running"}, "autostart": true, "autostart_mechanism": "HKCU Run", "autostart_disable_command": "lbctl autostart disable --name 'mybot'"})

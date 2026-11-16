@@ -352,6 +352,8 @@ func (s *Service) ContextRemove(name string, confirmed bool) (Result, error) {
 }
 
 type CheckOptions struct {
+	LocalName   string
+	LocalDir    string
 	Name        string
 	All         bool
 	Context     string

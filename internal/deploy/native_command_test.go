@@ -85,6 +85,17 @@ func TestNativeCommandOutput(t *testing.T) {
 	}
 }
 
+func TestNativeCommandSignalIsInterrupted(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix signal termination")
+	}
+	command := exec.CommandContext(t.Context(), "sh", "-c", "kill -TERM $$")
+	_, err := runNativeCommand(command, nil)
+	if !errors.Is(err, ErrNativeInterrupted) {
+		t.Fatalf("signal termination not classified: %v", err)
+	}
+}
+
 func TestNativePIDAndLock(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "native.pid"), []byte(fmt.Sprint(os.Getpid())), 0o600); err != nil {

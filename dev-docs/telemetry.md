@@ -24,8 +24,13 @@ installation source. Environment fields are populated when resolved; early
 failures may leave them empty. No command arguments, hostnames, deployment paths,
 Core credentials, or command output streams are collected. Error messages redact
 home directories, known usernames, absolute user paths, URLs, IP addresses and
-common token/API-key forms, and are limited to 2,048 UTF-8 bytes. Space repeats
+common token/API-key forms, and retain at most 1,024 UTF-8 bytes from the tail,
+keeping complete lines when possible. Space repeats
 redaction and accepts only the defined metadata fields.
+
+Native dependency execution failures use `error_code=dependency`. Cancellation
+and signal termination use `interrupted`. Registration conflicts use
+`step=register`, distinct from occupied ports (`check_ports`).
 
 `LBCTL_INSTALL_SOURCE=install.sh` or `install.ps1` identifies the bootstrap
 script; other values become `manual`. The repository bootstrap scripts set this

@@ -49,7 +49,10 @@ func EnsureUV(ctx context.Context, tools, region string, out io.Writer) (string,
 	lock := flock.New(filepath.Join(dir, ".lock"))
 	locked, err := lock.TryLockContext(ctx, 100*time.Millisecond)
 	if err != nil || !locked {
-		return "", fmt.Errorf("uv lock: %v", err)
+		if err == nil {
+			err = context.DeadlineExceeded
+		}
+		return "", fmt.Errorf("uv lock: %w", err)
 	}
 	defer lock.Unlock()
 	name := "uv"
@@ -173,11 +176,13 @@ func NativeEnvironment(record Record) []string {
 	return result
 }
 
-// CheckNativePorts verifies that the HTTP, plugin debug and Box ports are all
-// free. Each port is probed on both the loopback address and the wildcard
-// address: on BSD-derived systems (macOS) a wildcard bind succeeds even when
-// 127.0.0.1:<port> is already taken, so a wildcard-only probe misses loopback
-// listeners such as a second native instance's runtime.
+type NativePortError struct {
+	Port    int
+	Message string
+}
+
+func (err *NativePortError) Error() string { return err.Message }
+
 func CheckNativePorts(record Record) error {
 	ports := []struct {
 		name string
@@ -187,18 +192,29 @@ func CheckNativePorts(record Record) error {
 	for _, item := range ports {
 		if item.port != 0 {
 			if other, exists := seen[item.port]; exists {
-				return fmt.Errorf("%s 端口 %d 与 %s 端口冲突；Core 4.11.x 原生部署需要独占 5401 和 5410，请更换端口，或使用 Docker 部署多实例", item.name, item.port, other)
+				return &NativePortError{Port: item.port, Message: fmt.Sprintf("%s 端口 %d 与 %s 端口冲突；请用 --port 更换 HTTP 端口", item.name, item.port, other)}
 			}
 			seen[item.port] = item.name
 		}
 		if err := probeNativePort(item.port); err != nil {
-			return fmt.Errorf("%s 端口 %d 不可用：%w；Core 4.11.x 原生部署需要独占 5401 和 5410，请停止冲突服务，或使用 Docker 部署多实例", item.name, item.port, err)
+			advice := "请停止冲突服务，或用 --port 更换 HTTP 端口"
+			if item.port == 5401 || item.port == 5410 {
+				advice = "Core 4.11.x 原生部署需要独占 5401 和 5410，请停止冲突服务，或使用 Docker 部署多实例"
+			}
+			return &NativePortError{Port: item.port, Message: fmt.Sprintf("%s 端口 %d 不可用：%v；%s", item.name, item.port, err, advice)}
 		}
 	}
 	return nil
 }
 
 func probeNativePort(port int) error {
+	for _, host := range []string{"127.0.0.1", "::1"} {
+		connection, err := net.DialTimeout("tcp", net.JoinHostPort(host, fmt.Sprint(port)), 300*time.Millisecond)
+		if err == nil {
+			connection.Close()
+			return fmt.Errorf("port %d is already accepting connections on %s", port, host)
+		}
+	}
 	for _, host := range []string{"127.0.0.1", ""} {
 		listener, err := net.Listen("tcp", net.JoinHostPort(host, fmt.Sprint(port)))
 		if err != nil {
@@ -206,6 +222,11 @@ func probeNativePort(port int) error {
 		}
 		listener.Close()
 	}
+	listener, err := net.Listen("tcp4", net.JoinHostPort("0.0.0.0", fmt.Sprint(port)))
+	if err != nil {
+		return err
+	}
+	listener.Close()
 	return nil
 }
 
@@ -229,6 +250,12 @@ func PrepareNative(ctx context.Context, dir string, record Record, out io.Writer
 		command.Env = NativeEnvironment(record)
 		var err error
 		lastOutput, err = runNativeCommand(command, out)
+		if err != nil {
+			if ctx.Err() != nil {
+				err = fmt.Errorf("%w: %w", ctx.Err(), err)
+			}
+			return fmt.Errorf("%w: %w", ErrNativeDependency, err)
+		}
 		return err
 	}
 	telemetry.SetStep(ctx, "install_python")

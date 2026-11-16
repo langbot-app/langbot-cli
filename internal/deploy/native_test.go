@@ -69,6 +69,29 @@ func TestNativePortsRejectRuntimeConflicts(t *testing.T) {
 	}
 }
 
+func TestProbeNativePortRejectsListeningSockets(t *testing.T) {
+	for _, address := range []string{":0", "0.0.0.0:0", "127.0.0.1:0", "[::1]:0"} {
+		t.Run(address, func(t *testing.T) {
+			network := "tcp"
+			if address == "0.0.0.0:0" {
+				network = "tcp4"
+			}
+			listener, err := net.Listen(network, address)
+			if err != nil {
+				if address == "[::1]:0" {
+					t.Skipf("IPv6 unavailable: %v", err)
+				}
+				t.Fatal(err)
+			}
+			defer listener.Close()
+			port := listener.Addr().(*net.TCPAddr).Port
+			if err := probeNativePort(port); err == nil || !strings.Contains(err.Error(), "already accepting connections") {
+				t.Fatalf("listener %s was not detected by TCP dial: %v", listener.Addr(), err)
+			}
+		})
+	}
+}
+
 func TestNativeExecutablePreservesStableSymlink(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("symlink requires Windows privileges")

@@ -404,6 +404,9 @@ func optionalDiscoveryUnavailable(err error) bool {
 }
 
 func deploymentMatches(record deploy.Record, endpoint string, identity api.Context, identityVerified bool) bool {
+	if record.Uninstalled {
+		return false
+	}
 	if identityVerified && record.InstanceUUID != "" {
 		return record.InstanceUUID == identity.InstanceUUID
 	}

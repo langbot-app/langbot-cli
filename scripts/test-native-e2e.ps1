@@ -9,7 +9,7 @@ $installed = $false
 
 function Invoke-Lbctl {
     param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments)
-    $target = if ($Arguments[0] -in @('install', 'autostart')) { @('--dir', $instanceDir) } else { @('--endpoint', $endpoint) }
+    $target = if ('--name' -in $Arguments -or '--dir' -in $Arguments) { @() } elseif ($Arguments[0] -in @('install', 'autostart')) { @('--dir', $instanceDir) } else { @('--endpoint', $endpoint) }
     $output = & lbctl @Arguments @target --output json
     if ($LASTEXITCODE -ne 0) { throw "lbctl $Arguments failed: $output" }
     $envelope = ($output -join "`n") | ConvertFrom-Json
@@ -60,8 +60,21 @@ else:
 }
 
 try {
+    New-Item -ItemType Directory -Force $env:LANGBOT_HOME | Out-Null
+    $toolsPath = Join-Path $env:LANGBOT_HOME 'tools'
+    Set-Content -Path $toolsPath -Value 'blocked runtime directory'
+    $failureOutput = & lbctl install --driver native --dir $instanceDir --region global --version v4.11.7 --port 15300 --yes --output json
+    if ($LASTEXITCODE -eq 0) { throw 'Expected runtime preparation failure' }
+    $failure = ($failureOutput -join "`n") | ConvertFrom-Json
+    if ($failure.data.step -ne 'prepare_runtime') { throw "Unexpected failure: $failureOutput" }
+    $identity = $failure.data.record.deployment_id
+    $marker = Join-Path $instanceDir 'data/resume-marker'
+    Set-Content -Path $marker -Value 'resume-preserved'
+    Remove-Item $toolsPath
     $installed = $true
-    $install = Invoke-Lbctl @('install', '--driver', 'native', '--region', 'global', '--version', 'v4.11.7', '--port', '15300', '--yes', '--timeout', '15m')
+    $install = Invoke-Lbctl @('install', '--driver', 'native', '--region', 'global', '--port', '15300', '--yes', '--timeout', '15m')
+    if ($install.record.deployment_id -ne $identity -or $install.record.core_version -ne 'v4.11.7') { throw 'Retry replaced deployment identity or version' }
+    if ((Get-Content $marker) -ne 'resume-preserved') { throw 'Retry lost existing data' }
     if ($install.service_manager -ne 'windows-run') { throw 'Expected windows-run manager' }
     $registryName = 'langbot-' + $install.record.deployment_id
     Assert-RunValue $true
@@ -109,7 +122,7 @@ try {
     if ($LASTEXITCODE -eq 0) { throw 'Duplicate supervisor acquired the lock' }
     if ([int](Get-Content (Join-Path $instanceDir 'native.pid')) -ne $supervisorId) { throw 'Duplicate changed PID ownership' }
     Assert-Health
-    Invoke-Lbctl @('uninstall', '--yes') | Out-Null
+    Invoke-Lbctl @('uninstall', '--name', 'default', '--yes') | Out-Null
     $installed = $false
     Assert-RunValue $false
     if (Get-Process -Id $supervisorId -ErrorAction SilentlyContinue) { throw 'Supervisor survived uninstall' }
@@ -117,6 +130,17 @@ try {
         if (Get-Process -Id $child.ProcessId -ErrorAction SilentlyContinue) { throw 'Python survived uninstall' }
     }
     Write-Host 'Windows native lifecycle, login console, PID/lock and registry checks passed'
+    $installed = $true
+    Invoke-Lbctl @('install', '--name', 'replacement', '--driver', 'native', '--region', 'global', '--version', 'v4.11.7', '--port', '15300', '--yes', '--timeout', '15m') | Out-Null
+    Assert-Health
+    if ((Get-Content $marker) -ne 'resume-preserved') { throw 'Reinstallation lost old data' }
+    Invoke-Lbctl @('stop', '--name', 'replacement') | Out-Null
+    Invoke-Lbctl @('start', '--name', 'replacement') | Out-Null
+    Invoke-Lbctl @('restart', '--name', 'replacement') | Out-Null
+    Assert-Health
+    Invoke-Lbctl @('uninstall', '--name', 'replacement', '--yes') | Out-Null
+    $installed = $false
+    Write-Host 'Uninstall then reinstall under a new name: same port, WebUI HTTP 200, old data preserved'
 } finally {
     if ($installed) {
         & lbctl uninstall --endpoint $endpoint --yes --output json

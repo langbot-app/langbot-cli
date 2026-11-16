@@ -43,6 +43,7 @@ type Record struct {
 	ImageRepository string        `yaml:"image_repository,omitempty" json:"image_repository,omitempty"`
 	ServiceManager  string        `yaml:"service_manager,omitempty" json:"service_manager,omitempty"`
 	Autostart       *bool         `yaml:"autostart,omitempty" json:"autostart,omitempty"`
+	Uninstalled     bool          `yaml:"uninstalled,omitempty" json:"uninstalled,omitempty"`
 	ToolsDir        string        `yaml:"tools_dir,omitempty" json:"tools_dir,omitempty"`
 	Extras          []string      `yaml:"extras,omitempty" json:"extras,omitempty"`
 	SchemaVersion   int           `yaml:"schema_version" json:"schema_version"`

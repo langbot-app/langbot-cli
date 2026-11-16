@@ -1,6 +1,7 @@
 package deploy
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -10,6 +11,9 @@ import (
 	"sync"
 	"unicode/utf16"
 )
+
+var ErrNativeInterrupted = errors.New("native command interrupted")
+var ErrNativeDependency = errors.New("native dependency failed")
 
 type commandTail struct{ data []byte }
 
@@ -52,6 +56,11 @@ func runNativeCommand(command *exec.Cmd, out io.Writer) (string, error) {
 		output = string(stdout.data)
 	}
 	if err != nil {
+		if command.ProcessState != nil {
+			if state, ok := command.ProcessState.Sys().(interface{ Signaled() bool }); ok && state.Signaled() {
+				err = fmt.Errorf("%w: %w", ErrNativeInterrupted, err)
+			}
+		}
 		return output, fmt.Errorf("%s: %w: %s", filepath.Base(command.Path), err, strings.TrimSpace(output))
 	}
 	return output, nil

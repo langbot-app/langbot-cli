@@ -170,6 +170,9 @@ func nativeSystemctl(ctx context.Context, record Record, args ...string) error {
 }
 
 func NativeStart(ctx context.Context, dir string, record Record) error {
+	if record.Uninstalled {
+		return fmt.Errorf("deployment is uninstalled; reinstall this instance before starting")
+	}
 	if record.Autostart != nil && !*record.Autostart && (record.ServiceManager == "launchd" || record.ServiceManager == "schtasks" || record.ServiceManager == "windows-run") {
 		record.ServiceManager = "process"
 	}
