@@ -41,7 +41,11 @@ func (c Client) applicationRequest(ctx context.Context, target Target, method, p
 		cancel()
 		return nil, nil, result.New("input", "无法构造操作请求")
 	}
-	request.Header.Set("X-API-Key", target.APIKey)
+	if target.UserToken != "" {
+		request.Header.Set("Authorization", "Bearer "+target.UserToken)
+	} else if target.APIKey != "" {
+		request.Header.Set("X-API-Key", target.secret())
+	}
 	request.Header.Set("Content-Type", contentType)
 	clientidentity.Apply(request)
 	client := &http.Client{Transport: c.Transport, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
@@ -69,14 +73,17 @@ func applicationResponse(response *http.Response, target Target, bare bool) (any
 	}
 	parsed, parseErr := parseEnvelope(data)
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return nil, httpError(response.StatusCode, parsed.Code, responseRequestID(response.Header, parsed, target.APIKey), target.APIKey)
+		if target.UserToken != "" && (response.StatusCode == 401 || response.StatusCode == 403) {
+			return nil, result.RequiresMemberSession()
+		}
+		return nil, httpError(response.StatusCode, parsed.Code, responseRequestID(response.Header, parsed, target.secret()), target.secret())
 	}
 	if !bare {
 		if parseErr != nil {
 			return nil, result.New("incompatible", "操作响应格式无效")
 		}
 		if !isSuccessCode(parsed.Code) {
-			return nil, businessError(parsed.Code, responseRequestID(response.Header, parsed, target.APIKey), response.StatusCode, target.APIKey)
+			return nil, businessError(parsed.Code, responseRequestID(response.Header, parsed, target.secret()), response.StatusCode, target.secret())
 		}
 		data = parsed.Data
 	}
@@ -86,7 +93,7 @@ func applicationResponse(response *http.Response, target Target, bare bool) (any
 	if err := decoder.Decode(&value); err != nil {
 		return nil, result.New("incompatible", "操作响应不是有效 JSON")
 	}
-	return redactConnectionSecret(value, target.APIKey), nil
+	return redactConnectionSecret(value, target.secret()), nil
 }
 
 func (c Client) OperationList(ctx context.Context, target Target, domain, search string) (any, error) {
@@ -186,7 +193,7 @@ func (c Client) OperationStream(ctx context.Context, target Target, identifier s
 				Code json.RawMessage `json:"code"`
 			}
 			if json.Unmarshal([]byte(data), &detail) == nil {
-				failure.ServerCode = safeServerCode(detail.Code, target.APIKey)
+				failure.ServerCode = safeServerCode(detail.Code, target.secret())
 			}
 			return failure
 		}
@@ -200,7 +207,7 @@ func (c Client) OperationStream(ctx context.Context, target Target, identifier s
 			if decoder.Decode(&value) != nil {
 				return result.New("incompatible", "SSE 事件不是有效 JSON")
 			}
-			if err := emit(redactConnectionSecret(value, target.APIKey)); err != nil {
+			if err := emit(redactConnectionSecret(value, target.secret())); err != nil {
 				return err
 			}
 		}

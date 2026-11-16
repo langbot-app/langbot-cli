@@ -2,6 +2,7 @@ package command
 
 import (
 	"bufio"
+	"encoding/base64"
 	"fmt"
 	"os"
 	"strings"
@@ -119,7 +120,6 @@ var friendlyOperations = []operationCommand{
 	{"assistant run", "assistant.run.start", "conversation_id", false},
 	{"assistant stream", "assistant.stream", "conversation_id", true},
 	{"assistant stop", "assistant.stop", "conversation_id", false},
-	{"file image get", "file.image.get", "file_key", false},
 	{"stats", "stats.basic", "", false},
 	{"system storage-analysis", "system.storage.analysis", "", false},
 	{"system model-availability", "system.model.availability", "", false},
@@ -225,6 +225,7 @@ func confirmOperation(deps Dependencies, yes bool, stdinUsed bool) error {
 }
 
 func addOperationCommand(parent *cobra.Command, spec operationCommand, service *app.Service, deps Dependencies, flags *globalFlags) {
+	var decodeField, destination string
 	var file string
 	var yes bool
 	fields := strings.Fields(spec.arguments)
@@ -238,11 +239,18 @@ func addOperationCommand(parent *cobra.Command, spec operationCommand, service *
 	}
 	cmd.Flags().StringVar(&file, "file", "", "操作输入 JSON/YAML 对象；- 从 stdin 读取；字段见 op describe")
 	cmd.Flags().BoolVar(&yes, "yes", false, "确认写操作")
+	if spec.id == "" && !spec.stream {
+		cmd.Flags().StringVar(&decodeField, "decode-binary", "", "将指定 base64 输出字段解码为文件")
+		cmd.Flags().StringVarP(&destination, "out-file", "O", "", "解码后的文件路径，须与 --decode-binary 一起使用")
+	}
 	if spec.stream && spec.id == "" {
 		_ = cmd.MarkFlagRequired("file")
 	}
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		return emitCall(deps, flags, func() (app.Result, error) {
+			if (decodeField == "") != (destination == "") {
+				return app.Result{}, result.New("input", "--decode-binary 与 -O 必须同时使用")
+			}
 			identifier := spec.id
 			if identifier == "" {
 				identifier = args[0]
@@ -309,6 +317,21 @@ func addOperationCommand(parent *cobra.Command, spec operationCommand, service *
 				return session.Result(map[string]any{"completed": err == nil}), err
 			}
 			value, err := session.Client.OperationCall(cmd.Context(), session.Target, identifier, body)
+			if err == nil && decodeField != "" {
+				object, _ := value.(map[string]any)
+				encoded, ok := object[decodeField].(string)
+				if !ok {
+					return session.Result(nil), result.New("input", "输出中没有指定的 base64 字段")
+				}
+				decoded, decodeErr := base64.StdEncoding.DecodeString(encoded)
+				if decodeErr != nil {
+					return session.Result(nil), result.New("incompatible", "输出字段不是有效 base64")
+				}
+				if os.WriteFile(destination, decoded, 0o600) != nil {
+					return session.Result(nil), result.New("input", "无法保存解码文件")
+				}
+				value = map[string]any{"file": destination, "bytes": len(decoded)}
+			}
 			return session.Result(value), err
 		})
 	}

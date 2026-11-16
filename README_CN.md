@@ -602,6 +602,26 @@ lbctl plugin permissions confirm <author> <name> --capability storage.plugin --o
 
 ### Core 权限边界
 
-操作目录按权限、principal 和 exposure 过滤，不等于全部友好命令。目录隐藏但 CLI 已登记的操作可使用固定契约调用，最终权限仍由 Core 校验。Codex 登录、Assistant、Pipeline 迁移、Workspace 成员/邀请管理等 account-only 操作会被 Core 拒绝 API Key 调用。知识库迁移旧路由同样要求成员身份，`preview` 对应 `/api/v1/knowledge/migration/status`。本 CLI 使用 API Key，不绕过这些限制。
+操作目录按权限、principal 和 exposure 过滤，不等于全部友好命令。目录隐藏但 CLI 已登记的操作可使用固定契约调用，最终权限仍由 Core 校验。Workspace 成员/邀请、provider codex、Assistant、Pipeline 迁移、知识库迁移自动使用成员会话，等价的 `op call/describe/stream` ID 同样适用。其他命令即使已配置成员 token 也默认使用 API Key；显式传入 `--as-member` 才改用成员会话。知识库迁移 `preview` 对应 `/api/v1/knowledge/migration/status`。
 
-图片、插件本地包/配置文件、Skill ZIP 预览/安装继续使用已有 multipart 路由。实测 Core 通用入口读取 PNG 时返回 HTTP 500，`file image get` 需要 Core 支持二进制安全的响应序列化。system wizard 属于 WebUI 引导进度，不是无界面资源管理操作，因此不提供对应命令。
+### 成员会话
+
+```bash
+lbctl auth login --email you@example.com
+lbctl auth login --email you@example.com --password-stdin < password-file
+lbctl auth login --email you@example.com --totp
+lbctl auth set-token --stdin < token-file
+lbctl workspace member list
+lbctl op list --as-member
+lbctl auth logout
+```
+
+登录要求已保存的 context。密码、TOTP/恢复码均隐藏输入；`--totp` 完成 Core 返回的 challenge，密码来自 stdin 时仍需可用的控制终端输入验证码。成员 token 保存到当前 context 配置文件的可选 `user_token` 字段，凭据配置原子写入且权限为 `0600`；API Key 仍只保存环境变量引用。`LANGBOT_USER_TOKEN` 优先于保存的 token。输出会打码；不要将密码或 token 放入命令行参数。
+
+Cloud 禁用密码登录，返回 `password_login_disabled`。先登录目标 Workspace 的 WebUI，在浏览器开发者工具 → Application/Storage → 对应域名的 Local Storage 中复制 `token`，粘贴到 `lbctl auth set-token --stdin` 并以 EOF 结束，或通过受保护的 stdin 管道传入。token 等同密码，不要放进日志或截图。CLI 不自动续期：过期或成员请求被 Core 返回 401/403 时统一报 `requires_member_session`（退出码 3），需重新登录或导入新的 WebUI token；缺少 token 时发请求之前即报错。`auth logout` 清除保存的 token；若使用环境变量还需 `unset LANGBOT_USER_TOKEN`，它不会撤销其他浏览器会话。成员操作通过 `/api/v1/workspaces/current` 核验权限和 Workspace 绑定，不使用仅允许 API Key 的 system 身份探测接口。
+
+### 二进制文件
+
+上传继续使用已有 multipart 路由。`file image get <key> -O image.png` 从 `/api/v1/files/image/<key>` 下载原始字节，不依赖 `operation.invoke`，Core v4.11.8 也可使用。不传 `-O` 时仅允许向非终端 stdout 写入二进制；成功时不输出 JSON envelope。
+
+Core 支持 `operation.binary_base64` 后，`op call file.image.get --file request.json` 原样保留 JSON 中的 base64 字段（`output_schema` 标注 `contentEncoding: base64`）。加上 `--decode-binary content -O image.png` 可将指定顶层字段解码到文件，两项参数必须同时提供。system wizard 属于 WebUI 引导进度，不是无界面资源管理操作，因此不提供对应命令。

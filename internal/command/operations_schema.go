@@ -3,6 +3,10 @@ package command
 import "strings"
 
 func init() {
+	schemaMetaByName["auth.login"] = schemaCommandMeta{Mutating: true, RequiresConnection: true, RequiresSavedContext: true, RequiredFlags: requiredFlagSet("email")}
+	schemaMetaByName["auth.set-token"] = schemaCommandMeta{Mutating: true, RequiresSavedContext: true, RequiredFlags: requiredFlagSet("stdin")}
+	schemaMetaByName["auth.logout"] = schemaCommandMeta{Mutating: true, RequiresSavedContext: true}
+	schemaMetaByName["file.image.get"] = readMeta(operationIDs("file.image.get")...)
 	for path, identifier := range uploadOperations {
 		schemaMetaByName[strings.ReplaceAll(path, " ", ".")] = writeMeta(operationIDs(identifier), schemaWriteOptions{RequiresYes: identifier != "skill.zip.preview", RequiredFlags: []string{"file"}})
 	}

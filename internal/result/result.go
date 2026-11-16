@@ -15,6 +15,10 @@ type Error struct {
 
 func (e *Error) Error() string { return e.Message }
 
+func RequiresMemberSession() *Error {
+	return &Error{Kind: "auth", Type: "requires_member_session", Message: "此操作需要有效成员会话；请运行 lbctl auth login 或 lbctl auth set-token --stdin"}
+}
+
 func New(kind, message string) *Error {
 	return &Error{Kind: kind, Type: kind, Message: message}
 }

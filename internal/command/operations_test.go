@@ -37,13 +37,17 @@ func operationCLITransport(t *testing.T, server *httptest.Server, input string, 
 	code := Execute(context.Background(), append([]string{"--config", path, "-o", "json"}, arguments...), Dependencies{
 		In: strings.NewReader(input), Out: &output, Err: &output, Version: "test",
 		Transport: transport,
-		LookupEnv: func(name string) (string, bool) { return "test-secret", name == "TEST_KEY" },
+		LookupEnv: func(name string) (string, bool) {
+			return "test-secret", name == "TEST_KEY" || name == "LANGBOT_USER_TOKEN"
+		},
 	})
 	return code, output.String()
 }
 
 func operationPreflight(writer http.ResponseWriter, request *http.Request, supported bool) bool {
 	switch request.URL.Path {
+	case "/api/v1/workspaces/current":
+		fmt.Fprint(writer, `{"code":0,"data":{"workspace":{"uuid":"workspace"},"permissions":["resource.view","resource.manage","runtime.operate","provider_secret.manage","workspace.view","workspace.update","api_key.manage","audit.view","data.export","member.view","member.invite","member.update_role","member.remove"]}}`)
 	case "/api/v1/system/context":
 		fmt.Fprint(writer, `{"code":0,"data":{"instance_uuid":"instance","workspace_uuid":"workspace","api_key_id":"key","permissions":["resource.view","resource.manage","runtime.operate","provider_secret.manage","workspace.view","workspace.update","api_key.manage","audit.view","data.export","member.view","member.invite","member.update_role","member.remove"]}}`)
 	case "/api/v1/system/capabilities":
@@ -68,7 +72,11 @@ func TestEveryFriendlyOperationMapping(t *testing.T) {
 				if got := request.Header.Get("X-LangBot-Client-Command"); got != strings.ReplaceAll(spec.path, " ", ".") {
 					t.Errorf("command identity = %q", got)
 				}
-				if request.Header.Get("X-API-Key") != "test-secret" {
+				if memberOperation(spec.id) {
+					if request.Header.Get("Authorization") != "Bearer test-secret" || request.Header.Get("X-API-Key") != "" {
+						t.Error("missing member credential")
+					}
+				} else if request.Header.Get("X-API-Key") != "test-secret" {
 					t.Error("missing credential")
 				}
 				if operationPreflight(writer, request, true) {

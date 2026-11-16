@@ -15,7 +15,7 @@ func (c Client) PipelineRun(ctx context.Context, target Target, id, message stri
 	if err != nil {
 		return nil, err
 	}
-	data, ok := redactConnectionSecret(resp.Data, target.APIKey).(map[string]any)
+	data, ok := redactConnectionSecret(resp.Data, target.secret()).(map[string]any)
 	if !ok {
 		return nil, result.New("incompatible", "试运行返回格式无效，执行状态未知；请勿自动重试")
 	}

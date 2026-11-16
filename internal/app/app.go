@@ -474,7 +474,7 @@ func (s *Service) RawInfo(ctx context.Context, options CheckOptions, methodAndPa
 		return Result{Meta: connectionMeta(conn)}, err
 	}
 	client := api.Client{Transport: s.deps.Transport}
-	data, err := client.Raw(ctx, api.Target{Endpoint: conn.Endpoint, APIKey: conn.APIKey, Timeout: conn.Timeout}, method, path)
+	data, err := client.Raw(ctx, api.Target{Endpoint: conn.Endpoint, APIKey: conn.APIKey, UserToken: conn.UserToken, Timeout: conn.Timeout}, method, path)
 	if err != nil {
 		return Result{Meta: connectionMeta(conn)}, err
 	}
@@ -503,7 +503,7 @@ func (s *Service) APIRequest(ctx context.Context, method, path string, body map[
 		return Result{Meta: meta}, err
 	}
 	data, err := (api.Client{Transport: s.deps.Transport}).APIRequest(ctx, api.Target{
-		Endpoint: conn.Endpoint, APIKey: conn.APIKey, Timeout: conn.Timeout,
+		Endpoint: conn.Endpoint, APIKey: conn.APIKey, UserToken: conn.UserToken, Timeout: conn.Timeout,
 	}, operation, body)
 	if err != nil {
 		return Result{Meta: meta}, err
@@ -559,7 +559,7 @@ func (s *Service) BotList(ctx context.Context, options CheckOptions) (Result, er
 		return Result{Meta: resourceMeta(conn, identity)}, err
 	}
 	bots, err := (api.Client{Transport: s.deps.Transport}).Bots(ctx, api.Target{
-		Endpoint: conn.Endpoint, APIKey: conn.APIKey, Timeout: conn.Timeout,
+		Endpoint: conn.Endpoint, APIKey: conn.APIKey, UserToken: conn.UserToken, Timeout: conn.Timeout,
 	})
 	if err != nil {
 		return Result{Meta: resourceMeta(conn, identity)}, err
@@ -573,7 +573,7 @@ func (s *Service) BotGet(ctx context.Context, identifier string, options CheckOp
 		return Result{Meta: resourceMeta(conn, identity)}, err
 	}
 	bot, err := (api.Client{Transport: s.deps.Transport}).Bot(ctx, api.Target{
-		Endpoint: conn.Endpoint, APIKey: conn.APIKey, Timeout: conn.Timeout,
+		Endpoint: conn.Endpoint, APIKey: conn.APIKey, UserToken: conn.UserToken, Timeout: conn.Timeout,
 	}, identifier)
 	if err != nil {
 		return Result{Meta: resourceMeta(conn, identity)}, err
@@ -587,7 +587,7 @@ func (s *Service) PipelineList(ctx context.Context, options CheckOptions) (Resul
 		return Result{Meta: resourceMeta(conn, identity)}, err
 	}
 	pipelines, err := (api.Client{Transport: s.deps.Transport}).Pipelines(ctx, api.Target{
-		Endpoint: conn.Endpoint, APIKey: conn.APIKey, Timeout: conn.Timeout,
+		Endpoint: conn.Endpoint, APIKey: conn.APIKey, UserToken: conn.UserToken, Timeout: conn.Timeout,
 	})
 	if err != nil {
 		return Result{Meta: resourceMeta(conn, identity)}, err
@@ -601,7 +601,7 @@ func (s *Service) PipelineGet(ctx context.Context, identifier string, options Ch
 		return Result{Meta: resourceMeta(conn, identity)}, err
 	}
 	pipeline, err := (api.Client{Transport: s.deps.Transport}).Pipeline(ctx, api.Target{
-		Endpoint: conn.Endpoint, APIKey: conn.APIKey, Timeout: conn.Timeout,
+		Endpoint: conn.Endpoint, APIKey: conn.APIKey, UserToken: conn.UserToken, Timeout: conn.Timeout,
 	}, identifier)
 	if err != nil {
 		return Result{Meta: resourceMeta(conn, identity)}, err
@@ -624,7 +624,7 @@ func (s *Service) TaskGet(ctx context.Context, identifier string, options CheckO
 		return Result{Meta: resourceMeta(conn, identity)}, err
 	}
 	task, err := (api.Client{Transport: s.deps.Transport}).Task(ctx, api.Target{
-		Endpoint: conn.Endpoint, APIKey: conn.APIKey, Timeout: conn.Timeout,
+		Endpoint: conn.Endpoint, APIKey: conn.APIKey, UserToken: conn.UserToken, Timeout: conn.Timeout,
 	}, identifier)
 	if err != nil {
 		return Result{Meta: resourceMeta(conn, identity)}, err
@@ -647,7 +647,7 @@ func (s *Service) TaskList(ctx context.Context, taskType, kind string, options C
 		return Result{Meta: resourceMeta(conn, identity)}, err
 	}
 	tasks, err := (api.Client{Transport: s.deps.Transport}).Tasks(ctx, api.Target{
-		Endpoint: conn.Endpoint, APIKey: conn.APIKey, Timeout: conn.Timeout,
+		Endpoint: conn.Endpoint, APIKey: conn.APIKey, UserToken: conn.UserToken, Timeout: conn.Timeout,
 	}, api.TaskListFilters{Type: taskType, Kind: kind})
 	if err != nil {
 		return Result{Meta: resourceMeta(conn, identity)}, err
@@ -673,7 +673,7 @@ func (s *Service) TaskWait(ctx context.Context, identifier string, wait WaitOpti
 		return Result{Meta: resourceMeta(conn, identity)}, err
 	}
 	task, waitErr := waitForTask(ctx, api.Client{Transport: s.deps.Transport}, api.Target{
-		Endpoint: conn.Endpoint, APIKey: conn.APIKey, Timeout: conn.Timeout,
+		Endpoint: conn.Endpoint, APIKey: conn.APIKey, UserToken: conn.UserToken, Timeout: conn.Timeout,
 	}, identifier, wait)
 	data := map[string]any{"task_id": identifier, "server_cancelled": false}
 	if task != nil {
@@ -1207,7 +1207,7 @@ func (s *Service) mcpRead(ctx context.Context, name, operation, permission strin
 }
 
 func readTarget(preflight WritePreflight) api.Target {
-	return api.Target{Endpoint: preflight.Connection.Endpoint, APIKey: preflight.Connection.APIKey, Timeout: preflight.Connection.Timeout}
+	return api.Target{Endpoint: preflight.Connection.Endpoint, APIKey: preflight.Connection.APIKey, UserToken: preflight.Connection.UserToken, Timeout: preflight.Connection.Timeout}
 }
 
 func fileIdentifier(value any) string {
@@ -2668,10 +2668,20 @@ func (s *Service) resolve(ctx context.Context, file config.File, options config.
 	if err != nil {
 		return conn, err
 	}
+	if config.IsMember(ctx) {
+		return conn.WithMember(file, s.deps.LookupEnv)
+	}
 	return s.withCredential(ctx, conn, options)
 }
 
 func (s *Service) withCredential(ctx context.Context, conn config.Connection, options config.Options) (config.Connection, error) {
+	if config.IsMember(ctx) {
+		file, err := s.load()
+		if err != nil {
+			return conn, err
+		}
+		return conn.WithMember(file, s.deps.LookupEnv)
+	}
 	credentialInput := s.deps.In
 	if options.APIKeyStdin {
 		inputParent := ctx
@@ -2728,15 +2738,18 @@ func readCredential(ctx context.Context, reader io.Reader) (string, error) {
 
 func (s *Service) info(ctx context.Context, conn config.Connection) (api.Info, error) {
 	client := api.Client{Transport: s.deps.Transport}
-	return client.Info(ctx, api.Target{Endpoint: conn.Endpoint, APIKey: conn.APIKey, Timeout: conn.Timeout})
+	return client.Info(ctx, api.Target{Endpoint: conn.Endpoint, APIKey: conn.APIKey, UserToken: conn.UserToken, Timeout: conn.Timeout})
 }
 
 func (s *Service) identity(ctx context.Context, conn config.Connection) (api.Context, error) {
+	if conn.UserToken != "" {
+		return (api.Client{Transport: s.deps.Transport}).MemberContext(ctx, api.Target{Endpoint: conn.Endpoint, UserToken: conn.UserToken, Timeout: conn.Timeout})
+	}
 	if strings.TrimSpace(conn.APIKey) == "" {
 		return api.Context{}, result.AuthSetupError("missing_api_key", "LANGBOT_API_KEY")
 	}
 	client := api.Client{Transport: s.deps.Transport}
-	identity, err := client.Context(ctx, api.Target{Endpoint: conn.Endpoint, APIKey: conn.APIKey, Timeout: conn.Timeout})
+	identity, err := client.Context(ctx, api.Target{Endpoint: conn.Endpoint, APIKey: conn.APIKey, UserToken: conn.UserToken, Timeout: conn.Timeout})
 	if err != nil && result.AsError(err).Reason == "authentication_rejected" && strings.HasPrefix(conn.CredentialSource, "env:") {
 		result.AddAuthGuidance(result.AsError(err), "authentication_rejected", strings.TrimPrefix(conn.CredentialSource, "env:"))
 	}
@@ -2745,7 +2758,10 @@ func (s *Service) identity(ctx context.Context, conn config.Connection) (api.Con
 
 func (s *Service) capabilities(ctx context.Context, conn config.Connection) (api.Capabilities, error) {
 	client := api.Client{Transport: s.deps.Transport}
-	return client.Capabilities(ctx, api.Target{Endpoint: conn.Endpoint, APIKey: conn.APIKey, Timeout: conn.Timeout})
+	if conn.UserToken != "" {
+		return client.MemberCapabilities(ctx, api.Target{Endpoint: conn.Endpoint, UserToken: conn.UserToken, Timeout: conn.Timeout})
+	}
+	return client.Capabilities(ctx, api.Target{Endpoint: conn.Endpoint, APIKey: conn.APIKey, UserToken: conn.UserToken, Timeout: conn.Timeout})
 }
 
 func unknownCapabilities() map[string]any {

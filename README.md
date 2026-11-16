@@ -602,6 +602,26 @@ Confirmation grants all declared permissions unless individual IDs are supplied.
 
 ### Core access boundaries
 
-The catalog is filtered by permission, principal, and exposure; it is not every friendly command. Catalog-hidden operations already known to the CLI can still be invoked using their fixed contracts; Core remains the authorization authority. Core rejects API keys for account-only operations, including Codex login, assistant sessions, pipeline migration, and Workspace member/invitation administration. Knowledge migration's existing routes also require a member; `preview` maps to `/api/v1/knowledge/migration/status`. This CLI uses API keys and does not bypass those restrictions.
+The catalog is filtered by permission, principal, and exposure; it is not every friendly command. Catalog-hidden operations already known to the CLI can still be invoked using their fixed contracts; Core remains the authorization authority. Workspace members/invitations, provider Codex, Assistant, pipeline migration, and knowledge-base migration automatically use a member session, including equivalent `op call/describe/stream` IDs. Other commands default to API keys even when a member token is configured; `--as-member` explicitly selects the member session. Knowledge migration `preview` uses `/api/v1/knowledge/migration/status`.
 
-Binary uploads (image, plugin local/config-file, skill ZIP preview/install) keep the existing multipart routes. The tested Core operation bridge returns HTTP 500 for PNG image retrieval; `file image get` requires binary-safe response serialization in Core. The system wizard is excluded because it manages WebUI onboarding state rather than a headless resource workflow.
+### Member sessions
+
+```bash
+lbctl auth login --email you@example.com
+lbctl auth login --email you@example.com --password-stdin < password-file
+lbctl auth login --email you@example.com --totp
+lbctl auth set-token --stdin < token-file
+lbctl workspace member list
+lbctl op list --as-member
+lbctl auth logout
+```
+
+Login requires a saved context. Password and TOTP/recovery-code prompts hide input; `--totp` completes Core's challenge, including when the password comes from stdin and a controlling terminal is available. Tokens are stored as the optional `user_token` field in the current context's credential-bearing configuration file, atomically written with mode `0600`. API keys remain environment references. `LANGBOT_USER_TOKEN` overrides the saved token. Tokens are masked in output; never pass passwords or tokens as command-line arguments.
+
+Cloud disables password login (`password_login_disabled`). Sign into the target Workspace's WebUI, open browser developer tools → Application/Storage → Local Storage for that origin, and copy the `token` value. Paste it into `lbctl auth set-token --stdin` (finish stdin with EOF), or supply it through a protected stdin pipe. Treat it as a password and do not share it in logs or screenshots. The CLI does not refresh sessions: when the token expires or Core rejects a member request with 401/403, the error is `requires_member_session` (exit 3); log in again or import a fresh WebUI token. Missing tokens fail before any network request. `auth logout` removes the saved token; also unset `LANGBOT_USER_TOKEN` if exported. It does not revoke other browser sessions. Member permissions and Workspace binding are checked against `/api/v1/workspaces/current`; API-key-only system discovery endpoints are not used for member operation calls.
+
+### Binary files
+
+Binary uploads keep the existing multipart routes. `file image get <key> -O image.png` downloads original bytes from `/api/v1/files/image/<key>`, including on Core v4.11.8 without `operation.invoke`. Without `-O`, it writes binary stdout only when stdout is not a terminal. This command emits no JSON success envelope.
+
+With Core's `operation.binary_base64` support, `op call file.image.get --file request.json` preserves the base64 fields as JSON (`output_schema` marks them with `contentEncoding: base64`). Add `--decode-binary content -O image.png` to decode the named top-level field into a file instead. Both flags are required together. The system wizard is excluded because it manages WebUI onboarding state rather than a headless resource workflow.

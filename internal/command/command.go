@@ -42,6 +42,7 @@ type Dependencies struct {
 }
 
 type globalFlags struct {
+	asMember    bool
 	listView    listViewOptions
 	config      string
 	configSet   bool
@@ -123,15 +124,23 @@ func newRoot(deps Dependencies, flags *globalFlags, service *app.Service) *cobra
 	root.SetErr(deps.Err)
 	root.SetFlagErrorFunc(commandFlagError)
 	persistent := root.PersistentFlags()
+	persistent.BoolVar(&flags.asMember, "as-member", false, "使用成员会话而不是 API Key")
 	persistent.StringVar(&flags.config, "config", "", "配置文件路径；其次使用 LANGBOT_CONFIG，再使用 ~/.config/langbot/config.yaml")
 	persistent.StringVar(&flags.context, "context", "", "使用指定 context")
 	persistent.StringVar(&flags.endpoint, "endpoint", "", "临时服务地址")
 	persistent.StringVar(&flags.timeout, "timeout", "", "操作超时时间")
 	persistent.BoolVar(&flags.apiKeyStdin, "api-key-stdin", false, "从 stdin 读取本次请求的 API Key，等待上限由 --timeout 控制")
 	persistent.StringVarP(&flags.output, "output", "o", "", "输出格式：json 或 yaml；默认简洁模式（schema 默认 JSON）")
-	root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
+	root.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
 		commandPath := strings.ReplaceAll(strings.TrimPrefix(cmd.CommandPath(), "lbctl "), " ", ".")
 		cmd.SetContext(clientidentity.WithContext(cmd.Context(), deps.Version, commandPath))
+		identifier := commandPath
+		if (commandPath == "op.call" || commandPath == "op.stream" || commandPath == "op.describe") && len(args) > 0 {
+			identifier = args[0]
+		}
+		if flags.asMember || memberOperation(identifier) {
+			cmd.SetContext(config.AsMember(cmd.Context()))
+		}
 		selectOutput(cmd, flags)
 		flags.configSet = cmd.InheritedFlags().Changed("config")
 		if flags.configSet && strings.TrimSpace(flags.config) == "" {
@@ -148,6 +157,8 @@ func newRoot(deps Dependencies, flags *globalFlags, service *app.Service) *cobra
 		return nil
 	}
 	root.AddCommand(newContextCommand(service, deps, flags))
+	root.AddCommand(newAuthCommand(service, deps, flags))
+	addImageDownload(root, service, deps, flags)
 	root.AddCommand(newStatusCommand(service, deps, flags))
 	root.AddCommand(newDoctorCommand(service, deps, flags))
 	root.AddCommand(newInstallCommand(service, deps, flags))
@@ -1702,7 +1713,11 @@ func enrichResult(deps Dependencies, flags *globalFlags, value app.Result, err e
 		e := result.AsError(err)
 		switch e.Kind {
 		case "auth":
-			add("验证当前目标的凭据", connect, "whoami")
+			if e.Type == "requires_member_session" || e.Type == "password_login_disabled" {
+				add("导入有效成员会话", connect, "auth", "set-token", "--stdin")
+			} else {
+				add("验证当前目标的凭据", connect, "whoami")
+			}
 		case "permission", "incompatible":
 			add("查看当前目标支持的能力与权限", connect, "capabilities")
 		case "precondition":

@@ -52,9 +52,10 @@ const (
 
 // Target 是一次请求使用的不可变连接快照。
 type Target struct {
-	Endpoint string        `json:"endpoint" yaml:"endpoint"`
-	APIKey   string        `json:"-" yaml:"-"`
-	Timeout  time.Duration `json:"timeout" yaml:"timeout"`
+	UserToken string        `json:"-" yaml:"-"`
+	Endpoint  string        `json:"endpoint" yaml:"endpoint"`
+	APIKey    string        `json:"-" yaml:"-"`
+	Timeout   time.Duration `json:"timeout" yaml:"timeout"`
 }
 
 // Client 只封装 HTTP 传输策略，不保存 context 或凭据状态。
@@ -265,9 +266,9 @@ func (c Client) Info(ctx context.Context, target Target) (Info, error) {
 	if err != nil {
 		return Info{}, err
 	}
-	data := projectInfo(resp.Data, target.APIKey)
+	data := projectInfo(resp.Data, target.secret())
 	if safeString(data["version"]) == "" {
-		return Info{}, protocolError("服务返回的诊断数据缺少有效版本", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.APIKey))
+		return Info{}, protocolError("服务返回的诊断数据缺少有效版本", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
 	}
 
 	return Info{
@@ -284,7 +285,7 @@ func (c Client) Context(ctx context.Context, target Target) (Context, error) {
 	}
 	identity, ok := parseContextData(resp.Data)
 	if !ok {
-		return Context{}, protocolError("服务返回的身份数据格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.APIKey))
+		return Context{}, protocolError("服务返回的身份数据格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
 	}
 	return identity, nil
 }
@@ -297,11 +298,11 @@ func (c Client) Capabilities(ctx context.Context, target Target) (Capabilities, 
 	}
 	schemaVersion, ok := capabilitySchemaVersion(resp.Data["schema_version"])
 	if !ok || schemaVersion != 1 {
-		return Capabilities{}, protocolError("服务返回的能力协议版本不受支持", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.APIKey))
+		return Capabilities{}, protocolError("服务返回的能力协议版本不受支持", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
 	}
 	operations, ok := resp.Data["operations"].(map[string]any)
 	if !ok {
-		return Capabilities{}, protocolError("服务返回的能力数据格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.APIKey))
+		return Capabilities{}, protocolError("服务返回的能力数据格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
 	}
 	known := make(map[string]struct{}, len(capabilityOperationIDs))
 	for _, operationID := range capabilityOperationIDs {
@@ -314,11 +315,11 @@ func (c Client) Capabilities(ctx context.Context, target Target) (Capabilities, 
 		}
 		entry, ok := value.(map[string]any)
 		if !ok {
-			return Capabilities{}, protocolError("服务返回的能力项格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.APIKey))
+			return Capabilities{}, protocolError("服务返回的能力项格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
 		}
 		supported, ok := entry["supported"].(bool)
 		if !ok {
-			return Capabilities{}, protocolError("服务返回的能力项缺少有效 supported 字段", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.APIKey))
+			return Capabilities{}, protocolError("服务返回的能力项缺少有效 supported 字段", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
 		}
 		parsed[operationID] = supported
 	}
@@ -337,7 +338,7 @@ func (c Client) Task(ctx context.Context, target Target, identifier string) (Tas
 	}
 	task, ok := parseTaskData(resp.Data, identifier)
 	if !ok {
-		return Task{}, protocolError("服务返回的任务数据格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.APIKey))
+		return Task{}, protocolError("服务返回的任务数据格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
 	}
 	return task, nil
 }
@@ -361,21 +362,21 @@ func (c Client) Tasks(ctx context.Context, target Target, filters TaskListFilter
 	}
 	raw, ok := resp.Data["tasks"].([]any)
 	if !ok {
-		return nil, protocolError("服务返回的任务列表格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.APIKey))
+		return nil, protocolError("服务返回的任务列表格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
 	}
 	tasks := make([]Task, 0, len(raw))
 	for _, value := range raw {
 		item, ok := value.(map[string]any)
 		if !ok {
-			return nil, protocolError("服务返回的任务格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.APIKey))
+			return nil, protocolError("服务返回的任务格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
 		}
 		id, ok := stringValue(item["id"])
-		if !ok || strings.TrimSpace(id) == "" || containsSecret(id, target.APIKey) {
-			return nil, protocolError("服务返回的任务缺少有效 ID", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.APIKey))
+		if !ok || strings.TrimSpace(id) == "" || containsSecret(id, target.secret()) {
+			return nil, protocolError("服务返回的任务缺少有效 ID", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
 		}
 		task, ok := parseTaskData(item, id)
 		if !ok {
-			return nil, protocolError("服务返回的任务数据格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.APIKey))
+			return nil, protocolError("服务返回的任务数据格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
 		}
 		tasks = append(tasks, task)
 	}
@@ -392,12 +393,12 @@ func (c Client) KnowledgeBase(ctx context.Context, target Target, identifier str
 	if err != nil {
 		return nil, err
 	}
-	base, err := parseResourceObject(resp, "base", projectKnowledgeBase, target.APIKey)
+	base, err := parseResourceObject(resp, "base", projectKnowledgeBase, target.secret())
 	if err != nil {
 		return nil, err
 	}
 	if base["uuid"] != identifier {
-		return nil, protocolError("服务返回的知识库 UUID 与请求不一致", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.APIKey))
+		return nil, protocolError("服务返回的知识库 UUID 与请求不一致", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
 	}
 	return base, nil
 }
@@ -408,7 +409,7 @@ func (c Client) KnowledgeBases(ctx context.Context, target Target) ([]map[string
 	if err != nil {
 		return nil, err
 	}
-	return parseResourceList(resp, "bases", projectKnowledgeBase, target.APIKey)
+	return parseResourceList(resp, "bases", projectKnowledgeBase, target.secret())
 }
 
 func (c Client) KnowledgeBaseCreate(ctx context.Context, target Target, body map[string]any) (WriteResult, error) {
@@ -435,9 +436,9 @@ func (c Client) KnowledgeBaseFiles(ctx context.Context, target Target, identifie
 	}
 	files, ok := resp.Data["files"].([]any)
 	if !ok {
-		return nil, protocolError("服务返回的知识库文件列表格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.APIKey))
+		return nil, protocolError("服务返回的知识库文件列表格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
 	}
-	return redactConnectionSecret(files, target.APIKey).([]any), nil
+	return redactConnectionSecret(files, target.secret()).([]any), nil
 }
 
 func (c Client) KnowledgeBaseFileDelete(ctx context.Context, target Target, identifier, fileID string) error {
@@ -462,7 +463,7 @@ func (c Client) KnowledgeBaseRetrieve(ctx context.Context, target Target, identi
 	if err != nil {
 		return nil, err
 	}
-	return redactConnectionSecret(resp.Data, target.APIKey), nil
+	return redactConnectionSecret(resp.Data, target.secret()), nil
 }
 
 // UploadDocument 上传文件并返回服务端文件 ID。
@@ -497,8 +498,8 @@ func (c Client) UploadDocument(ctx context.Context, target Target, filename stri
 		return "", err
 	}
 	fileID, ok := stringValue(resp.Data["file_id"])
-	if !ok || strings.TrimSpace(fileID) == "" || containsSecret(fileID, target.APIKey) {
-		return "", writeUnknown(&result.Error{HTTPStatus: resp.StatusCode, RequestID: responseRequestID(resp.Header, resp.Body, target.APIKey)})
+	if !ok || strings.TrimSpace(fileID) == "" || containsSecret(fileID, target.secret()) {
+		return "", writeUnknown(&result.Error{HTTPStatus: resp.StatusCode, RequestID: responseRequestID(resp.Header, resp.Body, target.secret())})
 	}
 	return fileID, nil
 }
@@ -518,8 +519,8 @@ func (c Client) KnowledgeBaseStoreFile(ctx context.Context, target Target, ident
 		return "", err
 	}
 	taskID, ok := stringValue(resp.Data["task_id"])
-	if !ok || strings.TrimSpace(taskID) == "" || containsSecret(taskID, target.APIKey) {
-		return "", writeUnknown(&result.Error{HTTPStatus: resp.StatusCode, RequestID: responseRequestID(resp.Header, resp.Body, target.APIKey)})
+	if !ok || strings.TrimSpace(taskID) == "" || containsSecret(taskID, target.secret()) {
+		return "", writeUnknown(&result.Error{HTTPStatus: resp.StatusCode, RequestID: responseRequestID(resp.Header, resp.Body, target.secret())})
 	}
 	return taskID, nil
 }
@@ -576,11 +577,11 @@ func (c Client) PluginGet(ctx context.Context, target Target, author, name strin
 	}
 	plugin, ok := resp.Data["plugin"].(map[string]any)
 	if !ok {
-		return nil, protocolError("服务返回的资源格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.APIKey))
+		return nil, protocolError("服务返回的资源格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
 	}
-	projected := projectPlugin(plugin, author, name, target.APIKey)
+	projected := projectPlugin(plugin, author, name, target.secret())
 	if projected["author"] != author || projected["name"] != name {
-		return nil, protocolError("服务返回的 Plugin 身份与请求不一致", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.APIKey))
+		return nil, protocolError("服务返回的 Plugin 身份与请求不一致", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
 	}
 	return projected, nil
 }
@@ -592,19 +593,19 @@ func (c Client) Plugins(ctx context.Context, target Target) ([]map[string]any, e
 	}
 	raw, ok := resp.Data["plugins"].([]any)
 	if !ok {
-		return nil, protocolError("服务返回的插件列表格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.APIKey))
+		return nil, protocolError("服务返回的插件列表格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
 	}
 	items := make([]map[string]any, 0, len(raw))
 	for _, value := range raw {
 		plugin, ok := value.(map[string]any)
 		if !ok {
-			return nil, protocolError("服务返回的插件格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.APIKey))
+			return nil, protocolError("服务返回的插件格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
 		}
-		projected := projectPlugin(plugin, "", "", target.APIKey)
+		projected := projectPlugin(plugin, "", "", target.secret())
 		author, authorOK := projected["author"].(string)
 		name, nameOK := projected["name"].(string)
 		if !authorOK || strings.TrimSpace(author) == "" || !nameOK || strings.TrimSpace(name) == "" {
-			return nil, protocolError("服务返回的 Plugin 缺少有效身份", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.APIKey))
+			return nil, protocolError("服务返回的 Plugin 缺少有效身份", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
 		}
 		items = append(items, projected)
 	}
@@ -620,7 +621,7 @@ func (c Client) PluginConfig(ctx context.Context, target Target, author, name st
 	if err != nil {
 		return nil, err
 	}
-	return redactConnectionSecret(resp.Data, target.APIKey), nil
+	return redactConnectionSecret(resp.Data, target.secret()), nil
 }
 
 func (c Client) PluginConfigUpdate(ctx context.Context, target Target, author, name string, body map[string]any) error {
@@ -665,7 +666,7 @@ func (c Client) PluginLogs(ctx context.Context, target Target, author, name, lev
 	if err != nil {
 		return nil, err
 	}
-	return redactConnectionSecret(resp.Data, target.APIKey), nil
+	return redactConnectionSecret(resp.Data, target.secret()), nil
 }
 
 func (c Client) Skills(ctx context.Context, target Target) ([]map[string]any, error) {
@@ -675,18 +676,18 @@ func (c Client) Skills(ctx context.Context, target Target) ([]map[string]any, er
 	}
 	raw, ok := resp.Data["skills"].([]any)
 	if !ok {
-		return nil, protocolError("服务返回的 Skill 列表格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.APIKey))
+		return nil, protocolError("服务返回的 Skill 列表格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
 	}
 	items := make([]map[string]any, 0, len(raw))
 	for _, value := range raw {
 		item, ok := value.(map[string]any)
 		if !ok {
-			return nil, protocolError("服务返回的 Skill 格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.APIKey))
+			return nil, protocolError("服务返回的 Skill 格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
 		}
-		projected := projectSkillSummary(item, target.APIKey)
+		projected := projectSkillSummary(item, target.secret())
 		name, ok := projected["name"].(string)
 		if !ok || strings.TrimSpace(name) == "" {
-			return nil, protocolError("服务返回的 Skill 缺少有效名称", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.APIKey))
+			return nil, protocolError("服务返回的 Skill 缺少有效名称", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
 		}
 		items = append(items, projected)
 	}
@@ -704,14 +705,14 @@ func (c Client) SkillGet(ctx context.Context, target Target, name string) (map[s
 	}
 	item, ok := resp.Data["skill"].(map[string]any)
 	if !ok {
-		return nil, protocolError("服务返回的 Skill 格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.APIKey))
+		return nil, protocolError("服务返回的 Skill 格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
 	}
-	projected := projectSkillSummary(item, target.APIKey)
+	projected := projectSkillSummary(item, target.secret())
 	if skillName, ok := projected["name"].(string); !ok || skillName != name {
-		return nil, protocolError("服务返回的 Skill 身份与请求不一致", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.APIKey))
+		return nil, protocolError("服务返回的 Skill 身份与请求不一致", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
 	}
 	if instructions, exists := item["instructions"]; exists {
-		projected["instructions"] = redactConnectionSecret(instructions, target.APIKey)
+		projected["instructions"] = redactConnectionSecret(instructions, target.secret())
 	}
 	return projected, nil
 }
@@ -738,7 +739,7 @@ func (c Client) SkillFiles(ctx context.Context, target Target, name, pathValue s
 	if err != nil {
 		return nil, err
 	}
-	return redactConnectionSecret(resp.Data, target.APIKey), nil
+	return redactConnectionSecret(resp.Data, target.secret()), nil
 }
 
 func (c Client) SkillFileRead(ctx context.Context, target Target, name, filePath string) (any, error) {
@@ -768,9 +769,9 @@ func (c Client) skillFileRead(ctx context.Context, target Target, name, filePath
 	}
 	content, ok := resp.Data["content"].(string)
 	if !ok {
-		return nil, false, protocolError("服务返回的 Skill 文件格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.APIKey))
+		return nil, false, protocolError("服务返回的 Skill 文件格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
 	}
-	return redactConnectionSecret(resp.Data, target.APIKey), content == expected, nil
+	return redactConnectionSecret(resp.Data, target.secret()), content == expected, nil
 }
 
 func (c Client) SkillPreview(ctx context.Context, target Target, name string) (any, error) {
@@ -782,7 +783,7 @@ func (c Client) SkillPreview(ctx context.Context, target Target, name string) (a
 	if err != nil {
 		return nil, err
 	}
-	return redactConnectionSecret(resp.Data, target.APIKey), nil
+	return redactConnectionSecret(resp.Data, target.secret()), nil
 }
 
 func (c Client) SkillCreate(ctx context.Context, target Target, body map[string]any) (map[string]any, error) {
@@ -794,7 +795,7 @@ func (c Client) SkillCreate(ctx context.Context, target Target, body map[string]
 		return nil, err
 	}
 	expectedName, _ := body["name"].(string)
-	skill, err := parseSkillResponse(resp, expectedName, target.APIKey)
+	skill, err := parseSkillResponse(resp, expectedName, target.secret())
 	if err != nil {
 		return nil, writeUnknown(result.AsError(err))
 	}
@@ -813,7 +814,7 @@ func (c Client) SkillUpdate(ctx context.Context, target Target, name string, bod
 	if err != nil {
 		return nil, err
 	}
-	skill, err := parseSkillResponse(resp, name, target.APIKey)
+	skill, err := parseSkillResponse(resp, name, target.secret())
 	if err != nil {
 		return nil, writeUnknown(result.AsError(err))
 	}
@@ -841,7 +842,7 @@ func (c Client) SkillFileWrite(ctx context.Context, target Target, name, filePat
 	if err != nil {
 		return nil, err
 	}
-	return redactConnectionSecret(resp.Data, target.APIKey), nil
+	return redactConnectionSecret(resp.Data, target.secret()), nil
 }
 
 // SkillInstallGitHub 安装 GitHub Skill，服务端同步返回安装结果。
@@ -888,19 +889,19 @@ func (c Client) MCPServerGet(ctx context.Context, target Target, name string) (m
 	}
 	item, ok := resp.Data["server"].(map[string]any)
 	if !ok {
-		return nil, protocolError("服务返回的 MCP Server 格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.APIKey))
+		return nil, protocolError("服务返回的 MCP Server 格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
 	}
-	server := projectMCPServer(item, target.APIKey)
+	server := projectMCPServer(item, target.secret())
 	for _, field := range []string{"extra_args", "readme", "runtime_info"} {
 		if value, exists := item[field]; exists {
-			server[field] = redactConnectionSecret(value, target.APIKey)
+			server[field] = redactConnectionSecret(value, target.secret())
 		}
 	}
 	uuid, uuidOK := server["uuid"].(string)
 	serverName, nameOK := server["name"].(string)
-	if !uuidOK || strings.TrimSpace(uuid) == "" || containsSecret(uuid, target.APIKey) ||
+	if !uuidOK || strings.TrimSpace(uuid) == "" || containsSecret(uuid, target.secret()) ||
 		!nameOK || serverName != strings.TrimSpace(name) {
-		return nil, protocolError("服务返回的 MCP Server 身份与请求不一致", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.APIKey))
+		return nil, protocolError("服务返回的 MCP Server 身份与请求不一致", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
 	}
 	return server, nil
 }
@@ -911,7 +912,7 @@ func (c Client) MCPServers(ctx context.Context, target Target) ([]map[string]any
 	if err != nil {
 		return nil, err
 	}
-	return parseResourceList(resp, "servers", projectMCPServer, target.APIKey)
+	return parseResourceList(resp, "servers", projectMCPServer, target.secret())
 }
 
 func (c Client) MCPServerCreate(ctx context.Context, target Target, body map[string]any) (WriteResult, error) {
@@ -964,7 +965,7 @@ func (c Client) MCPServerLogs(ctx context.Context, target Target, name, level st
 	if err != nil {
 		return nil, err
 	}
-	return redactConnectionSecret(resp.Data, target.APIKey), nil
+	return redactConnectionSecret(resp.Data, target.secret()), nil
 }
 
 func (c Client) MCPServerResourceRead(ctx context.Context, target Target, name string, body map[string]any) (any, error) {
@@ -976,7 +977,7 @@ func (c Client) MCPServerResourceRead(ctx context.Context, target Target, name s
 	if err != nil {
 		return nil, err
 	}
-	return redactConnectionSecret(resp.Data, target.APIKey), nil
+	return redactConnectionSecret(resp.Data, target.secret()), nil
 }
 
 func (c Client) mcpServerRead(ctx context.Context, target Target, name, suffix string) (any, error) {
@@ -988,7 +989,7 @@ func (c Client) mcpServerRead(ctx context.Context, target Target, name, suffix s
 	if err != nil {
 		return nil, err
 	}
-	return redactConnectionSecret(resp.Data, target.APIKey), nil
+	return redactConnectionSecret(resp.Data, target.secret()), nil
 }
 
 // MCPServerTest 提交 MCP Server 测试任务。
@@ -1006,7 +1007,7 @@ func (c Client) Bots(ctx context.Context, target Target) ([]map[string]any, erro
 	if err != nil {
 		return nil, err
 	}
-	return parseResourceList(resp, "bots", projectBot, target.APIKey)
+	return parseResourceList(resp, "bots", projectBot, target.secret())
 }
 
 // Bot 返回指定 Bot 的安全字段投影。
@@ -1019,12 +1020,12 @@ func (c Client) Bot(ctx context.Context, target Target, uuid string) (map[string
 	if err != nil {
 		return nil, err
 	}
-	bot, err := parseResourceObject(resp, "bot", projectBot, target.APIKey)
+	bot, err := parseResourceObject(resp, "bot", projectBot, target.secret())
 	if err != nil {
 		return nil, err
 	}
 	if bot["uuid"] != uuid {
-		return nil, protocolError("服务返回的 Bot UUID 与请求不一致", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.APIKey))
+		return nil, protocolError("服务返回的 Bot UUID 与请求不一致", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
 	}
 	return bot, nil
 }
@@ -1035,7 +1036,7 @@ func (c Client) Pipelines(ctx context.Context, target Target) ([]map[string]any,
 	if err != nil {
 		return nil, err
 	}
-	return parseResourceList(resp, "pipelines", projectPipeline, target.APIKey)
+	return parseResourceList(resp, "pipelines", projectPipeline, target.secret())
 }
 
 // Pipeline 返回指定 Pipeline 的安全字段投影。
@@ -1048,12 +1049,12 @@ func (c Client) Pipeline(ctx context.Context, target Target, uuid string) (map[s
 	if err != nil {
 		return nil, err
 	}
-	pipeline, err := parseResourceObject(resp, "pipeline", projectPipeline, target.APIKey)
+	pipeline, err := parseResourceObject(resp, "pipeline", projectPipeline, target.secret())
 	if err != nil {
 		return nil, err
 	}
 	if pipeline["uuid"] != uuid {
-		return nil, protocolError("服务返回的 Pipeline UUID 与请求不一致", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.APIKey))
+		return nil, protocolError("服务返回的 Pipeline UUID 与请求不一致", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
 	}
 	return pipeline, nil
 }
@@ -1158,10 +1159,10 @@ func (c Client) writeUUID(ctx context.Context, target Target, method, path strin
 	if resp.Data != nil {
 		uuid, ok = resp.Data["uuid"].(string)
 	}
-	if !ok || strings.TrimSpace(uuid) == "" || containsSecret(uuid, target.APIKey) || ValidateResourceID(uuid) != nil {
+	if !ok || strings.TrimSpace(uuid) == "" || containsSecret(uuid, target.secret()) || ValidateResourceID(uuid) != nil {
 		return WriteResult{}, writeUnknown(&result.Error{
 			HTTPStatus: resp.StatusCode,
-			RequestID:  responseRequestID(resp.Header, resp.Body, target.APIKey),
+			RequestID:  responseRequestID(resp.Header, resp.Body, target.secret()),
 		})
 	}
 	return WriteResult{UUID: uuid}, nil
@@ -1181,7 +1182,7 @@ func (c Client) Raw(ctx context.Context, target Target, method, path string) (an
 	return map[string]any{
 		"code": 0,
 		"msg":  "ok",
-		"data": projectInfo(resp.Data, target.APIKey),
+		"data": projectInfo(resp.Data, target.secret()),
 	}, nil
 }
 
@@ -1203,7 +1204,7 @@ func (c Client) APIRequest(ctx context.Context, target Target, operation Operati
 	if err != nil {
 		return nil, err
 	}
-	return redactConnectionSecret(resp.Data, target.APIKey), nil
+	return redactConnectionSecret(resp.Data, target.secret()), nil
 }
 
 func (c Client) readPost(ctx context.Context, target Target, path string, body map[string]any) (response, error) {
@@ -1379,8 +1380,10 @@ func (c Client) doWithContentType(ctx context.Context, target Target, method, pa
 	if err != nil {
 		return response{}, result.New("input", "无法构造 HTTP 请求")
 	}
-	if target.APIKey != "" {
-		request.Header.Set("X-API-Key", target.APIKey)
+	if target.UserToken != "" {
+		request.Header.Set("Authorization", "Bearer "+target.UserToken)
+	} else if target.APIKey != "" {
+		request.Header.Set("X-API-Key", target.secret())
 	}
 	clientidentity.Apply(request)
 	if requestBody != nil && contentType != "" {
@@ -1415,17 +1418,20 @@ func (c Client) doWithContentType(ctx context.Context, target Target, method, pa
 	if readErr != nil {
 		err := transportError(callCtx, readErr)
 		err.HTTPStatus = resp.StatusCode
-		err.RequestID = responseRequestID(resp.Header, envelope{}, target.APIKey)
+		err.RequestID = responseRequestID(resp.Header, envelope{}, target.secret())
 		return response{}, err
 	}
 	if tooLarge {
-		err := protocolError("服务响应过大", resp.StatusCode, responseRequestID(resp.Header, envelope{}, target.APIKey))
+		err := protocolError("服务响应过大", resp.StatusCode, responseRequestID(resp.Header, envelope{}, target.secret()))
 		return response{}, err
 	}
 	parsed, parseErr := parseEnvelope(responseBody)
-	requestID := responseRequestID(resp.Header, parsed, target.APIKey)
+	requestID := responseRequestID(resp.Header, parsed, target.secret())
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		failure := httpError(resp.StatusCode, parsed.Code, requestID, target.APIKey)
+		if target.UserToken != "" && (resp.StatusCode == 401 || resp.StatusCode == 403) {
+			return response{}, result.RequiresMemberSession()
+		}
+		failure := httpError(resp.StatusCode, parsed.Code, requestID, target.secret())
 		if strings.HasPrefix(path, workspaceSandboxPath) {
 			failure.Message = workspaceSandboxErrorMessage(parsed.Msg, failure.Message)
 			if resp.StatusCode == http.StatusBadRequest {
@@ -1441,7 +1447,7 @@ func (c Client) doWithContentType(ctx context.Context, target Target, method, pa
 		return response{}, protocolError("服务返回的响应格式无效", resp.StatusCode, requestID)
 	}
 	if !isSuccessCode(parsed.Code) {
-		return response{}, businessError(parsed.Code, requestID, resp.StatusCode, target.APIKey)
+		return response{}, businessError(parsed.Code, requestID, resp.StatusCode, target.secret())
 	}
 	data, ok := parseDataObject(parsed.Data)
 	if !ok && (path == "/api/v1/box/sessions" || path == "/api/v1/box/errors") {
@@ -1459,7 +1465,7 @@ func (c Client) doWithContentType(ctx context.Context, target Target, method, pa
 	if !ok {
 		return response{}, protocolError("服务返回的诊断数据格式无效", resp.StatusCode, requestID)
 	}
-	if path == infoPath && !validInfoData(data, target.APIKey) {
+	if path == infoPath && !validInfoData(data, target.secret()) {
 		return response{}, protocolError("服务返回的诊断数据缺少有效版本", resp.StatusCode, requestID)
 	}
 	return response{

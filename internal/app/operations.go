@@ -19,6 +19,10 @@ func (s *Service) OpenOperations(ctx context.Context, options CheckOptions, stre
 	if err != nil {
 		return nil, err
 	}
+	preflight := WritePreflight{Connection: conn, Identity: identity}
+	if conn.UserToken != "" {
+		return &OperationSession{Client: api.Client{Transport: s.deps.Transport}, Target: readTarget(preflight), preflight: preflight}, nil
+	}
 	capabilities, err := s.capabilities(ctx, conn)
 	if err != nil {
 		return nil, err
@@ -26,7 +30,7 @@ func (s *Service) OpenOperations(ctx context.Context, options CheckOptions, stre
 	if !capabilities.Operations["operation.invoke"] || stream && !capabilities.Operations["operation.stream"] {
 		return nil, result.New("incompatible", "需要支持 operation.invoke / operation.stream 的 LangBot Core（Cloud 或下一个 Core 版本）；现有命令仍可使用")
 	}
-	preflight := WritePreflight{Connection: conn, Identity: identity, Capabilities: capabilities}
+	preflight.Capabilities = capabilities
 	return &OperationSession{Client: api.Client{Transport: s.deps.Transport}, Target: readTarget(preflight), preflight: preflight}, nil
 }
 

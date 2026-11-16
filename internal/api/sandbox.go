@@ -37,8 +37,8 @@ func (c Client) WorkspaceSandbox(ctx context.Context, target Target, action stri
 	}
 	if err != nil {
 		failure := *result.AsError(err)
-		if target.APIKey != "" {
-			failure.Message = strings.ReplaceAll(failure.Message, target.APIKey, "***")
+		if target.secret() != "" {
+			failure.Message = strings.ReplaceAll(failure.Message, target.secret(), "***")
 		}
 		if secret != "" {
 			failure.Message = strings.ReplaceAll(failure.Message, secret, "***")
@@ -67,7 +67,7 @@ func (c Client) WorkspaceSandbox(ctx context.Context, target Target, action stri
 		}
 		return nil, err
 	}
-	data := redactConnectionSecret(resp.Data, target.APIKey)
+	data := redactConnectionSecret(resp.Data, target.secret())
 	data = redactConnectionSecret(data, secret)
 	safe := redact.Configuration(data, "").(map[string]any)
 	if e2b, ok := safe["e2b"].(map[string]any); ok {
