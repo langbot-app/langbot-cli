@@ -31,7 +31,11 @@ func (s *Service) Upgrade(ctx context.Context, options UpgradeOptions) (Result, 
 	}
 	targetVersion := strings.TrimSpace(options.Version)
 	if targetVersion == "" {
-		return Result{}, result.New("input", "upgrade 需要 --version <tag>")
+		var err error
+		targetVersion, err = s.latestRelease(ctx)
+		if err != nil {
+			return Result{}, err
+		}
 	}
 	if _, err := deploy.CompareReleaseVersions("v0.0.0", targetVersion); err != nil {
 		return Result{}, result.New("input", err.Error())
@@ -47,6 +51,27 @@ func (s *Service) Upgrade(ctx context.Context, options UpgradeOptions) (Result, 
 		return Result{}, err
 	}
 	var response Result
+	if record.Driver == deploy.DriverNative {
+		data := map[string]any{"action": "upgrade", "version": targetVersion, "driver": record.Driver, "dry_run": options.DryRun,
+			"source_version": record.CoreVersion, "target_version": targetVersion}
+		if options.DryRun {
+			return Result{Data: data}, nil
+		}
+		err := deploy.WithMutationLock(operationCtx, diagnostics.Dir, func() error {
+			current, err := diagnostics.Store.Read()
+			if err != nil {
+				return err
+			}
+			if current.DeploymentID != record.DeploymentID {
+				return result.New("precondition", "deployment changed")
+			}
+			backup, err := deploy.UpgradeNative(operationCtx, diagnostics.Dir, current, targetVersion, s.nativeOutput(), s.deps.LocalHTTP)
+			data["backup_dir"] = backup
+			data["completed"] = err == nil
+			return err
+		})
+		return Result{Data: data}, nativeMutationError(err)
+	}
 	err = deploy.WithMutationLock(operationCtx, diagnostics.Dir, func() error {
 		if err := deploy.CheckUpgradeInterrupted(diagnostics.Dir); err != nil {
 			return result.New("recovery_required", err.Error())
@@ -105,7 +130,7 @@ func (s *Service) Upgrade(ctx context.Context, options UpgradeOptions) (Result, 
 		sum := sha256.Sum256(oldCompose)
 		state := deploy.UpgradeState{
 			DeploymentID: current.DeploymentID, SourceVersion: current.CoreVersion, TargetVersion: targetVersion,
-			SourceImage: sourceImage, TargetImage: deploy.DefaultImageRepository + ":" + targetVersion,
+			SourceImage: sourceImage, TargetImage: deploy.ImageRepository(current) + ":" + targetVersion,
 			SourceCompose: "sha256:" + hex.EncodeToString(sum[:]), TargetCompose: targetComposeDigest,
 			Profile: current.Profile, Database: "sqlite", DataDir: current.DataDir, BeforeContainers: before.Containers,
 			DiskFreeBytes: freeBytes, DataBytes: dataBytes, BeforeStatus: before.Status,

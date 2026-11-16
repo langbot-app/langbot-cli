@@ -1,5 +1,7 @@
 <div align="center">
 
+`lbctl install` tự cấu hình Python; dùng `--driver docker` để chọn Docker. Xem [hướng dẫn triển khai và cập nhật](README.md#deployment).
+
 <a href="https://langbot.app">
 <img src="https://raw.githubusercontent.com/langbot-app/LangBot/master/res/logo-blue.png" width="96" alt="LangBot"/>
 </a>

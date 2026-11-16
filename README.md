@@ -33,7 +33,7 @@ English / [简体中文](README_CN.md) / [繁體中文](README_TW.md) / [日本�
 
 ---
 
-The standalone LangBot command-line tool, provided as `lbctl`. It manages Workspace resources over HTTP, with multiple contexts, identity and capability discovery, resource management, RAG configuration discovery, Pipeline extensions and test runs, runtime records and Sandbox diagnostics, asynchronous task waiting, and installation, adoption, lifecycle management, and upgrades for local Docker Compose deployments.
+The standalone LangBot command-line tool, provided as `lbctl`. It manages Workspace resources over HTTP, with multiple contexts, identity and capability discovery, resource management, RAG configuration discovery, Pipeline extensions and test runs, runtime records and Sandbox diagnostics, asynchronous task waiting, and installation, adoption, lifecycle management, and upgrades for native Python and Docker Compose deployments.
 
 Use a LangBot Core that provides:
 
@@ -73,7 +73,7 @@ make build
 ./bin/lbctl --help
 ```
 
-The Go baseline is 1.26. Run the compiled binary directly; local deployment management uses Docker Compose.
+The Go baseline is 1.26. Run the compiled binary directly; deployment management supports native Python and Docker Compose.
 
 <a id="connection"></a>
 
@@ -138,6 +138,31 @@ Credential stdin must be closed after the key is provided. Its wait budget uses 
 
 ## Local deployment and upgrades
 
+Install the latest stable Core with an isolated, automatically provisioned Python 3.12 runtime:
+
+```sh
+lbctl install
+lbctl install --driver native --name mybot --port 5301 --region cn --yes
+lbctl install --driver docker --name container --port 5302
+lbctl upgrade --yes
+lbctl update --check
+lbctl update
+```
+
+Native is the default, including non-interactive installs. On a terminal, when Docker Compose v2 and its daemon are available, the wizard offers native (recommended) or Docker. Enter selects native; `--yes` skips prompts. An occupied HTTP port offers the next free port. Prompts follow `LANG`. Pin Core with `--version vX.Y.Z`; `upgrade` requires `--yes` and otherwise resolves the latest stable version from LangBot Space, with GitHub as fallback. `update` (alias `self-update`) upgrades **lbctl**, not Core; package-managed installations print the package manager command instead.
+
+New instances use `$LANGBOT_HOME/instances/<name>` (`--name default`). `LANGBOT_HOME` defaults to `~/.langbot`, `/opt/langbot` for root, or `%LOCALAPPDATA%\LangBot` on Windows. Existing locator registrations, including `~/.config/langbot/deployment`, remain manageable. Native installs use checksum-verified uv 0.9.11 under `tools/uv/0.9.11`, managed Python under `tools/python`, and a separate `venvs/vX.Y.Z` for each Core version; system uv and Python are not used or modified. Optional dependencies: `--extra seekdb,milvus,valkey`.
+
+Native services use systemd (user units for non-root), launchd LaunchAgents, or Windows ONLOGON scheduled tasks, with a pidfile-backed process fallback where these managers are unavailable. For systemd user units, run `loginctl enable-linger` to retain the service after logout. Logs are stored in `instances/<name>/logs` with three rotated files and a 10 MiB limit per file. `start`, `stop`, `restart`, `status`, `logs -f`, `doctor`, `upgrade`, and `uninstall` select the recorded driver. `doctor` reports missing Box sandbox, stdio MCP, and audio capabilities (Docker/Podman/nsjail, node+npx, and ffmpeg respectively).
+
+Native upgrades prepare a new venv before stopping the service, back up data while excluding rebuildable caches/venvs, and check `/healthz` after switching. A failed health check restores the previous version and data. The newest three backups are retained. Uninstall preserves data and backups unless `--purge-data` is explicitly passed.
+
+Core 4.11.x native deployments require exclusive runtime ports 5401 (plugin debugging) and 5410 (Box). Installation and startup reject occupied ports, including an HTTP port overlapping either runtime port. Use Docker for concurrently running multiple instances. The HTTP port is managed by lbctl: select `--port` during installation; for an existing deployment, stop it, update `port` and `endpoint` in `deployment.yaml`, then run `lbctl start`. Editing `api.port` in Core's config alone does not change the managed port. The webhook URL is initialized only before the first `data/config.yaml` exists; subsequent starts preserve a public `api.webhook_prefix` configured by the user.
+
+`--region auto|cn|global` uses `LANGBOT_REGION` first, then a two-second country probe. `cn` selects npmmirror for Python, Aliyun PyPI (Tsinghua fallback), the same index for plugin dependencies, and `docker.langbot.app/rockchin/langbot` for Docker. A missing LangBot wheel can be obtained from PyPI while dependencies keep the configured mirror. Override with `--pypi-index`, `--python-mirror`, or `--image-repository`; these settings persist for upgrades. The uv mirror is preferred in `cn`, with GitHub fallback.
+
+Update notices read a local cache only; a timeout-bounded detached check refreshes it at most daily. Notices appear only on a terminal, never for JSON/YAML, `CI`, or `LBCTL_NO_UPDATE_CHECK=1`. `status` includes current/latest lbctl and Core versions when cached. `install --output json` includes `url`, `driver`, `instance_dir`, `version`, `name`, `region`, and `service_manager`.
+
 Discover and register multiple local LangBot Compose instances:
 
 ```sh
@@ -159,10 +184,10 @@ lbctl --context first status
 
 Use `context use <name>` for both cloud and local instances, or `--context <name>` for a single invocation. Switching works offline and temporary selection preserves the saved current context. Explicit selectors and environment variables retain their existing priority. Legacy single-deployment locators migrate on the next registration, preserving the original fallback directory. Adopting another instance does not change the current context. Older CLI versions cannot read the new registry format.
 
-Built-in `install` supports independent Compose projects and host port mappings. Defaults remain `--project langbot-lbctl`, `--plugin-debug-port 5401`, and `--adapter-ports 2280-2285:2280-2285`. Use a different `--dir`, `--project`, and HTTP `--port` for each installation. Set `--plugin-debug-port 0` and `--adapter-ports none` to disable those host publications for headless instances:
+`install --driver docker` supports independent Compose projects and host port mappings. Defaults remain `--project langbot-lbctl`, `--plugin-debug-port 5401`, and `--adapter-ports 2280-2285:2280-2285`. Use a different `--dir`, `--project`, and HTTP `--port` for each installation. Set `--plugin-debug-port 0` and `--adapter-ports none` to disable those host publications for headless instances:
 
 ```sh
-lbctl install --version <vX.Y.Z> --dir /absolute/path/regression \
+lbctl install --driver docker --version <vX.Y.Z> --dir /absolute/path/regression \
   --project regression --port 15301 --profile all \
   --plugin-debug-port 0 --adapter-ports none --dry-run
 ```
@@ -170,7 +195,7 @@ lbctl install --version <vX.Y.Z> --dir /absolute/path/regression \
 Remove `--dry-run` to install. For plugin development or inbound adapters, select unused host ports instead:
 
 ```sh
-lbctl install --version <vX.Y.Z> --dir /absolute/path/second \
+lbctl install --driver docker --version <vX.Y.Z> --dir /absolute/path/second \
   --project second --port 15302 --plugin-debug-port 15402 \
   --adapter-ports 12280-12285:2280-2285
 ```
@@ -197,7 +222,7 @@ lbctl install --version <vX.Y.Z> --profile basic --port 5300
 lbctl uninstall --yes
 ```
 
-`lbctl upgrade` upgrades the LangBot service images. CLI-installed and adopted deployments use the same commands:
+For Docker deployments, `lbctl upgrade` upgrades the LangBot service images. CLI-installed and adopted deployments use the same commands:
 
 ```sh
 lbctl upgrade --version <newer-vX.Y.Z> --dry-run -o json

@@ -191,7 +191,8 @@ var schemaMetaByName = map[string]schemaCommandMeta{
 	"start":     {Mutating: true},
 	"stop":      {Mutating: true},
 	"restart":   {Mutating: true},
-	"upgrade":   {Mutating: true, Destructive: true, RequiresYes: true, SupportsDryRun: true, RequiredFlags: map[string]bool{"version": true}},
+	"upgrade":   {Mutating: true, Destructive: true, RequiresYes: true, SupportsDryRun: true},
+	"update":    {Mutating: true},
 	"uninstall": {Mutating: true, Destructive: true, RequiresYes: true},
 	"logs": {ConditionalOutputs: []schemaConditionalOutput{
 		{When: flagEquals("follow", true), Format: "default", Encoding: "text-lines"},

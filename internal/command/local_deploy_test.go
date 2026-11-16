@@ -454,14 +454,14 @@ func response(status int, body string) *http.Response {
 	return &http.Response{StatusCode: status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}
 }
 
-func TestUpgradeRequiresVersionAndExplicitConfirmation(t *testing.T) {
+func TestUpgradeRequiresExplicitConfirmation(t *testing.T) {
 	runner := &recordingRunner{}
 	for _, test := range []struct {
 		args []string
 		code int
 		want string
 	}{
-		{[]string{"upgrade", "--yes"}, 2, "upgrade 需要 --version"},
+		{[]string{"upgrade"}, 6, "--yes"},
 		{[]string{"upgrade", "--version", "v4.10.10"}, 6, "--yes"},
 		{[]string{"upgrade", "--version", "latest", "--yes"}, 2, "稳定 Release tag"},
 	} {

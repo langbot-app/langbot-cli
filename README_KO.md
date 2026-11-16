@@ -1,5 +1,7 @@
 <div align="center">
 
+`lbctl install`은 Python 환경을 자동으로 구성합니다. Docker는 `--driver docker`로 선택합니다. [배포 및 업데이트 안내](README.md#deployment).
+
 <a href="https://langbot.app">
 <img src="https://raw.githubusercontent.com/langbot-app/LangBot/master/res/logo-blue.png" width="96" alt="LangBot"/>
 </a>

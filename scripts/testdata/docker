@@ -1,0 +1,8 @@
+#!/bin/sh
+case "$*" in
+    'context show') printf 'default\n' ;;
+    'context inspect default --format {{.Endpoints.docker.Host}}') printf 'unix:///var/run/docker.sock\n' ;;
+    '--context default compose version --short') printf '2.40.0\n' ;;
+    '--context default info --format {{.ServerVersion}}') printf '29.0.0\n' ;;
+    *) exit 1 ;;
+esac

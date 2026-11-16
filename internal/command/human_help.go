@@ -145,7 +145,7 @@ var helpGroups = []struct {
 	{"连接与诊断", []string{"context", "status", "doctor", "whoami", "capabilities"}},
 	{"资源与内容", []string{"bot", "pipeline", "provider", "model", "knowledge-base", "knowledge-engine", "knowledge-parser", "plugin", "skill", "mcp-server"}},
 	{"运行与排查", []string{"monitoring", "sandbox", "task", "logs"}},
-	{"本机部署", []string{"install", "adopt", "start", "stop", "restart", "upgrade", "uninstall"}},
+	{"本机部署", []string{"install", "adopt", "start", "stop", "restart", "upgrade", "uninstall", "update"}},
 	{"工具与自动化", []string{"schema", "api", "raw", "completion", "version", "help"}},
 }
 

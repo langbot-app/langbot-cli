@@ -192,6 +192,29 @@ func (a InstallAssets) Record(deploymentID, imageDigest string) Record {
 	}
 }
 
+func (a *InstallAssets) SetImageRepository(repository string) error {
+	if !regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._:/-]*$`).MatchString(repository) {
+		return errors.New("invalid image repository")
+	}
+	a.Image = repository + ":" + a.Version
+	a.Compose = []byte(renderCompose(a.Image, a.Port, filepath.Join(a.Dir, "data", "box"), a.Ports))
+	a.Digest = fileDigest(a.Compose)
+	return nil
+}
+
+func (a *InstallAssets) SetPackageIndex(index string) {
+	a.Compose = composePackageIndex(a.Compose, index)
+	a.Digest = fileDigest(a.Compose)
+}
+
+func composePackageIndex(content []byte, index string) []byte {
+	if index == "" {
+		return content
+	}
+	line := "      LANGBOT_PLUGIN_RUNTIME_CONTROL_TOKEN: ${LANGBOT_PLUGIN_RUNTIME_CONTROL_TOKEN}\n"
+	return []byte(strings.ReplaceAll(string(content), line, line+"      LANGBOT_PLUGIN_PYPI_INDEX_URL: "+strconv.Quote(index)+"\n"))
+}
+
 func (a InstallAssets) Write() error {
 	if err := os.MkdirAll(a.DataDir, 0o700); err != nil {
 		return err

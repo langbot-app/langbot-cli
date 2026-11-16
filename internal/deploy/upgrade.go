@@ -87,7 +87,8 @@ func ComposeForUpgrade(record Record, dir, version string) ([]byte, string, erro
 		if record.InstallPorts != nil {
 			ports = *record.InstallPorts
 		}
-		updated := []byte(renderCompose(DefaultImageRepository+":"+version, record.Port, filepath.Join(dir, "data", "box"), ports))
+		updated := []byte(renderCompose(ImageRepository(record)+":"+version, record.Port, filepath.Join(dir, "data", "box"), ports))
+		updated = composePackageIndex(updated, record.PyPIIndex)
 		return updated, fileDigest(updated), nil
 	}
 	content, err := os.ReadFile(record.ComposeFile)
@@ -128,7 +129,7 @@ func ValidateOwnedLayout(record Record, dir string) error {
 	if record.Driver != DriverDockerCompose || !ValidComposeProject(record.ComposeProject) ||
 		(record.InstallPorts == nil && record.ComposeProject != DefaultComposeProject) ||
 		record.ComposeFile != filepath.Join(dir, "compose.yaml") || record.EnvFile != filepath.Join(dir, ".env") ||
-		record.DataDir != filepath.Join(dir, "data") || record.Asset.Name != DefaultImageRepository+":"+record.CoreVersion ||
+		record.DataDir != filepath.Join(dir, "data") || record.Asset.Name != ImageRepository(record)+":"+record.CoreVersion ||
 		record.Endpoint != fmt.Sprintf("http://127.0.0.1:%d", record.Port) ||
 		!regularFile(record.EnvFile) || !releaseVersionPattern.MatchString(record.CoreVersion) {
 		return errors.New("仅支持 lbctl 安装的默认 Compose 部署")
@@ -144,6 +145,7 @@ func ValidateOwnedLayout(record Record, dir string) error {
 		return errors.New("部署记录的端口映射无效")
 	}
 	current := []byte(renderCompose(record.Asset.Name, record.Port, filepath.Join(dir, "data", "box"), ports))
+	current = composePackageIndex(current, record.PyPIIndex)
 	actual, err := os.ReadFile(record.ComposeFile)
 	legacy := []byte(strings.Replace(string(current), deployComposeEnvironment, "", 1))
 	if err != nil || (!equalDigest(actual, current) && !equalDigest(actual, legacy)) {
@@ -152,7 +154,26 @@ func ValidateOwnedLayout(record Record, dir string) error {
 	return nil
 }
 
-func InspectUpgradeData(record Record) (int64, uint64, error) {
+func InspectUpgradeData(record Record) (dataBytes int64, freeBytes uint64, err error) {
+	defer func() {
+		if errors.Is(err, fs.ErrPermission) {
+			err = fmt.Errorf("升级备份权限不足：%w；请使用 sudo 执行，或先用 chown 调整数据及备份目录属主", err)
+		}
+	}()
+	backupRoot := filepath.Join(filepath.Dir(record.DataDir), "backups")
+	if _, statErr := os.Stat(backupRoot); os.IsNotExist(statErr) {
+		backupRoot = filepath.Dir(backupRoot)
+	} else if statErr != nil {
+		return 0, 0, statErr
+	}
+	probe, err := os.CreateTemp(backupRoot, ".lbctl-write-check-*")
+	if err != nil {
+		return 0, 0, err
+	}
+	probe.Close()
+	if err := os.Remove(probe.Name()); err != nil {
+		return 0, 0, err
+	}
 	configPath := filepath.Join(record.DataDir, "config.yaml")
 	if !regularFile(configPath) {
 		return 0, 0, errors.New("缺少可读取的本地配置，无法确认备份范围")
@@ -195,6 +216,13 @@ func InspectUpgradeData(record Record) (int64, uint64, error) {
 			return fmt.Errorf("数据目录包含不支持的路径: %s", path)
 		}
 		if info.Mode().IsRegular() {
+			file, err := os.Open(path)
+			if err != nil {
+				return err
+			}
+			if err := file.Close(); err != nil {
+				return err
+			}
 			total += info.Size()
 		}
 		return nil

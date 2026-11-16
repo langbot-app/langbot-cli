@@ -4,9 +4,42 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
+
+func TestUpgradePreflightExplainsBackupPermissions(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("requires unprivileged Unix permission checks")
+	}
+	for _, target := range []string{"backup_root", "data_directory", "data_file"} {
+		t.Run(target, func(t *testing.T) {
+			record, dir := upgradeFixture(t)
+			path := filepath.Join(dir, "backups")
+			mode := os.FileMode(0o500)
+			if target == "backup_root" {
+				if err := os.Mkdir(path, 0o700); err != nil {
+					t.Fatal(err)
+				}
+			} else if target == "data_directory" {
+				path = filepath.Join(record.DataDir, "plugins")
+				mode = 0
+			} else {
+				path = filepath.Join(record.DataDir, "langbot.db")
+				mode = 0
+			}
+			if err := os.Chmod(path, mode); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.Chmod(path, 0o700) })
+			_, _, err := InspectUpgradeData(record)
+			if err == nil || !strings.Contains(err.Error(), "sudo") || !strings.Contains(err.Error(), "chown") {
+				t.Fatalf("missing actionable permission error: %v", err)
+			}
+		})
+	}
+}
 
 func upgradeFixture(t *testing.T) (Record, string) {
 	t.Helper()

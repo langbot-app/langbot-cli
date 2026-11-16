@@ -1,0 +1,132 @@
+package deploy
+
+import (
+	"context"
+	"crypto/sha256"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func TestSelfUpdateChecksChecksumAndReplacesBinary(t *testing.T) {
+	for _, mode := range []string{"update", "check", "bad-checksum", "brew"} {
+		t.Run(mode, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "lbctl")
+			if mode == "brew" {
+				path = filepath.Join(t.TempDir(), "Cellar", "lbctl", "bin", "lbctl")
+				if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.WriteFile(path, []byte("old binary"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			downloads := 0
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				switch request.URL.Path {
+				case "/latest.json":
+					fmt.Fprint(writer, `{"version":"v0.5.0"}`)
+				case "/releases/v0.5.0/checksums.txt":
+					digest := fmt.Sprintf("%x", sha256.Sum256([]byte("new binary")))
+					if mode == "bad-checksum" {
+						digest = strings.Repeat("0", 64)
+					}
+					fmt.Fprintf(writer, "%s  lbctl_linux_amd64\n", digest)
+				case "/releases/v0.5.0/lbctl_linux_amd64":
+					downloads++
+					fmt.Fprint(writer, "new binary")
+				default:
+					t.Errorf("unexpected URL %s", request.URL.Path)
+					http.NotFound(writer, request)
+				}
+			}))
+			defer server.Close()
+			result, err := (Updater{BaseURL: server.URL, Client: server.Client(), Executable: path, Platform: "linux/amd64"}).Update(context.Background(), "v0.4.1", mode == "check")
+			data, readErr := os.ReadFile(path)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			if mode == "update" {
+				if err != nil || !result.Updated || string(data) != "new binary" {
+					t.Fatalf("%+v %s %v", result, data, err)
+				}
+			} else if result.Updated || string(data) != "old binary" {
+				t.Fatalf("changed binary: %+v %s", result, data)
+			}
+			if mode == "bad-checksum" && err == nil {
+				t.Fatal("accepted invalid checksum")
+			}
+			if (mode == "check" || mode == "brew") && downloads != 0 {
+				t.Fatal("downloaded binary during check/package-managed update")
+			}
+			if mode == "brew" && result.Command != "brew upgrade lbctl" {
+				t.Fatal(result)
+			}
+		})
+	}
+}
+
+type releaseTransport func(*http.Request) (*http.Response, error)
+
+func (transport releaseTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	return transport(request)
+}
+
+func TestLatestCoreSpaceAndGitHubFallback(t *testing.T) {
+	for _, fallback := range []bool{false, true} {
+		t.Run(fmt.Sprint(fallback), func(t *testing.T) {
+			requests := 0
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				requests++
+				if requests == 1 {
+					if fallback {
+						writer.WriteHeader(503)
+						return
+					}
+					fmt.Fprint(writer, `{"code":0,"data":[{"tag_name":"v4.12.0","prerelease":true},{"tag_name":"v4.11.7"},{"tag_name":"v4.11.8"}]}`)
+					return
+				}
+				fmt.Fprint(writer, `{"tag_name":"v4.11.8"}`)
+			}))
+			defer server.Close()
+			client := &http.Client{Transport: releaseTransport(func(request *http.Request) (*http.Response, error) {
+				if requests == 0 && request.URL.String() != CoreReleasesURL {
+					t.Error(request.URL)
+				}
+				if requests == 1 && request.URL.String() != GitHubReleaseURL {
+					t.Error(request.URL)
+				}
+				replacement, _ := http.NewRequestWithContext(request.Context(), request.Method, server.URL, nil)
+				return http.DefaultTransport.RoundTrip(replacement)
+			})}
+			version, err := LatestCore(context.Background(), client)
+			if err != nil || version != "v4.11.8" {
+				t.Fatalf("%s %v", version, err)
+			}
+		})
+	}
+}
+
+func TestRegionEnvironmentAndInstancePaths(t *testing.T) {
+	t.Setenv("LANGBOT_REGION", "cn")
+	region, err := ResolveRegion(context.Background(), "auto", nil)
+	if err != nil || region != "cn" {
+		t.Fatalf("%s %v", region, err)
+	}
+	record := Record{Region: region}
+	ApplyRegion(&record)
+	if record.ImageRepository != "docker.langbot.app/rockchin/langbot" || record.PythonMirror == "" || !strings.Contains(record.PyPIIndex, "aliyun") {
+		t.Fatal(record)
+	}
+	t.Setenv("LANGBOT_HOME", t.TempDir())
+	if _, err := InstanceDir("../escape"); err == nil {
+		t.Fatal("accepted traversal")
+	}
+	if dir, err := InstanceDir("default"); err != nil || filepath.Base(dir) != "default" {
+		t.Fatalf("%s %v", dir, err)
+	}
+}
