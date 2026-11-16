@@ -176,9 +176,9 @@ func ChangeAutostart(ctx context.Context, dir string, record Record, enabled boo
 			defer cancel()
 			rollbackErr := setNativeAutostart(recoveryCtx, dir, record, previous.Enabled)
 			if rollbackErr != nil {
-				return fmt.Errorf("save autostart: %w; rollback: %v", err, rollbackErr)
+				return fmt.Errorf(i18n.T("save autostart: %w; rollback: %v"), err, rollbackErr)
 			}
-			return fmt.Errorf("save autostart: %w", err)
+			return fmt.Errorf(i18n.T("save autostart: %w"), err)
 		}
 		return nil
 	}
@@ -229,12 +229,12 @@ func ChangeAutostart(ctx context.Context, dir string, record Record, enabled boo
 		defer cancel()
 		rollbackErr := update(recoveryCtx, oldPolicy)
 		if restoreErr != nil {
-			err = fmt.Errorf("%w; restore Compose: %v", err, restoreErr)
+			err = fmt.Errorf(i18n.T("%w; restore Compose: %v"), err, restoreErr)
 		}
 		if rollbackErr != nil {
-			err = fmt.Errorf("%w; restore policy: %v", err, rollbackErr)
+			err = fmt.Errorf(i18n.T("%w; restore policy: %v"), err, rollbackErr)
 		}
-		return fmt.Errorf("autostart: %w", err)
+		return fmt.Errorf(i18n.T("autostart: %w"), err)
 	}
 	return nil
 }

@@ -54,7 +54,7 @@ func EnsureUV(ctx context.Context, tools, region string, out io.Writer) (string,
 		if err == nil {
 			err = context.DeadlineExceeded
 		}
-		return "", fmt.Errorf("uv lock: %w", err)
+		return "", fmt.Errorf(i18n.T("uv lock: %w"), err)
 	}
 	defer lock.Unlock()
 	name := "uv"
@@ -194,16 +194,16 @@ func CheckNativePorts(record Record) error {
 	for _, item := range ports {
 		if item.port != 0 {
 			if other, exists := seen[item.port]; exists {
-				return &NativePortError{Port: item.port, Message: fmt.Sprintf("%s 端口 %d 与 %s 端口冲突；请用 --port 更换 HTTP 端口", item.name, item.port, other)}
+				return &NativePortError{Port: item.port, Message: fmt.Sprintf(i18n.T("%s port %d conflicts with %s; change the HTTP port with --port"), item.name, item.port, other)}
 			}
 			seen[item.port] = item.name
 		}
 		if err := probeNativePort(item.port); err != nil {
-			advice := "请停止冲突服务，或用 --port 更换 HTTP 端口"
+			advice := i18n.T("Stop the conflicting service, or change the HTTP port with --port")
 			if item.port == 5401 || item.port == 5410 {
-				advice = "Core 4.11.x 原生部署需要独占 5401 和 5410，请停止冲突服务，或使用 Docker 部署多实例"
+				advice = i18n.T("Core 4.11.x native deployments require exclusive ports 5401 and 5410; stop conflicting services or use Docker for multiple instances")
 			}
-			return &NativePortError{Port: item.port, Message: fmt.Sprintf("%s 端口 %d 不可用：%v；%s", item.name, item.port, err, advice)}
+			return &NativePortError{Port: item.port, Message: fmt.Sprintf(i18n.T("%s port %d is unavailable: %v; %s"), item.name, item.port, err, advice)}
 		}
 	}
 	return nil
@@ -214,7 +214,7 @@ func probeNativePort(port int) error {
 		connection, err := net.DialTimeout("tcp", net.JoinHostPort(host, fmt.Sprint(port)), 300*time.Millisecond)
 		if err == nil {
 			connection.Close()
-			return fmt.Errorf("port %d is already accepting connections on %s", port, host)
+			return fmt.Errorf(i18n.T("port %d is already accepting connections on %s"), port, host)
 		}
 	}
 	for _, host := range []string{"127.0.0.1", ""} {

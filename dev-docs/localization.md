@@ -49,6 +49,15 @@ without changing machine output. Native uptime starts when the supervisor
 writes its PID after launching Python; Docker uses the LangBot container's
 start timestamp. Remote or unavailable runtime timing is shown as not reported.
 
+`lbctl list` reads all registered local instances and displays name, directory,
+port, runtime state and observed startup state. Missing records remain visible
+as unknown; uninstalled records are marked not installed. JSON/YAML use stable
+`instances` entries and do not require a saved API context.
+
+Health waits display the latest Core log line (bounded file tail for native,
+one Compose log line for Docker). After three minutes the CLI prints one hint
+to inspect `lbctl logs` or use `lbctl restart`; machine output is unchanged.
+
 ## Validation
 
 `go test ./internal/i18n ./internal/progress ./internal/command` covers locale

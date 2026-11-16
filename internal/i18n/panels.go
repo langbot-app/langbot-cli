@@ -2,6 +2,8 @@ package i18n
 
 func init() {
 	for key, value := range map[string]string{
+		"No installation log was created during preflight.": "预检阶段没有生成安装日志。",
+		"Register deployment":                               "登记部署",
 		"Health check is taking over 3 minutes. Inspect Core with lbctl logs, or retry with lbctl restart.": "健康检查已等待超过 3 分钟。可执行 lbctl logs 查看 Core 日志，或用 lbctl restart 重试。",
 		"List all local LangBot instances":                                   "列出本机所有 LangBot 实例",
 		"list reads local instances; connection overrides are not supported": "list 只读取本机实例，不支持连接覆盖参数",

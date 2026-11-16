@@ -3,6 +3,7 @@ package app
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/langbot-app/langbot-cli/internal/api"
 	"github.com/langbot-app/langbot-cli/internal/deploy"
@@ -81,15 +82,20 @@ func (s *Service) checkDeploymentRegistration(dir string, candidate deploy.Recor
 		if sameLocalEndpoint(record.Endpoint, candidate.Endpoint) ||
 			(record.ComposeProject != "" && record.ComposeProject == candidate.ComposeProject) ||
 			(record.InstanceUUID != "" && record.InstanceUUID == candidate.InstanceUUID) {
-			command := "lbctl start --endpoint " + nativeShellQuote(record.Endpoint)
-			cleanup := ""
+			command := "lbctl start --dir " + nativeShellQuote(existing)
 			if record.Driver == deploy.DriverNative {
 				recovery := map[string]any{}
 				nativeInstallRecovery(recovery, existing, record, true)
 				command = recovery["retry_command"].(string)
-				cleanup = "；或清理旧实例后重装（数据保留）：" + recovery["rollback_command"].(string)
 			}
-			return result.New("precondition", fmt.Sprintf("登记冲突：实例 %q（目录 %s，endpoint %s，Compose project %q，instance UUID %q）已登记；继续使用原实例：%s%s", record.Name, existing, record.Endpoint, record.ComposeProject, record.InstanceUUID, command, cleanup))
+			details := []string{fmt.Sprintf(i18n.T("Directory: %s"), existing)}
+			for _, field := range [][2]string{{i18n.T("Instance: %s"), record.Name}, {i18n.T("Endpoint: %s"), record.Endpoint}, {i18n.T("Compose project: %s"), record.ComposeProject}, {i18n.T("Instance UUID: %s"), record.InstanceUUID}} {
+				if field[1] != "" {
+					details = append(details, fmt.Sprintf(i18n.T(field[0]), field[1]))
+				}
+			}
+			cleanup := "lbctl uninstall --dir " + nativeShellQuote(existing) + " --yes"
+			return result.New("precondition", fmt.Sprintf(i18n.T("Registration conflict: %s. Continue using the existing instance: %s; or uninstall it (data preserved) and reinstall: %s"), strings.Join(details, ", "), command, cleanup))
 		}
 	}
 	return nil

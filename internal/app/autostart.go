@@ -13,7 +13,7 @@ import (
 
 func (s *Service) namedLocalDir(name, dir string) (string, error) {
 	if name != "" && dir != "" {
-		return "", result.New("input", "--name and --dir are mutually exclusive")
+		return "", result.New("input", i18n.T("--name and --dir are mutually exclusive"))
 	}
 	if name == "" {
 		return s.resolveLocalDir(dir)
@@ -37,7 +37,7 @@ func (s *Service) namedLocalDir(name, dir string) (string, error) {
 		}
 		if record.Name == name {
 			if matched != "" && matched != candidate {
-				return "", result.New("precondition", "multiple local deployments have this name; use --dir")
+				return "", result.New("precondition", i18n.T("multiple local deployments have this name; use --dir"))
 			}
 			matched = candidate
 		}
@@ -74,7 +74,7 @@ func (s *Service) Autostart(ctx context.Context, action, name, dir, timeout stri
 		telemetry.SetStep(ctx, "autostart_"+action)
 		if record.Uninstalled {
 			if action != "status" {
-				return result.New("precondition", "deployment is uninstalled; reinstall before changing autostart")
+				return result.New("precondition", i18n.T("deployment is uninstalled; reinstall before changing autostart"))
 			}
 			info = deploy.AutostartInfo{Enabled: false, Supported: record.ServiceManager != "process", Mechanism: record.ServiceManager}
 			return nil

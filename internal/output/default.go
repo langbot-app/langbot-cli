@@ -396,12 +396,12 @@ func renderLocalAction(w io.Writer, data map[string]any) error {
 	switch action {
 	case "install":
 		if data["dry_run"] == true {
-			line = "安装计划：LangBot " + version + " → " + endpoint
+			line = i18n.T("Installation plan: LangBot ") + version + " → " + endpoint
 		} else if data["step"] != nil {
-			line = "安装失败\n失败步骤：" + displayCell(data["step"])
-			for _, field := range [][2]string{{"log_path", "日志"}, {"runtime_log_path", "运行日志"}, {"retry_command", "重试"}, {"rollback_command", "回滚"}} {
+			line = i18n.T("Installation failed\nFailed step: ") + displayCell(data["step"])
+			for _, field := range [][2]string{{"log_path", i18n.T("Log")}, {"runtime_log_path", i18n.T("Runtime log")}, {"retry_command", i18n.T("Retry")}, {"rollback_command", i18n.T("Rollback")}} {
 				if value, ok := data[field[0]].(string); ok && value != "" {
-					line += "\n" + field[1] + "：" + value
+					line += "\n" + field[1] + i18n.Punct("：") + value
 				}
 			}
 		} else if data["changed"] != true {
@@ -458,7 +458,7 @@ func renderLocalAction(w io.Writer, data map[string]any) error {
 	}
 	if action == "install" && data["step"] != nil {
 		if data["preflight"] == true {
-			if _, err := fmt.Fprintln(w, "预检阶段没有改动任何文件。"); err != nil {
+			if _, err := fmt.Fprintln(w, i18n.T("No installation log was created during preflight.")+"\n"+i18n.T("Preflight made no file changes.")); err != nil {
 				return err
 			}
 		}
@@ -532,7 +532,7 @@ func renderLocalAction(w io.Writer, data map[string]any) error {
 				return err
 			}
 			if data["step"] == "check_ports" {
-				_, err := fmt.Fprintf(w, "预检：%d 项通过，%d 项失败（端口）\n", len(checks)-failed, failed)
+				_, err := fmt.Fprintf(w, i18n.T("Preflight: %d passed, %d failed (ports)\n"), len(checks)-failed, failed)
 				return err
 			}
 		}

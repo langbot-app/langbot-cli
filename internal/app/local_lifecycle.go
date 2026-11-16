@@ -537,7 +537,7 @@ func (s *Service) lifecycleTarget(ctx context.Context, options CheckOptions) (de
 	telemetry.SetStep(ctx, "resolve_target")
 	if options.LocalName != "" || options.LocalDir != "" {
 		if options.ContextSet || options.EndpointSet || options.APIKeyStdin {
-			return deploy.Record{}, deploy.Diagnostics{}, result.New("input", "--name/--dir cannot be combined with connection flags")
+			return deploy.Record{}, deploy.Diagnostics{}, result.New("input", i18n.T("--name/--dir cannot be combined with connection flags"))
 		}
 		dir, err := s.namedLocalDir(options.LocalName, options.LocalDir)
 		if err != nil {
@@ -552,7 +552,7 @@ func (s *Service) lifecycleTarget(ctx context.Context, options CheckOptions) (de
 			return record, diagnostics, nativeMutationError(err)
 		}
 		if record.Driver != deploy.DriverNative && record.Driver != deploy.DriverDockerCompose {
-			return record, diagnostics, result.New("incompatible", "unsupported local deployment driver")
+			return record, diagnostics, result.New("incompatible", i18n.T("unsupported local deployment driver"))
 		}
 		telemetry.SetEnvironment(ctx, record.Driver, record.ServiceManager, record.Region, record.CoreVersion)
 		telemetry.SetStep(ctx, "preflight")

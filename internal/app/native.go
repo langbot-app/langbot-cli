@@ -87,7 +87,7 @@ func (s *Service) installNative(ctx context.Context, options InstallOptions) (Re
 			if existing.Driver == deploy.DriverNative {
 				nativeInstallRecovery(data, dir, existing, false)
 			}
-			return Result{Data: data}, result.New("precondition", fmt.Sprintf("deployment already exists (%s, %s, port %d); reuse its installation options or use lbctl start --endpoint %s", existing.Driver, existing.CoreVersion, existing.Port, nativeShellQuote(existing.Endpoint)))
+			return Result{Data: data}, result.New("precondition", fmt.Sprintf(i18n.T("deployment already exists (%s, %s, port %d); reuse its installation options or use lbctl start --endpoint %s"), existing.Driver, existing.CoreVersion, existing.Port, nativeShellQuote(existing.Endpoint)))
 		}
 		record = existing
 		record.Uninstalled = false
@@ -121,7 +121,7 @@ func (s *Service) installNative(ctx context.Context, options InstallOptions) (Re
 			nativeInstallRecovery(data, dir, record, false)
 			return Result{Data: data}, result.New("precondition", err.Error())
 		}
-		data["checks"] = append(data["checks"].([]deploy.Check), deploy.Check{Name: "ports", Status: "ok", Reason: "原生部署端口可用"})
+		data["checks"] = append(data["checks"].([]deploy.Check), deploy.Check{Name: "ports", Status: "ok", Reason: i18n.T("Native deployment ports are available")})
 	}
 	if options.DryRun {
 		data["dry_run"] = true

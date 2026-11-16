@@ -2,9 +2,7 @@ package app
 
 import (
 	"context"
-	"net/url"
 	"path/filepath"
-	"strconv"
 	"time"
 
 	"github.com/langbot-app/langbot-cli/internal/deploy"
@@ -40,12 +38,12 @@ func (s *Service) ListInstances(ctx context.Context, timeout string) (Result, er
 			}
 			item.Port = record.Port
 			if item.Port == 0 {
-				if endpoint, err := url.Parse(record.Endpoint); err == nil {
-					item.Port, _ = strconv.Atoi(endpoint.Port())
-				}
+				item.Port = endpointPort(record.Endpoint)
 			}
 			probeCtx, cancel := context.WithTimeout(ctx, duration)
-			if record.Driver == deploy.DriverNative {
+			if record.Uninstalled {
+				item.Status, item.Autostart = "not_installed", new(false)
+			} else if record.Driver == deploy.DriverNative {
 				item.Status = "stopped"
 				if deploy.NativeRunning(entry.Dir) {
 					item.Status = "running"
@@ -55,8 +53,10 @@ func (s *Service) ListInstances(ctx context.Context, timeout string) (Result, er
 					item.Status = state.Status
 				}
 			}
-			if startup, err := deploy.AutostartStatus(probeCtx, record); err == nil {
-				item.Autostart = new(startup.Enabled)
+			if !record.Uninstalled {
+				if startup, err := deploy.AutostartStatus(probeCtx, record); err == nil {
+					item.Autostart = new(startup.Enabled)
+				}
 			}
 			cancel()
 		}

@@ -178,7 +178,7 @@ func TestNativeRegistrationConflictRecovery(t *testing.T) {
 		if dryRun {
 			args = append(args, "--dry-run")
 		}
-		code := Execute(t.Context(), args, Dependencies{Telemetry: reporter, Out: &output, Err: io.Discard, LocalLocatorPath: locator.Path})
+		code := executeChinese(t.Context(), args, Dependencies{Telemetry: reporter, Out: &output, Err: io.Discard, LocalLocatorPath: locator.Path})
 		reporter.Close()
 		if code != 6 {
 			t.Fatalf("%d: %s", code, output.String())

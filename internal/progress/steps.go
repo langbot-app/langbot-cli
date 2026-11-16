@@ -11,6 +11,7 @@ func StepID(ctx context.Context, step string) {
 }
 
 var stepTitles = map[string]string{
+	"register": "Register deployment",
 	"stopping": "Stop service", "stopped": "Verify stopped services", "backup_verified": "Verify backup",
 	"switching": "Write deployment assets", "compose_switched": "Write deployment assets", "starting": "Start service",
 	"verifying": "Check service health", "completed": "Completed", "stop_readback": "Verify stopped services",

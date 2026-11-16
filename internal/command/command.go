@@ -1418,7 +1418,7 @@ func newAdoptCommand(service *app.Service, deps Dependencies, flags *globalFlags
 
 func newLifecycleCommand(service *app.Service, deps Dependencies, flags *globalFlags, action string) *cobra.Command {
 	var name, dir string
-	short := map[string]string{"start": "启动本机受管部署", "stop": "停止本机受管部署", "restart": "重启本机受管部署"}[action]
+	short := map[string]string{"start": i18n.T("Start a managed local deployment"), "stop": i18n.T("Stop a managed local deployment"), "restart": i18n.T("Restart a managed local deployment")}[action]
 	command := &cobra.Command{
 		Use: action, Short: short, Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -1436,8 +1436,8 @@ func newLifecycleCommand(service *app.Service, deps Dependencies, flags *globalF
 			})
 		},
 	}
-	command.Flags().StringVar(&name, "name", "", "本机实例名称")
-	command.Flags().StringVar(&dir, "dir", "", "本机部署目录")
+	command.Flags().StringVar(&name, "name", "", i18n.T("Local instance name"))
+	command.Flags().StringVar(&dir, "dir", "", i18n.T("Local deployment directory"))
 	return command
 }
 
@@ -1481,10 +1481,10 @@ func newUninstallCommand(service *app.Service, deps Dependencies, flags *globalF
 			})
 		},
 	}
-	cmd.Flags().BoolVar(&purgeData, "purge-data", false, "同时清理 lbctl 受管数据目录")
-	cmd.Flags().BoolVar(&yes, "yes", false, "确认卸载")
-	cmd.Flags().StringVar(&name, "name", "", "本机实例名称")
-	cmd.Flags().StringVar(&dir, "dir", "", "本机部署目录")
+	cmd.Flags().BoolVar(&purgeData, "purge-data", false, i18n.T("Also remove lbctl-managed data directories"))
+	cmd.Flags().BoolVar(&yes, "yes", false, i18n.T("Confirm uninstall"))
+	cmd.Flags().StringVar(&name, "name", "", i18n.T("Local instance name"))
+	cmd.Flags().StringVar(&dir, "dir", "", i18n.T("Local deployment directory"))
 	return cmd
 }
 
@@ -1836,9 +1836,9 @@ func enrichResult(deps Dependencies, flags *globalFlags, value app.Result, err e
 			if flags.commandPath == "install" {
 				label := i18n.T("Check installation prerequisites and arguments")
 				if data["step"] == "check_ports" {
-					label = "先释放冲突端口，或用 --port 更换 HTTP 端口"
+					label = i18n.T("Free conflicting ports, or change the HTTP port with --port")
 					if port := data["conflict_port"]; port == 5401 || port == 5410 {
-						label = "先释放 5401/5410 冲突端口，或改用 --driver docker"
+						label = i18n.T("Free ports 5401/5410, or use --driver docker")
 					}
 				}
 				add(label, base, "install", "--help")
