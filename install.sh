@@ -18,7 +18,7 @@ message() {
 }
 
 if [ -t 1 ] && [ "${NO_COLOR+x}" != x ] && [ "${TERM:-}" != dumb ]; then printf '\033[1;36m'; fi
-message "LangBot · Production-grade platform for building agentic IM bots (open source)" "LangBot · 生产级 AI 即时通信机器人开发平台（开源）"
+message "LangBot · Production-grade platform for building agentic IM bots · Open source" "LangBot · 生产级 AI 即时通信机器人开发平台 · 开源"
 if [ -t 1 ] && [ "${NO_COLOR+x}" != x ] && [ "${TERM:-}" != dumb ]; then printf '\033[0m'; fi
 message "Connect LLMs, agents, knowledge bases and plugins to QQ, WeChat/WeCom, Feishu, DingTalk, Telegram, Discord, Slack and more" "把大模型、Agent、知识库与插件接入 QQ、微信/企业微信、飞书、钉钉、Telegram、Discord、Slack 等平台"
 message "Website https://langbot.app · Docs https://docs.langbot.app · Plugins https://space.langbot.app" "官网 https://langbot.app · 文档 https://docs.langbot.app · 插件市场 https://space.langbot.app"

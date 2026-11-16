@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -107,7 +108,15 @@ func TestMultipleAdoptionsAndLifecycleSelectCorrectDeployment(t *testing.T) {
 	}
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("AppData", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
 	checks := 0
+	cliChecks := 0
+	service.deps.LocalHTTP = &http.Client{Transport: taskRoundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if request.URL.Path == "/latest.json" {
+			cliChecks++
+		}
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"version":"v0.5.3"}`)), Header: make(http.Header)}, nil
+	})}
 	service.deps.LatestRelease = func(context.Context) (string, error) {
 		checks++
 		return "v4.11.8", nil
@@ -118,6 +127,17 @@ func TestMultipleAdoptionsAndLifecycleSelectCorrectDeployment(t *testing.T) {
 	encoded, _ := json.Marshal(updated.Data)
 	if updateErr != nil || checks != 1 || !strings.Contains(string(encoded), `"latest":"v4.11.8"`) {
 		t.Fatalf("human update check: %s, %v, calls=%d", encoded, updateErr, checks)
+	}
+	if cache := deploy.ReadUpdateCache(); cache.Core != "v4.11.8" || cache.LBCTL != "v0.5.3" || cache.CheckedAt.IsZero() {
+		t.Fatalf("update cache not persisted: %+v", cache)
+	}
+	service.Status(ctx, human)
+	if checks != 1 || cliChecks != 1 {
+		t.Fatalf("fresh cache was not reused: core=%d cli=%d", checks, cliChecks)
+	}
+	cachePath, _ := deploy.UpdateCachePath()
+	if err := os.WriteFile(cachePath, []byte(`{"checked_at":"2000-01-01T00:00:00Z"}`), 0o600); err != nil {
+		t.Fatal(err)
 	}
 	service.deps.LatestRelease = func(context.Context) (string, error) { checks++; return "", context.DeadlineExceeded }
 	if _, updateErr := service.Status(ctx, human); updateErr != nil {

@@ -1,11 +1,29 @@
 package output
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 
 	"github.com/langbot-app/langbot-cli/internal/i18n"
 )
+
+func TestChineseStatusUsesFullwidthSeparators(t *testing.T) {
+	defer i18n.Use(i18n.Chinese)()
+	var out bytes.Buffer
+	err := renderActiveEnvironment(&out, map[string]any{
+		"name": "default", "type": "community", "connection": map[string]any{"endpoint": "http://localhost:5300", "reachable": true},
+		"runtime": map[string]any{"dir": "/opt/langbot"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, label := range []string{"当前环境", "地址", "连接", "认证", "目录"} {
+		if strings.Contains(out.String(), label+":") || !strings.Contains(out.String(), label+"：") {
+			t.Fatal(out.String())
+		}
+	}
+}
 
 func TestVersionSummary(t *testing.T) {
 	defer i18n.Use(i18n.English)()

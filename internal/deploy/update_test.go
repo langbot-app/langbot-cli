@@ -10,7 +10,40 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestUpdateCacheSharesDeadlineAndDoesNotCacheFailure(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("AppData", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	started := make(chan struct{}, 2)
+	check := func(ctx context.Context) (string, error) {
+		started <- struct{}{}
+		<-ctx.Done()
+		return "", ctx.Err()
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if err := RefreshUpdateCacheWith(ctx, check, check); err == nil {
+		t.Fatal("failed check succeeded")
+	}
+	if len(started) != 2 || !ReadUpdateCache().CheckedAt.IsZero() {
+		t.Fatal("checks were not shared or failure was cached")
+	}
+	lbctl := func(context.Context) (string, error) { return "v0.5.3", nil }
+	core := func(context.Context) (string, error) { return "v4.11.8", nil }
+	if err := RefreshUpdateCacheWith(context.Background(), lbctl, core); err != nil {
+		t.Fatal(err)
+	}
+	cache := ReadUpdateCache()
+	if cache.LBCTL != "v0.5.3" || cache.Core != "v4.11.8" || time.Since(cache.CheckedAt) > time.Minute {
+		t.Fatalf("cache=%+v", cache)
+	}
+	if err := RefreshUpdateCacheWith(context.Background(), check, check); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestSelfUpdateChecksChecksumAndReplacesBinary(t *testing.T) {
 	for _, mode := range []string{"update", "check", "bad-checksum", "brew"} {

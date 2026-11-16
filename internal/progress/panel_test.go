@@ -8,6 +8,45 @@ import (
 	"time"
 )
 
+func TestLabelsAlignDisplayColumns(t *testing.T) {
+	for _, fields := range [][][2]string{
+		{{"WebUI", "VALUE"}, {"Instance", "VALUE"}, {"Directory", "VALUE"}, {"Log", "VALUE"}},
+		{{"WebUI", "VALUE"}, {"实例", "VALUE"}, {"目录", "VALUE"}, {"日志", "VALUE"}},
+	} {
+		column := -1
+		for _, line := range Labels(fields) {
+			width := Width(strings.Split(line, "VALUE")[0])
+			if column >= 0 && column != width {
+				t.Fatal(line, width, column)
+			}
+			column = width
+		}
+	}
+}
+
+func TestWrapPreservesASCIIWordsAndUnredirectedLines(t *testing.T) {
+	lines := wrap("中文中文Discord、Slack平台", 12)
+	if !strings.Contains(strings.Join(lines, "\n"), "Discord") {
+		t.Fatal(lines)
+	}
+	for _, line := range lines {
+		if Width(line) > 12 {
+			t.Fatal(line)
+		}
+	}
+	var out bytes.Buffer
+	text := strings.Repeat("中文 Discord ", 20)
+	Dim(&out, text)
+	if out.String() != "  "+text+"\n" {
+		t.Fatal("redirected text was wrapped", out.String())
+	}
+	out.Reset()
+	Brand(&out)
+	if strings.Count(out.String(), "\n") != 4 {
+		t.Fatal("redirected brand was wrapped", out.String())
+	}
+}
+
 func TestProgressFixedRegionAndFallback(t *testing.T) {
 	for _, mode := range []string{"ansi", "carriage", "plain"} {
 		t.Run(mode, func(t *testing.T) {

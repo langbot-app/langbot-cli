@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gofrs/flock"
@@ -215,6 +216,14 @@ func ReadUpdateCache() UpdateCache {
 }
 
 func RefreshUpdateCache(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	return RefreshUpdateCacheWith(ctx, (Updater{}).Latest, func(ctx context.Context) (string, error) {
+		return LatestCore(ctx, nil)
+	})
+}
+
+func RefreshUpdateCacheWith(ctx context.Context, latestLBCTL, latestCore func(context.Context) (string, error)) error {
 	path, err := UpdateCachePath()
 	if err != nil {
 		return err
@@ -232,17 +241,33 @@ func RefreshUpdateCache(ctx context.Context) error {
 	}
 	defer lock.Unlock()
 	cache := ReadUpdateCache()
-	if time.Since(cache.CheckedAt) < 24*time.Hour {
+	if cache.LBCTL != "" && cache.Core != "" && time.Since(cache.CheckedAt) < 24*time.Hour {
 		return nil
 	}
-	cache.CheckedAt = time.Now().UTC()
-	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	defer cancel()
-	if latest, err := (Updater{}).Latest(ctx); err == nil {
-		cache.LBCTL = latest
+	var lbctl, core string
+	var lbctlErr, coreErr error
+	var checks sync.WaitGroup
+	checks.Add(2)
+	go func() {
+		defer checks.Done()
+		lbctl, lbctlErr = latestLBCTL(ctx)
+	}()
+	go func() {
+		defer checks.Done()
+		core, coreErr = latestCore(ctx)
+	}()
+	checks.Wait()
+	if lbctlErr != nil && coreErr != nil {
+		return errors.Join(lbctlErr, coreErr)
 	}
-	if latest, err := LatestCore(ctx, nil); err == nil {
-		cache.Core = latest
+	if lbctlErr == nil {
+		cache.LBCTL = lbctl
+	}
+	if coreErr == nil {
+		cache.Core = core
+	}
+	if lbctlErr == nil && coreErr == nil {
+		cache.CheckedAt = time.Now().UTC()
 	}
 	cache.Instances = map[string]string{}
 	if dirs, err := (Locator{}).Directories(); err == nil {

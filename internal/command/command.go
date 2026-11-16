@@ -189,7 +189,7 @@ func newRoot(deps Dependencies, flags *globalFlags, service *app.Service) *cobra
 			if flags.outputSet {
 				return emitCommand(deps, flags, app.Result{Data: map[string]any{"command": "lbctl"}}, nil)
 			}
-			_, err := fmt.Fprintln(deps.Out, i18n.Human("LangBot · Production-grade platform for building agentic IM bots (open source)")+"\n\n"+i18n.Human("Deploy:    lbctl install · upgrade · uninstall")+"\n"+i18n.Human("Manage:    lbctl status · start · stop · restart · logs")+"\n"+i18n.Human("Configure: lbctl context · model · bot · pipeline")+"\n\n"+i18n.Human("All commands: lbctl --help"))
+			_, err := fmt.Fprintln(deps.Out, i18n.Human("LangBot · Production-grade platform for building agentic IM bots · Open source")+"\n\n"+i18n.Human("Deploy:    lbctl install · upgrade · uninstall")+"\n"+i18n.Human("Manage:    lbctl status · start · stop · restart · logs")+"\n"+i18n.Human("Configure: lbctl context · model · bot · pipeline")+"\n\n"+i18n.Human("All commands: lbctl --help"))
 			return err
 		},
 	}

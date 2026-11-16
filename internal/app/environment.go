@@ -78,15 +78,14 @@ func (s *Service) Status(ctx context.Context, options CheckOptions) (Result, err
 	resolved, err := s.discoverActiveEnvironment(ctx, options, true)
 	cache := deploy.ReadUpdateCache()
 	disabled, _ := s.deps.LookupEnv("LBCTL_NO_UPDATE_CHECK")
-	budget := time.Second
+	budget := 2 * time.Second
 	if resolved.Connection.Timeout > 0 {
 		budget = min(budget, resolved.Connection.Timeout-time.Since(started))
 	}
-	if err == nil && budget > 0 && options.Human && resolved.LocalMatch && disabled != "1" && (cache.Core == "" || time.Since(cache.CheckedAt) > 24*time.Hour) {
+	if err == nil && budget > 0 && options.Human && resolved.LocalMatch && disabled != "1" && (cache.Core == "" || cache.LBCTL == "" || time.Since(cache.CheckedAt) > 24*time.Hour) {
 		checkCtx, cancel := context.WithTimeout(ctx, budget)
-		if latest, checkErr := s.latestRelease(checkCtx); checkErr == nil {
-			cache.Core = latest
-		}
+		_ = deploy.RefreshUpdateCacheWith(checkCtx, (deploy.Updater{Client: s.deps.LocalHTTP}).Latest, s.latestRelease)
+		cache = deploy.ReadUpdateCache()
 		cancel()
 	}
 	core := resolved.Environment.Service.Version

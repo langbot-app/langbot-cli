@@ -479,7 +479,7 @@ func renderLocalAction(w io.Writer, data map[string]any) error {
 		}
 	}
 	if action == "install" && data["dry_run"] != true && data["changed"] == true && state == "running" && data["step"] == nil {
-		lines := []string{i18n.T("LangBot is ready"), "WebUI   " + displayCell(endpoint)}
+		lines := []string{i18n.T("LangBot is ready")}
 		if data["dir"] == nil {
 			data["dir"] = data["instance_dir"]
 		}
@@ -509,7 +509,8 @@ func renderLocalAction(w io.Writer, data map[string]any) error {
 			}
 			instance += " · " + message
 		}
-		lines = append(lines, i18n.T("Instance")+"  "+instance, i18n.T("Directory")+"  "+displayCell(data["dir"]), i18n.T("Log")+"  lbctl logs", "", i18n.T("Next steps"))
+		lines = append(lines, progress.Labels([][2]string{{"WebUI", displayCell(endpoint)}, {i18n.T("Instance"), instance}, {i18n.T("Directory"), displayCell(data["dir"])}, {i18n.T("Log"), "lbctl logs"}})...)
+		lines = append(lines, "", i18n.T("Next steps"))
 		language := "en"
 		if data["autostart_note"] == "loginctl enable-linger" {
 			lines = append(lines, i18n.T("Run loginctl enable-linger to keep LangBot running after logout."))
@@ -518,11 +519,16 @@ func renderLocalAction(w io.Writer, data map[string]any) error {
 			language = "zh"
 		}
 		base := "docs.langbot.app/" + language
-		lines = append(lines, " "+i18n.T("1. Open WebUI and create an administrator account"), " "+i18n.T("2. Add a model (LangBot Space includes free credits)"), " "+i18n.T("3. Connect a bot platform"), " "+base+"/usage/models/readme", "", i18n.T("Commands")+"  status · logs · stop · start · upgrade")
+		lines = append(lines, " "+i18n.T("1. Open WebUI and create an administrator account"), " "+i18n.T("2. Add a model (LangBot Space includes free credits)"), " "+i18n.T("3. Connect a bot platform"), " "+base+"/usage/models/readme", "")
+		commands := [][2]string{{i18n.T("Commands"), "status · logs · stop · start · upgrade"}}
 		if data["autostart"] == true {
-			lines = append(lines, i18n.T("Disable startup")+"  "+formatCell(data["autostart_disable_command"]))
+			commands = append(commands, [2]string{i18n.T("Disable startup"), formatCell(data["autostart_disable_command"])})
 		}
+		lines = append(lines, progress.Labels(commands)...)
 		lines = append(lines, "")
+		if _, err := fmt.Fprintln(w); err != nil {
+			return err
+		}
 		if err := progress.Panel(w, lines); err != nil {
 			return err
 		}
@@ -570,6 +576,9 @@ func renderActiveEnvironment(w io.Writer, environment map[string]any) error {
 			return nil
 		}
 		separator := ": "
+		if i18n.Current() == i18n.Chinese {
+			separator = "："
+		}
 		if label == "lbctl" || label == "Core" {
 			separator = " "
 		}

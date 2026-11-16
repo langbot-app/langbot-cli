@@ -11,7 +11,7 @@ function Get-Message([string]$English, [string]$Chinese) {
     if ($isChinese) { $Chinese } else { $English }
 }
 
-$heading = Get-Message "LangBot $([char]0x00B7) Production-grade platform for building agentic IM bots (open source)" "LangBot $([char]0x00B7) $([char]0x751F)$([char]0x4EA7)$([char]0x7EA7) AI $([char]0x5373)$([char]0x65F6)$([char]0x901A)$([char]0x4FE1)$([char]0x673A)$([char]0x5668)$([char]0x4EBA)$([char]0x5F00)$([char]0x53D1)$([char]0x5E73)$([char]0x53F0)$([char]0xFF08)$([char]0x5F00)$([char]0x6E90)$([char]0xFF09)"
+$heading = Get-Message "LangBot $([char]0x00B7) Production-grade platform for building agentic IM bots $([char]0x00B7) Open source" "LangBot $([char]0x00B7) $([char]0x751F)$([char]0x4EA7)$([char]0x7EA7) AI $([char]0x5373)$([char]0x65F6)$([char]0x901A)$([char]0x4FE1)$([char]0x673A)$([char]0x5668)$([char]0x4EBA)$([char]0x5F00)$([char]0x53D1)$([char]0x5E73)$([char]0x53F0) $([char]0x00B7) $([char]0x5F00)$([char]0x6E90)"
 if (-not [Console]::IsOutputRedirected -and $null -eq $env:NO_COLOR -and $env:TERM -ne "dumb") {
     Write-Host $heading -ForegroundColor Cyan
 } else { Write-Output $heading }

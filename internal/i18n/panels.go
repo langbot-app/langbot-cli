@@ -3,8 +3,8 @@ package i18n
 func init() {
 	for key, value := range map[string]string{
 		"Native": "原生部署", "Region %s (%s)": "区域 %s（%s）", "Instance %s · %s · Port %d": "实例 %s · %s · 端口 %d",
-		"Prepare Python runtime":                                                  "准备 Python 运行环境",
-		"Production-grade AI messaging bot platform · Open source":                "生产级 AI 即时通信机器人开发平台 · 开源",
+		"Prepare Python runtime": "准备 Python 运行环境",
+		"Production-grade platform for building agentic IM bots · Open source":    "生产级 AI 即时通信机器人开发平台 · 开源",
 		"Website langbot.app · Docs docs.langbot.app · Plugins space.langbot.app": "官网 langbot.app · 文档 docs.langbot.app · 插件市场 space.langbot.app",
 		"Working": "处理中", "LangBot is ready": "LangBot 已就绪", "Native deployment": "原生部署",
 		"Next steps": "下一步", "Commands": "常用", "Disable startup": "关闭自启",
@@ -15,7 +15,7 @@ func init() {
 		"List all local LangBot instances":                                   "列出本机所有 LangBot 实例",
 		"list reads local instances; connection overrides are not supported": "list 只读取本机实例，不支持连接覆盖参数",
 		"Local instances": "本机实例", "Port": "端口",
-		"LangBot · Production-grade platform for building agentic IM bots (open source)":                                             "LangBot · 生产级 AI 即时通信机器人开发平台（开源）",
+		"LangBot · Production-grade platform for building agentic IM bots · Open source":                                             "LangBot · 生产级 AI 即时通信机器人开发平台 · 开源",
 		"Connect LLMs, agents, knowledge bases and plugins to QQ, WeChat/WeCom, Feishu, DingTalk, Telegram, Discord, Slack and more": "把大模型、Agent、知识库与插件接入 QQ、微信/企业微信、飞书、钉钉、Telegram、Discord、Slack 等平台",
 		"Website https://langbot.app · Docs https://docs.langbot.app · Plugins https://space.langbot.app":                            "官网 https://langbot.app · 文档 https://docs.langbot.app · 插件市场 https://space.langbot.app",
 		"Deploy:    lbctl install · upgrade · uninstall":                                                                             "部署：lbctl install · upgrade · uninstall",

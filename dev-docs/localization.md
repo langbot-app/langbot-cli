@@ -48,6 +48,12 @@ than 60 columns use unboxed lines without right alignment. The palette uses
 cyan, bold and dim only. First-run notices follow the product heading, before
 deployment steps. Stable versions show either an available upgrade command or
 an up-to-date label; dev and prerelease versions do not suggest downgrades.
+Local human-readable status checks CLI and Core releases together with a shared
+two-second budget, bounded by the remaining connection timeout. Successful
+checks populate the shared 24-hour update cache; failures stay silent and do
+not mark failed lookups fresh. Remote and machine output do not trigger checks.
+Summary label values align by display width. ASCII words wrap intact where
+they fit, while redirected brand and informational lines are not hard-wrapped.
 
 TTY output redraws a two-line region (step/time and the last subprocess line),
 truncating to terminal cell width. Completed steps remain above it. Windows
