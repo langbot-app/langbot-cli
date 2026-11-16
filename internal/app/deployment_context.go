@@ -26,7 +26,9 @@ func (s *Service) deploymentContext(ctx context.Context, record deploy.Record, d
 	}
 	driver := record.Driver
 	if driver == "native" {
-		driver = i18n.Human("Native deployment")
+		driver = i18n.Human("Native")
+	} else if driver == "docker_compose" {
+		driver = "Docker"
 	}
-	progress.Info(ctx, []string{fmt.Sprintf("lbctl %s · LangBot %s · %s · ", s.deps.Version, record.CoreVersion, driver) + fmt.Sprintf(i18n.Human("Region: %s (%s)"), region, source), fmt.Sprintf(i18n.Human("Instance: %s · Directory: %s · Port: %d"), record.Name, dir, record.Port)})
+	progress.Info(ctx, []string{fmt.Sprintf("lbctl %s · LangBot %s · %s · ", s.deps.Version, record.CoreVersion, driver) + fmt.Sprintf(i18n.Human("Region %s (%s)"), region, source), fmt.Sprintf(i18n.Human("Instance %s · %s · Port %d"), record.Name, dir, record.Port)})
 }

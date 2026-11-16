@@ -2,6 +2,7 @@ package i18n
 
 func init() {
 	for key, value := range map[string]string{
+		"Native": "原生部署", "Region %s (%s)": "区域 %s（%s）", "Instance %s · %s · Port %d": "实例 %s · %s · 端口 %d",
 		"Prepare Python runtime":                                                  "准备 Python 运行环境",
 		"Production-grade AI messaging bot platform · Open source":                "生产级 AI 即时通信机器人开发平台 · 开源",
 		"Website langbot.app · Docs docs.langbot.app · Plugins space.langbot.app": "官网 langbot.app · 文档 docs.langbot.app · 插件市场 space.langbot.app",
