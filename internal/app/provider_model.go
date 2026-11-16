@@ -139,8 +139,8 @@ func (s *Service) ProviderScanModels(ctx context.Context, uuid, modelType string
 		return Result{}, err
 	}
 	if modelType != "" {
-		if err := api.ValidateModelType(modelType); err != nil {
-			return Result{}, err
+		if modelType != api.ModelTypeLLM && modelType != api.ModelTypeEmbedding && modelType != api.ModelTypeRerank {
+			return Result{}, result.New("input", "provider scan-models type 必须是 llm、embedding 或 rerank")
 		}
 	}
 	preflight, err := s.writePreflight(ctx, "provider.scan_models", "provider_secret.manage", options)
