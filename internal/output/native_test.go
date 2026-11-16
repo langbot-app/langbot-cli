@@ -22,7 +22,7 @@ func TestNativeLifecycleRendering(t *testing.T) {
 	} {
 		t.Run(test.action, func(t *testing.T) {
 			data := map[string]any{"action": test.action, "changed": true, "completed": true, "project_removed": true,
-				"source_version": "v4.11.7", "target_version": "v4.11.8",
+				"source_version": "v4.11.7", "target_version": "v4.11.8", "instance_dir": "/example/default",
 				"record": deploy.Record{Driver: deploy.DriverNative, CoreVersion: "v4.11.8", Endpoint: "http://127.0.0.1:15300"},
 				"status": map[string]any{"status": test.state}}
 			var out bytes.Buffer
@@ -33,7 +33,7 @@ func TestNativeLifecycleRendering(t *testing.T) {
 				t.Fatal(out.String())
 			}
 			if test.action == "install" {
-				for _, next := range []string{"lbctl status", "lbctl logs", "lbctl upgrade --yes"} {
+				for _, next := range []string{"lbctl status", "lbctl logs", "lbctl upgrade --yes", "/example/default", "install.log", "langbot.log", "https://cloud.langbot.app"} {
 					if !strings.Contains(out.String(), next) {
 						t.Fatalf("missing %s: %s", next, out.String())
 					}
