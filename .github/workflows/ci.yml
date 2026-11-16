@@ -21,6 +21,8 @@ jobs:
           go-version: '1.26.8'
           cache: true
       - run: go vet ./...
+      - name: Verify wildcard and loopback port conflicts
+        run: go test -v ./internal/deploy -run '^TestProbeNativePortRejectsListeningSockets$'
       - run: go test -race ./...
       - run: go build ./cmd/lbctl
       - name: Validate PowerShell installer

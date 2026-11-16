@@ -36,6 +36,11 @@ func (s *Service) installNative(ctx context.Context, options InstallOptions) (Re
 		return Result{}, err
 	}
 	version := options.Version
+	if version == "" {
+		if existing, readErr := (deploy.Store{Dir: dir}).Read(); readErr == nil && existing.Driver == deploy.DriverNative {
+			version = existing.CoreVersion
+		}
+	}
 	telemetry.SetStep(ctx, "resolve_version")
 	if version == "" {
 		version, err = s.latestRelease(ctx)
@@ -75,7 +80,11 @@ func (s *Service) installNative(ctx context.Context, options InstallOptions) (Re
 	}
 	if existing, err := (deploy.Store{Dir: dir}).Read(); err == nil {
 		if existing.Driver != deploy.DriverNative || existing.CoreVersion != record.CoreVersion || existing.Port != record.Port {
-			return Result{}, result.New("precondition", "deployment already exists; use upgrade or another --name")
+			data := map[string]any{"action": "install", "step": "validate_target"}
+			if existing.Driver == deploy.DriverNative {
+				nativeInstallRecovery(data, dir, existing, false)
+			}
+			return Result{Data: data}, result.New("precondition", fmt.Sprintf("deployment already exists (%s, %s, port %d); reuse its installation options or use lbctl start --endpoint %s", existing.Driver, existing.CoreVersion, existing.Port, nativeShellQuote(existing.Endpoint)))
 		}
 		record = existing
 		if !deploy.NativeRunning(dir) {
@@ -89,6 +98,11 @@ func (s *Service) installNative(ctx context.Context, options InstallOptions) (Re
 	}
 	data := map[string]any{"action": "install", "url": record.Endpoint, "driver": record.Driver, "instance_dir": dir, "version": version,
 		"name": record.Name, "region": record.Region, "service_manager": record.ServiceManager, "checks": deploy.NativeCapabilities(), "record": record}
+	telemetry.SetStep(ctx, "register")
+	if err := s.checkDeploymentRegistration(dir, record); err != nil {
+		data["step"] = "register"
+		return Result{Data: data}, err
+	}
 	if !deploy.NativeRunning(dir) {
 		telemetry.SetStep(ctx, "check_ports")
 		if err := deploy.CheckNativePorts(record); err != nil {
@@ -103,6 +117,7 @@ func (s *Service) installNative(ctx context.Context, options InstallOptions) (Re
 	}
 	locator := deploy.Locator{Path: s.deps.LocalLocatorPath}
 	step := "register"
+	telemetry.SetStep(ctx, step)
 	logPath := filepath.Join(dir, "logs", "install.log")
 	var installLog *os.File
 	defer func() {
@@ -125,7 +140,8 @@ func (s *Service) installNative(ctx context.Context, options InstallOptions) (Re
 			} else if err := deploy.ValidateInstallTarget(dir, true); err != nil {
 				return err
 			}
-			telemetry.SetStep(ctx, "write_record")
+			step = "write_record"
+			telemetry.SetStep(ctx, step)
 			if err := (deploy.Store{Dir: dir}).Write(ctx, record); err != nil {
 				return err
 			}
@@ -181,8 +197,11 @@ func (s *Service) installNative(ctx context.Context, options InstallOptions) (Re
 		installAutostartData(data, record, dir)
 	} else {
 		data["step"] = step
-		data["log_path"] = logPath
-		data["runtime_log_path"] = filepath.Join(dir, "logs", "langbot.log")
+		for key, path := range map[string]string{"log_path": logPath, "runtime_log_path": filepath.Join(dir, "logs", "langbot.log")} {
+			if info, statErr := os.Stat(path); statErr == nil && info.Mode().IsRegular() {
+				data[key] = path
+			}
+		}
 		nativeInstallRecovery(data, dir, record, data["changed"] == true)
 		if installLog != nil {
 			fmt.Fprintf(installLog, "%s: %v\n", step, err)

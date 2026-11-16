@@ -380,8 +380,13 @@ func renderLocalAction(w io.Writer, data map[string]any) error {
 	case "install":
 		if data["dry_run"] == true {
 			line = "安装计划：LangBot " + version + " → " + endpoint
-		} else if data["log_path"] != nil && data["step"] != nil {
-			line = fmt.Sprintf("安装失败（%v）\n日志：%v\n运行日志：%v\n重试：%v\n回滚：%v", data["step"], data["log_path"], data["runtime_log_path"], data["retry_command"], data["rollback_command"])
+		} else if data["step"] != nil {
+			line = "安装失败\n失败步骤：" + displayCell(data["step"])
+			for _, field := range [][2]string{{"log_path", "日志"}, {"runtime_log_path", "运行日志"}, {"retry_command", "重试"}, {"rollback_command", "回滚"}} {
+				if value, ok := data[field[0]].(string); ok && value != "" {
+					line += "\n" + field[1] + "：" + value
+				}
+			}
 		} else if data["changed"] != true {
 			line = "安装未执行：前置检查未通过"
 		} else if state != "running" || data["step"] != nil {
@@ -433,6 +438,9 @@ func renderLocalAction(w io.Writer, data map[string]any) error {
 		if _, err := fmt.Fprintln(w, line); err != nil {
 			return err
 		}
+	}
+	if action == "install" && data["step"] != nil {
+		return nil
 	}
 	if action == "install" && data["dry_run"] != true && data["changed"] == true && state == "running" && data["step"] == nil {
 		if enabled, ok := data["autostart"].(bool); ok {

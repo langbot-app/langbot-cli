@@ -34,6 +34,22 @@ func TestNativeInstallFailureDiagnostics(t *testing.T) {
 	if !strings.Contains(data["retry_command"].(string), nativeShellQuote(dir)) || !strings.Contains(data["rollback_command"].(string), "--endpoint") {
 		t.Fatalf("invalid recovery commands: %+v", data)
 	}
+	if data["runtime_log_path"] != nil {
+		t.Fatalf("reported nonexistent runtime log: %+v", data)
+	}
+	record, readErr := (deploy.Store{Dir: dir}).Read()
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	value, err = service.installNative(context.Background(), InstallOptions{Dir: dir, Port: record.Port, Region: "global"})
+	data = value.Data.(map[string]any)
+	if err == nil || data["step"] != "prepare_runtime" || data["version"] != record.CoreVersion {
+		t.Fatalf("retry did not resume recorded version: %+v: %v", data, err)
+	}
+	saved, readErr := (deploy.Store{Dir: dir}).Read()
+	if readErr != nil || saved.DeploymentID != record.DeploymentID || saved.DataDir != record.DataDir {
+		t.Fatalf("retry replaced deployment: %+v: %v", saved, readErr)
+	}
 }
 
 func TestInstallAutostartMetadata(t *testing.T) {

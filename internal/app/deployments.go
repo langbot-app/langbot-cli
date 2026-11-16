@@ -2,6 +2,7 @@ package app
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/langbot-app/langbot-cli/internal/api"
 	"github.com/langbot-app/langbot-cli/internal/deploy"
@@ -76,7 +77,13 @@ func (s *Service) checkDeploymentRegistration(dir string, candidate deploy.Recor
 		if sameLocalEndpoint(record.Endpoint, candidate.Endpoint) ||
 			(record.ComposeProject != "" && record.ComposeProject == candidate.ComposeProject) ||
 			(record.InstanceUUID != "" && record.InstanceUUID == candidate.InstanceUUID) {
-			return result.New("precondition", "该 endpoint、实例或 Compose project 已由其他目录登记")
+			command := "lbctl start --endpoint " + nativeShellQuote(record.Endpoint)
+			if record.Driver == deploy.DriverNative {
+				recovery := map[string]any{}
+				nativeInstallRecovery(recovery, existing, record, false)
+				command = recovery["retry_command"].(string)
+			}
+			return result.New("precondition", fmt.Sprintf("登记冲突：实例 %q（目录 %s，endpoint %s，Compose project %q，instance UUID %q）已登记；继续使用原实例：%s", record.Name, existing, record.Endpoint, record.ComposeProject, record.InstanceUUID, command))
 		}
 	}
 	return nil

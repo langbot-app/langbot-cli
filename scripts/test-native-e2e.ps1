@@ -60,8 +60,21 @@ else:
 }
 
 try {
+    New-Item -ItemType Directory -Force $env:LANGBOT_HOME | Out-Null
+    $toolsPath = Join-Path $env:LANGBOT_HOME 'tools'
+    Set-Content -Path $toolsPath -Value 'blocked runtime directory'
+    $failureOutput = & lbctl install --driver native --dir $instanceDir --region global --version v4.11.7 --port 15300 --yes --output json
+    if ($LASTEXITCODE -eq 0) { throw 'Expected runtime preparation failure' }
+    $failure = ($failureOutput -join "`n") | ConvertFrom-Json
+    if ($failure.data.step -ne 'prepare_runtime') { throw "Unexpected failure: $failureOutput" }
+    $identity = $failure.data.record.deployment_id
+    $marker = Join-Path $instanceDir 'data/resume-marker'
+    Set-Content -Path $marker -Value 'resume-preserved'
+    Remove-Item $toolsPath
     $installed = $true
-    $install = Invoke-Lbctl @('install', '--driver', 'native', '--region', 'global', '--version', 'v4.11.7', '--port', '15300', '--yes', '--timeout', '15m')
+    $install = Invoke-Lbctl @('install', '--driver', 'native', '--region', 'global', '--port', '15300', '--yes', '--timeout', '15m')
+    if ($install.record.deployment_id -ne $identity -or $install.record.core_version -ne 'v4.11.7') { throw 'Retry replaced deployment identity or version' }
+    if ((Get-Content $marker) -ne 'resume-preserved') { throw 'Retry lost existing data' }
     if ($install.service_manager -ne 'windows-run') { throw 'Expected windows-run manager' }
     $registryName = 'langbot-' + $install.record.deployment_id
     Assert-RunValue $true

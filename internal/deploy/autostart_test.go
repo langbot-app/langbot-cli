@@ -118,6 +118,9 @@ func TestDockerAutostartRollsBackFailedPolicyUpdate(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected update failure")
 	}
+	if strings.Contains(err.Error(), "<nil>") || strings.Contains(err.Error(), "restore") {
+		t.Fatalf("successful rollback reported as error: %v", err)
+	}
 	current, _ := os.ReadFile(record.ComposeFile)
 	saved, _ := (Store{Dir: dir}).Read()
 	if string(current) != string(original) || saved.Autostart == nil || !*saved.Autostart {

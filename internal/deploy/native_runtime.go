@@ -49,7 +49,10 @@ func EnsureUV(ctx context.Context, tools, region string, out io.Writer) (string,
 	lock := flock.New(filepath.Join(dir, ".lock"))
 	locked, err := lock.TryLockContext(ctx, 100*time.Millisecond)
 	if err != nil || !locked {
-		return "", fmt.Errorf("uv lock: %v", err)
+		if err == nil {
+			err = context.DeadlineExceeded
+		}
+		return "", fmt.Errorf("uv lock: %w", err)
 	}
 	defer lock.Unlock()
 	name := "uv"
@@ -199,6 +202,13 @@ func CheckNativePorts(record Record) error {
 }
 
 func probeNativePort(port int) error {
+	for _, host := range []string{"127.0.0.1", "::1"} {
+		connection, err := net.DialTimeout("tcp", net.JoinHostPort(host, fmt.Sprint(port)), 300*time.Millisecond)
+		if err == nil {
+			connection.Close()
+			return fmt.Errorf("port %d is already accepting connections on %s", port, host)
+		}
+	}
 	for _, host := range []string{"127.0.0.1", ""} {
 		listener, err := net.Listen("tcp", net.JoinHostPort(host, fmt.Sprint(port)))
 		if err != nil {
