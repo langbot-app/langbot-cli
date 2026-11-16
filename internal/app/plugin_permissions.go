@@ -13,13 +13,14 @@ import (
 	"time"
 
 	"github.com/langbot-app/langbot-cli/internal/api"
+	"github.com/langbot-app/langbot-cli/internal/i18n"
 	"github.com/langbot-app/langbot-cli/internal/result"
 	"go.yaml.in/yaml/v3"
 )
 
 func (session *OperationSession) ConfirmPlugin(ctx context.Context, author, name string, capabilities, operations []string) (any, error) {
 	if !session.preflight.Capabilities.Operations["plugin.permissions.confirm_api_key"] {
-		return nil, result.New("incompatible", "Core 尚不支持 API Key 确认插件权限")
+		return nil, result.New("incompatible", i18n.T("Core does not yet support confirming plugin permissions with an API Key"))
 	}
 	if err := session.Authorize(map[string]any{"side_effect": true, "permission": "resource.manage"}); err != nil {
 		return nil, err
@@ -31,23 +32,23 @@ func (session *OperationSession) ConfirmPlugin(ctx context.Context, author, name
 	}
 	permissions, ok := value.(map[string]any)
 	if !ok {
-		return nil, result.New("incompatible", "插件权限响应格式无效")
+		return nil, result.New("incompatible", i18n.T("Invalid plugin permission response format"))
 	}
 	compat, _ := permissions["compatibility_mode"].(bool)
 	if compat || capabilities == nil && operations == nil {
 		capabilities, operations = []string{}, []string{}
 		rows, ok := permissions["permissions"].([]any)
 		if !ok {
-			return nil, result.New("incompatible", "插件权限清单缺失")
+			return nil, result.New("incompatible", i18n.T("Plugin permission manifest is missing"))
 		}
 		for _, item := range rows {
 			row, ok := item.(map[string]any)
 			if !ok {
-				return nil, result.New("incompatible", "插件权限条目无效")
+				return nil, result.New("incompatible", i18n.T("Invalid plugin permission entry"))
 			}
 			identifier, ok := row["id"].(string)
 			if !ok || identifier == "" {
-				return nil, result.New("incompatible", "插件权限 ID 缺失")
+				return nil, result.New("incompatible", i18n.T("Plugin permission ID is missing"))
 			}
 			switch row["category"] {
 			case "capabilities":
@@ -55,7 +56,7 @@ func (session *OperationSession) ConfirmPlugin(ctx context.Context, author, name
 			case "workspace_operations":
 				operations = append(operations, identifier)
 			default:
-				return nil, result.New("incompatible", "插件权限类别不支持")
+				return nil, result.New("incompatible", i18n.T("Unsupported plugin permission category"))
 			}
 		}
 	}
@@ -72,7 +73,7 @@ func (session *OperationSession) ConfirmPlugin(ctx context.Context, author, name
 	}
 	verified, ok := value.(map[string]any)
 	if !ok || verified["enabled"] != true || verified["pending_confirmation"] != false {
-		return value, result.New("server", "权限确认后插件未启用，请检查插件权限状态")
+		return value, result.New("server", i18n.T("Plugin not enabled after confirming permissions; inspect plugin permission status"))
 	}
 	return value, nil
 }
@@ -80,7 +81,7 @@ func (session *OperationSession) ConfirmPlugin(ctx context.Context, author, name
 func pluginArchiveIdentity(content []byte) (string, string, error) {
 	archive, err := zip.NewReader(bytes.NewReader(content), int64(len(content)))
 	if err != nil {
-		return "", "", result.New("input", "插件包不是有效 ZIP")
+		return "", "", result.New("input", i18n.T("Plugin package is not a valid ZIP"))
 	}
 	for _, entry := range archive.File {
 		if entry.Name != "manifest.yaml" {
@@ -88,7 +89,7 @@ func pluginArchiveIdentity(content []byte) (string, string, error) {
 		}
 		reader, err := entry.Open()
 		if err != nil {
-			return "", "", result.New("input", "无法读取插件 manifest")
+			return "", "", result.New("input", i18n.T("Unable to read plugin manifest"))
 		}
 		var manifest struct {
 			Metadata struct {
@@ -103,7 +104,7 @@ func pluginArchiveIdentity(content []byte) (string, string, error) {
 		}
 		return manifest.Metadata.Author, manifest.Metadata.Name, nil
 	}
-	return "", "", result.New("input", "插件包缺少有效的 manifest.yaml 身份")
+	return "", "", result.New("input", i18n.T("Plugin package lacks a valid manifest.yaml identity"))
 }
 
 func (s *Service) pluginInstallIdentity(ctx context.Context, operation string, body map[string]any, filename string) (string, string, error) {
@@ -111,14 +112,14 @@ func (s *Service) pluginInstallIdentity(ctx context.Context, operation string, b
 		author, _ := body["plugin_author"].(string)
 		name, _ := body["plugin_name"].(string)
 		if author == "" || name == "" {
-			return "", "", result.New("input", "必须提供 plugin_author 和 plugin_name")
+			return "", "", result.New("input", i18n.T("plugin_author and plugin_name are required"))
 		}
 		return author, name, nil
 	}
 	if filename != "" {
 		content, err := os.ReadFile(filename)
 		if err != nil {
-			return "", "", result.New("input", "无法读取插件包")
+			return "", "", result.New("input", i18n.T("Unable to read plugin package"))
 		}
 		return pluginArchiveIdentity(content)
 	}
@@ -126,11 +127,11 @@ func (s *Service) pluginInstallIdentity(ctx context.Context, operation string, b
 	repo, _ := body["repo"].(string)
 	asset := fmt.Sprint(body["asset_id"])
 	if owner == "" || repo == "" || asset == "<nil>" {
-		return "", "", result.New("input", "GitHub 自动确认需要明确的 release asset")
+		return "", "", result.New("input", i18n.T("GitHub automatic confirmation requires an explicit release asset"))
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.github.com/repos/"+url.PathEscape(owner)+"/"+url.PathEscape(repo)+"/releases/assets/"+url.PathEscape(asset), nil)
 	if err != nil {
-		return "", "", result.New("input", "GitHub asset 无效")
+		return "", "", result.New("input", i18n.T("Invalid GitHub asset"))
 	}
 	request.Header.Set("Accept", "application/octet-stream")
 	client := &http.Client{Transport: s.deps.Transport, Timeout: time.Minute, CheckRedirect: func(request *http.Request, previous []*http.Request) error {
@@ -142,15 +143,15 @@ func (s *Service) pluginInstallIdentity(ctx context.Context, operation string, b
 	}}
 	response, err := client.Do(request)
 	if err != nil {
-		return "", "", result.New("network", "无法下载 GitHub 插件包以确定权限确认对象")
+		return "", "", result.New("network", i18n.T("Unable to download GitHub plugin package to determine permission confirmation target"))
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return "", "", result.New("server", "GitHub 插件包下载失败")
+		return "", "", result.New("server", i18n.T("GitHub plugin package download failed"))
 	}
 	content, err := io.ReadAll(io.LimitReader(response.Body, maxExtensionUploadBytes+1))
 	if err != nil || int64(len(content)) > maxExtensionUploadBytes {
-		return "", "", result.New("input", "GitHub 插件包不可读或过大")
+		return "", "", result.New("input", i18n.T("GitHub plugin package is unreadable or too large"))
 	}
 	return pluginArchiveIdentity(content)
 }

@@ -19,7 +19,7 @@ import (
 func memberCLI(t *testing.T, path, input string, environment map[string]string, arguments ...string) (int, string) {
 	t.Helper()
 	var output bytes.Buffer
-	code := Execute(context.Background(), append([]string{"--config", path, "-o", "json"}, arguments...), Dependencies{
+	code := executeChinese(context.Background(), append([]string{"--config", path, "-o", "json"}, arguments...), Dependencies{
 		In: strings.NewReader(input), Out: &output, Err: &output, Version: "test",
 		LookupEnv: func(name string) (string, bool) { value, ok := environment[name]; return value, ok },
 	})

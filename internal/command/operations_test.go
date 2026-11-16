@@ -34,7 +34,7 @@ func operationCLITransport(t *testing.T, server *httptest.Server, input string, 
 		t.Fatal(err)
 	}
 	var output bytes.Buffer
-	code := Execute(context.Background(), append([]string{"--config", path, "-o", "json"}, arguments...), Dependencies{
+	code := executeChinese(context.Background(), append([]string{"--config", path, "-o", "json"}, arguments...), Dependencies{
 		In: strings.NewReader(input), Out: &output, Err: &output, Version: "test",
 		Transport: transport,
 		LookupEnv: func(name string) (string, bool) {

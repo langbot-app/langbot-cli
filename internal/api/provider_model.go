@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/langbot-app/langbot-cli/internal/i18n"
 	"github.com/langbot-app/langbot-cli/internal/result"
 )
 
@@ -23,7 +24,7 @@ func ValidateModelType(modelType string) error {
 	case ModelTypeLLM, ModelTypeEmbedding, ModelTypeRerank, ModelTypeASR, ModelTypeTTS:
 		return nil
 	default:
-		return result.New("input", "model type 必须是 llm、embedding、rerank、asr 或 tts")
+		return result.New("input", i18n.T("model type must be llm, embedding, rerank, asr or tts"))
 	}
 }
 
@@ -52,13 +53,13 @@ func (c Client) Providers(ctx context.Context, target Target) ([]map[string]any,
 	}
 	raw, ok := resp.Data["providers"].([]any)
 	if !ok {
-		return nil, protocolError("服务返回的 Provider 列表格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
+		return nil, protocolError(i18n.T("Invalid server Provider list format"), resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
 	}
 	items := make([]map[string]any, 0, len(raw))
 	for _, value := range raw {
 		item, ok := value.(map[string]any)
 		if !ok || !validResourceUUID(item, target.secret()) {
-			return nil, protocolError("服务返回的 Provider 格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
+			return nil, protocolError(i18n.T("Invalid server Provider format"), resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
 		}
 		items = append(items, projectProvider(item, target.secret()))
 	}
@@ -76,11 +77,11 @@ func (c Client) Provider(ctx context.Context, target Target, uuid string) (map[s
 	}
 	item, ok := resp.Data["provider"].(map[string]any)
 	if !ok || !validResourceUUID(item, target.secret()) {
-		return nil, protocolError("服务返回的 Provider 格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
+		return nil, protocolError(i18n.T("Invalid server Provider format"), resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
 	}
 	projected := projectProvider(item, target.secret())
 	if projected["uuid"] != uuid {
-		return nil, protocolError("服务返回的 Provider UUID 与请求不一致", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
+		return nil, protocolError(i18n.T("Server Provider UUID does not match the request"), resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
 	}
 	return projected, nil
 }
@@ -118,13 +119,13 @@ func (c Client) ProviderScanModels(ctx context.Context, target Target, uuid, mod
 	}
 	raw, ok := resp.Data["models"].([]any)
 	if !ok {
-		return nil, protocolError("服务返回的扫描模型列表格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
+		return nil, protocolError(i18n.T("Invalid server scanned model list format"), resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
 	}
 	models := make([]map[string]any, 0, len(raw))
 	for _, value := range raw {
 		model, ok := value.(map[string]any)
 		if !ok {
-			return nil, protocolError("服务返回的扫描模型格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
+			return nil, protocolError(i18n.T("Invalid server scanned model format"), resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
 		}
 		models = append(models, projectSafeFields(model, []string{
 			"id", "name", "type", "abilities", "display_name", "description", "context_length", "owned_by",
@@ -150,13 +151,13 @@ func (c Client) Models(ctx context.Context, target Target, modelType, providerUU
 	}
 	raw, ok := resp.Data["models"].([]any)
 	if !ok {
-		return nil, protocolError("服务返回的 Model 列表格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
+		return nil, protocolError(i18n.T("Invalid server Model list format"), resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
 	}
 	items := make([]map[string]any, 0, len(raw))
 	for _, value := range raw {
 		item, ok := value.(map[string]any)
 		if !ok || !validResourceUUID(item, target.secret()) {
-			return nil, protocolError("服务返回的 Model 格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
+			return nil, protocolError(i18n.T("Invalid server Model format"), resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
 		}
 		items = append(items, projectModel(item, target.secret()))
 	}
@@ -178,11 +179,11 @@ func (c Client) Model(ctx context.Context, target Target, modelType, uuid string
 	}
 	item, ok := resp.Data["model"].(map[string]any)
 	if !ok || !validResourceUUID(item, target.secret()) {
-		return nil, protocolError("服务返回的 Model 格式无效", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
+		return nil, protocolError(i18n.T("Invalid server Model format"), resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
 	}
 	projected := projectModel(item, target.secret())
 	if projected["uuid"] != uuid {
-		return nil, protocolError("服务返回的 Model UUID 与请求不一致", resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
+		return nil, protocolError(i18n.T("Server Model UUID does not match the request"), resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
 	}
 	return projected, nil
 }

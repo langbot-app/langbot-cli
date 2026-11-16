@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/langbot-app/langbot-cli/internal/clientidentity"
+	"github.com/langbot-app/langbot-cli/internal/i18n"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -59,11 +60,11 @@ func WriteDeployIdentity(record Record, version string) error {
 func addDeployEnvironment(content []byte) ([]byte, error) {
 	var document yaml.Node
 	if err := yaml.Unmarshal(content, &document); err != nil || len(document.Content) != 1 {
-		return nil, errors.New("无法解析 Compose 资产")
+		return nil, errors.New(i18n.T("Unable to parse Compose assets"))
 	}
 	service := mappingValue(mappingValue(document.Content[0], "services"), "langbot")
 	if service == nil || service.Kind != yaml.MappingNode {
-		return nil, errors.New("缺少 LangBot 服务声明")
+		return nil, errors.New(i18n.T("Missing LangBot service declaration"))
 	}
 	environment := mappingValue(service, "environment")
 	lines := strings.SplitAfter(string(content), "\n")
@@ -103,7 +104,7 @@ func addDeployEnvironment(content []byte) ([]byte, error) {
 			continue
 		}
 		if existing.Kind != yaml.ScalarNode {
-			return nil, errors.New("部署来源环境变量必须为标量")
+			return nil, errors.New(i18n.T("Deployment source environment variables must be scalars"))
 		}
 		original := existing.Value
 		switch existing.Style {
@@ -113,11 +114,11 @@ func addDeployEnvironment(content []byte) ([]byte, error) {
 			original = strconv.Quote(original)
 		case 0:
 		default:
-			return nil, errors.New("部署来源环境变量不支持多行声明")
+			return nil, errors.New(i18n.T("Deployment source environment variables do not support multiline declarations"))
 		}
 		start := offset(existing)
 		if !strings.HasPrefix(string(content[start:]), original) {
-			return nil, errors.New("无法定位部署来源环境变量")
+			return nil, errors.New(i18n.T("Unable to locate deployment source environment variables"))
 		}
 		if existing.Value != value {
 			edits = append(edits, edit{start, start + len(original), strconv.Quote(value)})
@@ -134,7 +135,7 @@ func addDeployEnvironment(content []byte) ([]byte, error) {
 				edits = append(edits, edit{start, start, "environment: {" + strings.Join(missing, ", ") + "}\n" + indent})
 			}
 		} else if environment.Kind != yaml.MappingNode && environment.Kind != yaml.SequenceNode {
-			return nil, errors.New("Compose environment 必须为映射或列表")
+			return nil, errors.New(i18n.T("Compose environment must be a mapping or list"))
 		} else if environment.Style&yaml.FlowStyle != 0 {
 			start := offset(environment) + 1
 			text := strings.Join(missing, ", ")

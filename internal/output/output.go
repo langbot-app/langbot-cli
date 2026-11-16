@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/langbot-app/langbot-cli/internal/i18n"
 	"github.com/langbot-app/langbot-cli/internal/redact"
 
 	"go.yaml.in/yaml/v3"
@@ -26,7 +27,7 @@ func NormalizeFormat(value string) (string, error) {
 	case FormatYAML, "yml":
 		return FormatYAML, nil
 	default:
-		return "", fmt.Errorf("不支持的输出格式 %q", value)
+		return "", fmt.Errorf(i18n.T("Unsupported output format %q"), value)
 	}
 }
 
@@ -70,7 +71,7 @@ func RenderCommand(w io.Writer, value any, format, command string) error {
 		_, err = w.Write(data)
 		return err
 	default:
-		return fmt.Errorf("不支持的输出格式 %q", format)
+		return fmt.Errorf(i18n.T("Unsupported output format %q"), format)
 	}
 }
 

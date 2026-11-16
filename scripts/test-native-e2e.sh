@@ -12,7 +12,7 @@ if lbctl install --driver native --region "$region" --version v4.11.7 --port 153
     printf 'Expected runtime preparation failure\n' >&2
     exit 1
 fi
-grep '"step": "prepare_runtime"' "$LANGBOT_HOME/failed-install.json"
+grep '"step": "download_uv"' "$LANGBOT_HOME/failed-install.json"
 record="$LANGBOT_HOME/instances/default/deployment.yaml"
 identity=$(grep '^deployment_id:' "$record")
 mkdir -p "$LANGBOT_HOME/instances/default/data"

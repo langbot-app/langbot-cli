@@ -1,5 +1,7 @@
 package command
 
+import "github.com/langbot-app/langbot-cli/internal/i18n"
+
 import "strings"
 
 func init() {
@@ -17,7 +19,7 @@ func init() {
 		meta := readMeta(operationIDs(spec.id)...)
 		details := friendlyOperationDetails[spec.id]
 		meta.Operations = append(meta.Operations, preconditionID("operation.invoke"))
-		meta.InputConflicts = []schemaConflict{{Operands: []schemaOperand{{Flag: "file", Equals: "-"}, {Flag: "api-key-stdin", Equals: true}}, Reason: "stdin 只能有一个读取者"}}
+		meta.InputConflicts = []schemaConflict{{Operands: []schemaOperand{{Flag: "file", Equals: "-"}, {Flag: "api-key-stdin", Equals: true}}, Reason: i18n.T("stdin can only have one reader")}}
 		if spec.stream {
 			meta.Operations = append(meta.Operations, preconditionID("operation.stream"))
 		}

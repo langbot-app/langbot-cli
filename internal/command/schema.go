@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/langbot-app/langbot-cli/internal/app"
+	"github.com/langbot-app/langbot-cli/internal/i18n"
 	"github.com/langbot-app/langbot-cli/internal/result"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -139,6 +140,11 @@ type schemaFlag struct {
 var placeholderPattern = regexp.MustCompile(`(<[^>]+>|\[[^]]+\])`)
 
 var schemaMetaByName = map[string]schemaCommandMeta{
+	"list": {FlagApplicability: map[string]schemaFlagApplicability{
+		"context":       {Status: "rejected", Reason: "list reads local instances"},
+		"endpoint":      {Status: "rejected", Reason: "list reads local instances"},
+		"api-key-stdin": {Status: "rejected", Reason: "list reads local instances"},
+	}},
 	"knowledge-engine.list":             readMeta(operationIDs("knowledge_engine.list")...),
 	"knowledge-engine.creation-schema":  readMeta(operationIDs("knowledge_engine.creation_schema")...),
 	"knowledge-engine.retrieval-schema": readMeta(operationIDs("knowledge_engine.retrieval_schema")...),
@@ -177,15 +183,15 @@ var schemaMetaByName = map[string]schemaCommandMeta{
 	"install": {
 		Mutating: true, SupportsDryRun: true,
 		FlagApplicability: map[string]schemaFlagApplicability{
-			"context":       {Status: "rejected", Reason: "install 不使用 context"},
-			"endpoint":      {Status: "rejected", Reason: "install 自行生成本机 endpoint"},
-			"api-key-stdin": {Status: "rejected", Reason: "install 不接收 Workspace API Key"},
+			"context":       {Status: "rejected", Reason: i18n.Source("install does not use context")},
+			"endpoint":      {Status: "rejected", Reason: i18n.Source("install generates its own local endpoint")},
+			"api-key-stdin": {Status: "rejected", Reason: i18n.Source("install does not accept a Workspace API Key")},
 		},
 	},
 	"adopt": {
 		Mutating: true, RequiresConnection: true, RequiredFlags: map[string]bool{"endpoint": true, "file": true, "project": true},
 		FlagApplicability: map[string]schemaFlagApplicability{
-			"context": {Status: "rejected", Reason: "adopt 使用显式 endpoint"},
+			"context": {Status: "rejected", Reason: i18n.Source("adopt uses an explicit endpoint")},
 		},
 	},
 	"start":             {Mutating: true},
@@ -202,13 +208,13 @@ var schemaMetaByName = map[string]schemaCommandMeta{
 		{When: flagEquals("follow", true), Format: "json", Encoding: "json-lines"},
 	}, InputConflicts: []schemaConflict{{
 		Operands: []schemaOperand{{Flag: "follow", Equals: true}, {Flag: "output", Equals: "yaml"}},
-		Reason:   "logs --follow 不支持 YAML 输出",
+		Reason:   i18n.Source("logs --follow does not support YAML output"),
 	}}},
 	"version": {Operations: []schemaOperation{conditionalOperation("system.info", flagEquals("server", true))}, FlagApplicability: serverOnlyConnectionFlags()},
 	"raw": func() schemaCommandMeta {
 		meta := readMeta(operationIDs("system.info")...)
 		meta.ArgumentMin, meta.ArgumentMax, meta.ArgumentAllowed = intPointer(0), intPointer(2), []int{0, 2}
-		meta.FlagApplicability = map[string]schemaFlagApplicability{"file": {Status: "rejected", Reason: "阶段 1A 的 raw 不允许请求体"}}
+		meta.FlagApplicability = map[string]schemaFlagApplicability{"file": {Status: "rejected", Reason: i18n.Source("Stage 1A raw does not allow request bodies")}}
 		return meta
 	}(),
 	"api.get":      {Operations: []schemaOperation{{Template: "registered operation for GET {path}", Values: []string{"path"}}}, RequiresConnection: true},
@@ -299,8 +305,8 @@ var schemaMetaByName = map[string]schemaCommandMeta{
 
 	"context.add": {Mutating: true, RequiredFlags: map[string]bool{"endpoint": true}, FlagApplicability: localContextMutationFlags()},
 	"context.update": {Mutating: true, FlagApplicability: localContextMutationFlags(), InputConflicts: []schemaConflict{
-		{Operands: []schemaOperand{{Flag: "api-key-env", Present: true}, {Flag: "clear-credential", Equals: true}}, Reason: "不能同时设置 api-key-env 和 clear-credential"},
-		{Operands: []schemaOperand{{Flag: "expect-workspace", Present: true}, {Flag: "clear-binding", Equals: true}}, Reason: "不能同时设置 expect-workspace 和 clear-binding"},
+		{Operands: []schemaOperand{{Flag: "api-key-env", Present: true}, {Flag: "clear-credential", Equals: true}}, Reason: i18n.Source("Cannot combine api-key-env and clear-credential")},
+		{Operands: []schemaOperand{{Flag: "expect-workspace", Present: true}, {Flag: "clear-binding", Equals: true}}, Reason: i18n.Source("Cannot combine expect-workspace and clear-binding")},
 	}},
 	"context.list":   {FlagApplicability: localContextFlags()},
 	"context.show":   {},
@@ -317,7 +323,7 @@ func contextCheckConflicts() []schemaConflict {
 		{Flag: "api-key-stdin", Equals: true},
 		{Argument: "name", Present: true},
 	} {
-		conflicts = append(conflicts, schemaConflict{Operands: []schemaOperand{{Flag: "all", Equals: true}, operand}, Reason: "--all 不能与目标覆盖参数同时使用"})
+		conflicts = append(conflicts, schemaConflict{Operands: []schemaOperand{{Flag: "all", Equals: true}, operand}, Reason: i18n.T("--all cannot be combined with target overrides")})
 	}
 	return conflicts
 }
@@ -325,7 +331,7 @@ func contextCheckConflicts() []schemaConflict {
 func localContextFlags() map[string]schemaFlagApplicability {
 	flags := map[string]schemaFlagApplicability{}
 	for _, name := range []string{"api-key-stdin", "context", "endpoint", "timeout"} {
-		flags[name] = schemaFlagApplicability{Status: "rejected", Reason: "本地 context 命令不接受连接覆盖参数"}
+		flags[name] = schemaFlagApplicability{Status: "rejected", Reason: i18n.T("Local context commands do not accept connection overrides")}
 	}
 	return flags
 }
@@ -333,22 +339,22 @@ func localContextFlags() map[string]schemaFlagApplicability {
 func autostartFlags() map[string]schemaFlagApplicability {
 	flags := map[string]schemaFlagApplicability{}
 	for _, name := range []string{"api-key-stdin", "context", "endpoint"} {
-		flags[name] = schemaFlagApplicability{Status: "rejected", Reason: "autostart 使用本机实例名称或目录"}
+		flags[name] = schemaFlagApplicability{Status: "rejected", Reason: i18n.T("autostart uses a local instance name or directory")}
 	}
 	return flags
 }
 
 func localContextMutationFlags() map[string]schemaFlagApplicability {
 	return map[string]schemaFlagApplicability{
-		"api-key-stdin": {Status: "rejected", Reason: "本地 context 命令不接受连接覆盖参数"},
-		"context":       {Status: "rejected", Reason: "本地 context 命令不接受连接覆盖参数"},
+		"api-key-stdin": {Status: "rejected", Reason: i18n.T("Local context commands do not accept connection overrides")},
+		"context":       {Status: "rejected", Reason: i18n.T("Local context commands do not accept connection overrides")},
 	}
 }
 
 func serverOnlyConnectionFlags() map[string]schemaFlagApplicability {
 	flags := map[string]schemaFlagApplicability{}
 	for _, name := range []string{"api-key-stdin", "context", "endpoint", "timeout"} {
-		flags[name] = schemaFlagApplicability{Status: "conditional", When: flagEquals("server", true), Reason: "仅 --server 时适用"}
+		flags[name] = schemaFlagApplicability{Status: "conditional", When: flagEquals("server", true), Reason: i18n.T("Only applies with --server")}
 	}
 	return flags
 }
@@ -478,7 +484,7 @@ func newSchemaCommand(deps Dependencies, flags *globalFlags) *cobra.Command {
 	var summary bool
 	cmd := &cobra.Command{
 		Use:   "schema",
-		Short: "输出机器可读的命令 schema",
+		Short: i18n.T("Output machine-readable command schema"),
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			data, err := buildSchema(cmd.Root(), deps.Version, commandName)
@@ -495,8 +501,8 @@ func newSchemaCommand(deps Dependencies, flags *globalFlags) *cobra.Command {
 			return emitCommand(deps, flags, app.Result{Data: data}, nil)
 		},
 	}
-	cmd.Flags().StringVar(&commandName, "command", "", "筛选命令或命令组，例如 bot、bot.update 或 'bot update'")
-	cmd.Flags().BoolVar(&summary, "summary", false, "只输出命令索引，按需再读取单个命令详情")
+	cmd.Flags().StringVar(&commandName, "command", "", i18n.T("Filter command or group, e.g. bot, bot.update or 'bot update'"))
+	cmd.Flags().BoolVar(&summary, "summary", false, i18n.T("Output the command index only; read individual details on demand"))
 	return cmd
 }
 
@@ -517,7 +523,7 @@ func buildSchema(root *cobra.Command, cliVersion, filter string) (schemaDocument
 			}
 		}
 		if !found {
-			return schemaDocument{}, result.New("input", "未知命令 schema: "+filter)
+			return schemaDocument{}, result.New("input", i18n.T("Unknown command schema: ")+filter)
 		}
 		commands = filtered
 	}
@@ -530,18 +536,18 @@ func buildSchema(root *cobra.Command, cliVersion, filter string) (schemaDocument
 			"precondition": 6, "network": 7, "result_unknown": 7, "incompatible": 8, "recovery_required": 9, "server": 10, "internal": 10,
 		},
 		ExitCodeDescriptions: map[string]string{
-			"success":           "命令执行成功",
-			"input":             "输入或配置无效",
-			"auth":              "凭据无效、过期或已吊销",
-			"permission":        "当前凭据权限不足",
-			"not_found":         "目标资源不存在",
-			"precondition":      "安全前置或资源状态不满足",
-			"network":           "网络、TLS、超时或取消",
-			"incompatible":      "接口、协议或服务端能力不兼容",
-			"internal":          "CLI schema 或未分类的内部错误",
-			"server":            "服务端或未分类的服务错误",
-			"result_unknown":    "请求可能已提交但结果无法确认",
-			"recovery_required": "本机升级未完成，需要检查并恢复现场",
+			"success":           i18n.T("Command succeeded"),
+			"input":             i18n.T("Invalid input or configuration"),
+			"auth":              i18n.T("Credential is invalid, expired or revoked"),
+			"permission":        i18n.T("Current credential has insufficient permissions"),
+			"not_found":         i18n.T("Target resource does not exist"),
+			"precondition":      i18n.T("Safety prerequisites or resource state not satisfied"),
+			"network":           i18n.T("Network, TLS, timeout or cancellation"),
+			"incompatible":      i18n.T("Incompatible endpoint, protocol or server capability"),
+			"internal":          i18n.T("CLI schema or unclassified internal error"),
+			"server":            i18n.T("Server or unclassified service error"),
+			"result_unknown":    i18n.T("Request may have been submitted but its result is unconfirmed"),
+			"recovery_required": i18n.T("Local upgrade incomplete; inspect and recover deployment state"),
 		},
 	}, nil
 }
@@ -624,43 +630,43 @@ func validateSchemaMetadata(root *cobra.Command) error {
 			meta, registered := schemaMetaByName[name]
 			if len(child.Commands()) == 0 {
 				if !registered {
-					return result.New("internal", "命令缺少 schema 元数据: "+name)
+					return result.New("internal", i18n.T("Command lacks schema metadata: ")+name)
 				}
 				flags := schemaFlagsFor(child, meta)
 				for flagName := range meta.RequiredFlags {
 					if !schemaHasFlag(flags, flagName) {
-						return result.New("internal", "schema 元数据引用了不存在的 flag: "+name+" --"+flagName)
+						return result.New("internal", i18n.T("schema metadata references a nonexistent flag: ")+name+" --"+flagName)
 					}
 				}
 				for _, group := range meta.RequiredOneOf {
 					if len(group) == 0 {
-						return result.New("internal", "schema 至少必选项分组不能为空: "+name)
+						return result.New("internal", i18n.T("schema at-least-one group must not be empty: ")+name)
 					}
 					for _, flagName := range group {
 						if !schemaHasFlag(flags, flagName) {
-							return result.New("internal", "schema 必选项分组引用了不存在的 flag: "+name+" --"+flagName)
+							return result.New("internal", i18n.T("schema required group references a nonexistent flag: ")+name+" --"+flagName)
 						}
 					}
 				}
 				for flagName, applicability := range meta.FlagApplicability {
 					if !schemaHasFlag(flags, flagName) {
-						return result.New("internal", "schema 元数据引用了不存在的 flag: "+name+" --"+flagName)
+						return result.New("internal", i18n.T("schema metadata references a nonexistent flag: ")+name+" --"+flagName)
 					}
 					if applicability.Status != "available" && applicability.Status != "conditional" && applicability.Status != "rejected" {
-						return result.New("internal", "schema flag applicability 无效: "+name+" --"+flagName)
+						return result.New("internal", i18n.T("Invalid schema flag applicability: ")+name+" --"+flagName)
 					}
 				}
 				if meta.SupportsDryRun && !schemaHasFlag(flags, "dry-run") {
-					return result.New("internal", "schema 元数据声明了不存在的 --dry-run: "+name)
+					return result.New("internal", i18n.T("schema metadata declares a nonexistent --dry-run: ")+name)
 				}
 				if meta.SupportsWait && !schemaHasFlag(flags, "wait") {
-					return result.New("internal", "schema 元数据声明了不存在的 --wait: "+name)
+					return result.New("internal", i18n.T("schema metadata declares a nonexistent --wait: ")+name)
 				}
 				if meta.RequiresYes && !schemaHasFlag(flags, "yes") {
-					return result.New("internal", "schema 元数据声明了不存在的 --yes: "+name)
+					return result.New("internal", i18n.T("schema metadata declares a nonexistent --yes: ")+name)
 				}
 				if meta.Destructive && !meta.RequiresYes {
-					return result.New("internal", "破坏性命令必须要求 --yes: "+name)
+					return result.New("internal", i18n.T("Destructive commands must require --yes: ")+name)
 				}
 			}
 			if err := validate(child, path); err != nil {
@@ -768,13 +774,13 @@ func schemaInputConflicts(meta schemaCommandMeta, flags []schemaFlag) []schemaCo
 	if hasAPIKeyStdin && hasStdinFile {
 		conflicts = append(conflicts, schemaConflict{
 			Operands: []schemaOperand{{Flag: "api-key-stdin", Equals: true}, {Flag: "file", Equals: "-"}},
-			Reason:   "API Key 和请求体不能同时从 stdin 读取",
+			Reason:   i18n.T("API Key and request body cannot both read stdin"),
 		})
 	}
 	if meta.SupportsDryRun && meta.SupportsWait && hasDryRun && hasWait {
 		conflicts = append(conflicts, schemaConflict{
 			Operands: []schemaOperand{{Flag: "dry-run", Equals: true}, {Flag: "wait", Equals: true}},
-			Reason:   "dry-run 不能与 wait 同时使用",
+			Reason:   i18n.T("dry-run cannot be combined with wait"),
 		})
 	}
 	return conflicts

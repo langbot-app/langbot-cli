@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/langbot-app/langbot-cli/internal/i18n"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -56,14 +57,14 @@ type BackupManifest struct {
 
 func CompareReleaseVersions(current, target string) (int, error) {
 	if !releaseVersionPattern.MatchString(current) || !releaseVersionPattern.MatchString(target) {
-		return 0, errors.New("当前版本和目标版本都必须是 vX.Y.Z 稳定 Release tag")
+		return 0, errors.New(i18n.T("Current and target versions must both be stable vX.Y.Z Release tags"))
 	}
 	left, right := strings.Split(current[1:], "."), strings.Split(target[1:], ".")
 	for i := range left {
 		a, aErr := strconv.ParseUint(left[i], 10, 64)
 		b, bErr := strconv.ParseUint(right[i], 10, 64)
 		if aErr != nil || bErr != nil {
-			return 0, errors.New("Release tag 版本号超出支持范围")
+			return 0, errors.New(i18n.T("Release tag version exceeds the supported range"))
 		}
 		if a < b {
 			return -1, nil
@@ -80,7 +81,7 @@ func ComposeForUpgrade(record Record, dir, version string) ([]byte, string, erro
 		return nil, "", err
 	}
 	if !releaseVersionPattern.MatchString(version) {
-		return nil, "", errors.New("版本必须为 vX.Y.Z 形式的稳定 Release tag")
+		return nil, "", errors.New(i18n.T("Version must be a stable Release tag in vX.Y.Z format"))
 	}
 	if !IsAdoptedLayout(record) {
 		ports := defaultInstallPorts()
@@ -118,10 +119,10 @@ func validateUpgradeLayout(record Record, dir string) error {
 	if record.Driver != DriverDockerCompose || !filepath.IsAbs(record.ComposeFile) ||
 		!regularFile(record.ComposeFile) || record.DataDir != filepath.Join(filepath.Dir(record.ComposeFile), "data") ||
 		!releaseVersionPattern.MatchString(record.CoreVersion) || (record.Profile != "basic" && record.Profile != "all") {
-		return errors.New("接管部署的 Compose 或数据目录不在支持的升级范围内")
+		return errors.New(i18n.T("Adopted Compose or data directory is outside the supported upgrade scope"))
 	}
 	if fileDigestPath(record.ComposeFile) != record.Asset.Digest {
-		return errors.New("接管后的 Compose 资产已变更，请重新 adopt 确认后升级")
+		return errors.New(i18n.T("Adopted Compose assets changed; run adopt again before upgrading"))
 	}
 	return nil
 }
@@ -133,17 +134,17 @@ func ValidateOwnedLayout(record Record, dir string) error {
 		record.DataDir != filepath.Join(dir, "data") || record.Asset.Name != ImageRepository(record)+":"+record.CoreVersion ||
 		record.Endpoint != fmt.Sprintf("http://127.0.0.1:%d", record.Port) ||
 		!regularFile(record.EnvFile) || !releaseVersionPattern.MatchString(record.CoreVersion) {
-		return errors.New("仅支持 lbctl 安装的默认 Compose 部署")
+		return errors.New(i18n.T("Only default Compose deployments installed by lbctl are supported"))
 	}
 	if record.Profile != "basic" && record.Profile != "all" {
-		return errors.New("部署 profile 不受支持")
+		return errors.New(i18n.T("Unsupported deployment profile"))
 	}
 	ports := defaultInstallPorts()
 	if record.InstallPorts != nil {
 		ports = *record.InstallPorts
 	}
 	if _, err := ports.hostPorts(record.Port); err != nil {
-		return errors.New("部署记录的端口映射无效")
+		return errors.New(i18n.T("Invalid deployment record port mapping"))
 	}
 	current := []byte(renderCompose(record.Asset.Name, record.Port, filepath.Join(dir, "data", "box"), ports))
 	current = composePackageIndex(current, record.PyPIIndex)
@@ -151,7 +152,7 @@ func ValidateOwnedLayout(record Record, dir string) error {
 	actual, err := os.ReadFile(record.ComposeFile)
 	legacy := []byte(strings.Replace(string(current), deployComposeEnvironment, "", 1))
 	if err != nil || (!equalDigest(actual, current) && !equalDigest(actual, legacy)) {
-		return errors.New("Compose 资产已变更")
+		return errors.New(i18n.T("Compose assets have changed"))
 	}
 	return nil
 }
@@ -159,7 +160,7 @@ func ValidateOwnedLayout(record Record, dir string) error {
 func InspectUpgradeData(record Record) (dataBytes int64, freeBytes uint64, err error) {
 	defer func() {
 		if errors.Is(err, fs.ErrPermission) {
-			err = fmt.Errorf("升级备份权限不足：%w；请使用 sudo 执行，或先用 chown 调整数据及备份目录属主", err)
+			err = fmt.Errorf(i18n.T("Insufficient backup permissions: %w; use sudo or chown the data and backup directories"), err)
 		}
 	}()
 	backupRoot := filepath.Join(filepath.Dir(record.DataDir), "backups")
@@ -178,7 +179,7 @@ func InspectUpgradeData(record Record) (dataBytes int64, freeBytes uint64, err e
 	}
 	configPath := filepath.Join(record.DataDir, "config.yaml")
 	if !regularFile(configPath) {
-		return 0, 0, errors.New("缺少可读取的本地配置，无法确认备份范围")
+		return 0, 0, errors.New(i18n.T("Missing readable local configuration; cannot confirm backup scope"))
 	}
 	data, err := os.ReadFile(configPath)
 	if err != nil {
@@ -199,11 +200,11 @@ func InspectUpgradeData(record Record) (dataBytes int64, freeBytes uint64, err e
 		} `yaml:"storage"`
 	}
 	if err := yaml.Unmarshal(data, &config); err != nil {
-		return 0, 0, errors.New("无法解析本地配置")
+		return 0, 0, errors.New(i18n.T("Unable to parse local configuration"))
 	}
 	if config.Database.Use != "sqlite" || config.VDB.Use != "chroma" || config.Storage.Use != "local" ||
 		(config.Database.SQLite.Path != "data/langbot.db" && config.Database.SQLite.Path != "./data/langbot.db") {
-		return 0, 0, errors.New("当前持久化配置不在可完整备份的默认本地模式内")
+		return 0, 0, errors.New(i18n.T("Current persistence configuration is outside the fully backed-up default local mode"))
 	}
 	var total int64
 	err = filepath.WalkDir(record.DataDir, func(path string, entry fs.DirEntry, walkErr error) error {
@@ -215,7 +216,7 @@ func InspectUpgradeData(record Record) (dataBytes int64, freeBytes uint64, err e
 			return err
 		}
 		if info.Mode()&os.ModeSymlink != 0 || (!info.IsDir() && !info.Mode().IsRegular()) {
-			return fmt.Errorf("数据目录包含不支持的路径: %s", path)
+			return fmt.Errorf(i18n.T("Data directory contains an unsupported path: %s"), path)
 		}
 		if info.Mode().IsRegular() {
 			file, err := os.Open(path)
@@ -237,7 +238,7 @@ func InspectUpgradeData(record Record) (dataBytes int64, freeBytes uint64, err e
 		return 0, 0, err
 	}
 	if total < 0 || free < uint64(total)+1<<30 {
-		return total, free, errors.New("备份所需空间不足，至少额外保留 1 GiB")
+		return total, free, errors.New(i18n.T("Insufficient backup space; retain at least 1 GiB extra"))
 	}
 	return total, free, nil
 }
@@ -330,7 +331,7 @@ func CreateUpgradeBackup(ctx context.Context, record Record, state UpgradeState,
 				return err
 			}
 			if info.Mode()&os.ModeSymlink != 0 || (!info.IsDir() && !info.Mode().IsRegular()) {
-				return errors.New("备份源包含不支持的文件类型")
+				return errors.New(i18n.T("Backup source contains unsupported file types"))
 			}
 			dest := filepath.Join(tmp, name)
 			if info.IsDir() {
@@ -467,7 +468,7 @@ func CheckUpgradeInterrupted(dir string) error {
 		return err
 	}
 	if state.Phase != "completed" {
-		return errors.New("存在未完成的升级，请先运行 status 和 doctor 诊断")
+		return errors.New(i18n.T("An upgrade is unfinished; run status and doctor first"))
 	}
 	return nil
 }

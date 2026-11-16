@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/gofrs/flock"
+	"github.com/langbot-app/langbot-cli/internal/progress"
 )
 
 const DefaultEndpoint = "https://space.langbot.app/api/v1/telemetry"
@@ -217,9 +218,27 @@ func (client *Client) Begin(ctx context.Context, command string) (context.Contex
 }
 
 func SetStep(ctx context.Context, step string) {
+	step = Identifier(step)
+	if current, ok := ctx.Value(stepKey{}).(*string); ok {
+		*current = step
+	}
+	progress.StepID(ctx, step)
 	if op, ok := ctx.Value(operationKey{}).(*Operation); ok {
 		op.Event.Step = Identifier(step)
 	}
+}
+
+type stepKey struct{}
+
+func TrackSteps(ctx context.Context) context.Context {
+	return context.WithValue(ctx, stepKey{}, new(string))
+}
+
+func CurrentStep(ctx context.Context) string {
+	if current, ok := ctx.Value(stepKey{}).(*string); ok {
+		return *current
+	}
+	return ""
 }
 
 func SetEnvironment(ctx context.Context, driver, manager, region, coreVersion string) {
@@ -250,13 +269,13 @@ func (op *Operation) Finish(err error, code string) {
 		if op.Event.ErrorCode == "" {
 			op.Event.ErrorCode = "unknown"
 		}
-		message := strings.ReplaceAll(err.Error(), op.client.home, "[redacted]")
+		usernames := []string{}
 		for _, key := range []string{"USER", "USERNAME", "LOGNAME"} {
 			if username, _ := op.client.lookup(key); username != "" {
-				message = strings.ReplaceAll(message, username, "[redacted]")
+				usernames = append(usernames, username)
 			}
 		}
-		op.Event.Error = SanitizeError(message)
+		op.Event.Error = SanitizeError(sanitizeIdentity(err.Error(), op.client.home, usernames))
 	}
 	op.client.send(op.Event)
 }

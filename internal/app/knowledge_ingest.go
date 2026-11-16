@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/langbot-app/langbot-cli/internal/i18n"
 	"github.com/langbot-app/langbot-cli/internal/result"
 )
 
@@ -30,7 +31,7 @@ func (s *Service) KnowledgeBaseIngestFiles(ctx context.Context, identifier strin
 	}
 	for _, file := range files {
 		if wait.Wait && strings.EqualFold(filepath.Ext(file.path), ".zip") {
-			return Result{}, result.New("input", "批量 --wait 无法确认 ZIP 内全部任务；请先解压，再通过 --dir 导入")
+			return Result{}, result.New("input", i18n.T("Batch --wait cannot confirm every task inside ZIP; extract it first and import with --dir"))
 		}
 	}
 	preflight, base, err := s.prepareKnowledgeBaseIngest(ctx, identifier, wait.Wait && !dryRun, options)
@@ -47,7 +48,7 @@ func (s *Service) KnowledgeBaseIngestFiles(ctx context.Context, identifier strin
 		if ctx.Err() != nil {
 			stopped = true
 			if firstError == nil {
-				firstError = result.New("network", "批量入库已取消，已提交的服务端任务未取消")
+				firstError = result.New("network", i18n.T("Batch ingestion cancelled; submitted server tasks were not cancelled"))
 			}
 		}
 		if !stopped {
@@ -101,7 +102,7 @@ func (s *Service) KnowledgeBaseIngestFiles(ctx context.Context, identifier strin
 		value.Data.(map[string]any)["business_validation"] = "not_run"
 	}
 	if firstError != nil {
-		failure := result.New(firstError.Kind, "批量入库未全部成功，请查看逐文件结果；已提交或结果未知的文件不要直接重复提交")
+		failure := result.New(firstError.Kind, i18n.T("Batch ingestion partially failed; inspect per-file results; do not resubmit files already submitted or with unknown results"))
 		failure.Type = "batch_incomplete"
 		return value, failure
 	}
@@ -130,24 +131,24 @@ func (s *Service) prepareKnowledgeBaseIngest(ctx context.Context, identifier str
 
 func collectIngestFiles(ctx context.Context, filenames []string, directory string) ([]ingestFile, error) {
 	if len(filenames) == 0 && directory == "" {
-		return nil, result.New("input", "至少提供一个 --file 或 --dir；--file 可重复指定")
+		return nil, result.New("input", i18n.T("Provide at least one --file or --dir; --file is repeatable"))
 	}
 	files := []ingestFile{}
 	seen := map[string]bool{}
 	add := func(path string) error {
 		if strings.TrimSpace(path) == "" || path == "-" {
-			return result.New("input", "--file 必须指定本地文件，不能使用 stdin")
+			return result.New("input", i18n.T("--file must specify a local file, not stdin"))
 		}
 		info, err := os.Stat(path)
 		if err != nil || !info.Mode().IsRegular() {
-			return result.New("input", "无法读取上传文件，或所选路径不是普通文件")
+			return result.New("input", i18n.T("Unable to read upload file, or selected path is not a regular file"))
 		}
 		if info.Size() > maxExtensionUploadBytes {
-			return result.New("input", "上传文件超过 10MB 限制，请拆分后再提交；本批次未上传")
+			return result.New("input", i18n.T("Upload file exceeds the 10MB limit; split it before submitting; this batch was not uploaded"))
 		}
 		absolute, err := filepath.Abs(path)
 		if err != nil {
-			return result.New("input", "无法解析上传文件路径")
+			return result.New("input", i18n.T("Unable to resolve upload file path"))
 		}
 		if runtime.GOOS == "windows" {
 			absolute = strings.ToLower(absolute)
@@ -167,14 +168,14 @@ func collectIngestFiles(ctx context.Context, filenames []string, directory strin
 		directory = filepath.Clean(directory)
 		info, err := os.Lstat(directory)
 		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-			return nil, result.New("input", "--dir 必须指定可读取的目录，不能是符号链接")
+			return nil, result.New("input", i18n.T("--dir must be a readable directory, not a symbolic link"))
 		}
 		err = filepath.WalkDir(directory, func(path string, entry fs.DirEntry, walkErr error) error {
 			if ctx.Err() != nil {
-				return result.New("network", "目录扫描已取消")
+				return result.New("network", i18n.T("Directory scan cancelled"))
 			}
 			if walkErr != nil {
-				return result.New("input", "无法遍历上传目录；本批次未上传")
+				return result.New("input", i18n.T("Unable to traverse upload directory; batch not uploaded"))
 			}
 			if path != directory && strings.HasPrefix(entry.Name(), ".") {
 				if entry.IsDir() {
@@ -192,7 +193,7 @@ func collectIngestFiles(ctx context.Context, filenames []string, directory strin
 		}
 	}
 	if len(files) == 0 {
-		return nil, result.New("input", "目录中没有可上传的普通文件（点开头项和符号链接已跳过）")
+		return nil, result.New("input", i18n.T("No uploadable regular files in directory (dotfiles and symbolic links skipped)"))
 	}
 	return files, nil
 }

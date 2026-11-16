@@ -9,6 +9,7 @@ import (
 
 	"github.com/langbot-app/langbot-cli/internal/api"
 	"github.com/langbot-app/langbot-cli/internal/app"
+	"github.com/langbot-app/langbot-cli/internal/i18n"
 	"github.com/langbot-app/langbot-cli/internal/result"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -26,7 +27,7 @@ func memberOperation(identifier string) bool {
 func promptSecret(deps Dependencies, label string) (string, error) {
 	input, ok := deps.In.(*os.File)
 	if !ok {
-		return "", result.New("input", "需要终端输入"+label)
+		return "", result.New("input", i18n.T("Terminal input required")+label)
 	}
 	if !term.IsTerminal(int(input.Fd())) {
 		path := "/dev/tty"
@@ -35,7 +36,7 @@ func promptSecret(deps Dependencies, label string) (string, error) {
 		}
 		terminal, err := os.OpenFile(path, os.O_RDWR, 0)
 		if err != nil {
-			return "", result.New("input", "需要终端输入"+label)
+			return "", result.New("input", i18n.T("Terminal input required")+label)
 		}
 		defer terminal.Close()
 		input = terminal
@@ -44,7 +45,7 @@ func promptSecret(deps Dependencies, label string) (string, error) {
 	value, err := term.ReadPassword(int(input.Fd()))
 	fmt.Fprintln(deps.Err)
 	if err != nil {
-		return "", result.New("input", "读取"+label+"失败")
+		return "", result.New("input", i18n.T("Read")+label+i18n.T("Failed"))
 	}
 	return string(value), nil
 }
@@ -52,19 +53,19 @@ func promptSecret(deps Dependencies, label string) (string, error) {
 func stdinSecret(reader io.Reader) (string, error) {
 	data, err := io.ReadAll(io.LimitReader(reader, (64<<10)+1))
 	if err != nil || len(data) > 64<<10 || strings.TrimSpace(string(data)) == "" {
-		return "", result.New("input", "stdin 凭据为空、过大或读取失败")
+		return "", result.New("input", i18n.T("stdin credential is empty, too large or unreadable"))
 	}
 	return strings.TrimRight(string(data), "\r\n"), nil
 }
 
 func newAuthCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
-	root := &cobra.Command{Use: "auth", Short: "管理成员会话"}
+	root := &cobra.Command{Use: "auth", Short: i18n.T("Manage member sessions")}
 	var email string
 	var passwordStdin, totp, tokenStdin bool
-	login := &cobra.Command{Use: "login", Short: "登录本地账号并保存成员 token", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+	login := &cobra.Command{Use: "login", Short: i18n.T("Log in to a local account and save member token"), Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		return emitCall(deps, flags, func() (app.Result, error) {
 			if flags.apiKeyStdin {
-				return app.Result{}, result.New("input", "auth login 不使用 --api-key-stdin")
+				return app.Result{}, result.New("input", i18n.T("auth login does not use --api-key-stdin"))
 			}
 			conn, err := service.AuthConnection(connectionOptions(flags))
 			if err != nil {
@@ -81,7 +82,7 @@ func newAuthCommand(service *app.Service, deps Dependencies, flags *globalFlags)
 			}
 			prompt := func() (string, error) {
 				if !totp {
-					return "", result.New("auth", "需要 TOTP；请在终端重新运行 auth login --totp")
+					return "", result.New("auth", i18n.T("TOTP required; rerun auth login --totp in a terminal"))
 				}
 				return promptSecret(deps, "TOTP / recovery code")
 			}
@@ -92,13 +93,13 @@ func newAuthCommand(service *app.Service, deps Dependencies, flags *globalFlags)
 			return app.Result{Data: map[string]any{"context": conn.Context, "authenticated": err == nil}}, err
 		})
 	}}
-	login.Flags().StringVar(&email, "email", "", "账号邮箱")
-	login.Flags().BoolVar(&passwordStdin, "password-stdin", false, "从 stdin 读取密码")
-	login.Flags().BoolVar(&totp, "totp", false, "遇到二次验证时提示输入 TOTP / 恢复码")
+	login.Flags().StringVar(&email, "email", "", i18n.T("Account email"))
+	login.Flags().BoolVar(&passwordStdin, "password-stdin", false, i18n.T("Read password from stdin"))
+	login.Flags().BoolVar(&totp, "totp", false, i18n.T("Prompt for TOTP / recovery code when second-factor authentication is required"))
 	_ = login.MarkFlagRequired("email")
 	root.AddCommand(login)
 	for _, action := range []string{"set-token", "logout"} {
-		cmd := &cobra.Command{Use: action, Short: "保存或清除当前 context 的成员 token", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+		cmd := &cobra.Command{Use: action, Short: i18n.T("Save or clear the current context member token"), Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 			return emitCall(deps, flags, func() (app.Result, error) {
 				conn, err := service.AuthConnection(connectionOptions(flags))
 				if err != nil {
@@ -107,7 +108,7 @@ func newAuthCommand(service *app.Service, deps Dependencies, flags *globalFlags)
 				token := ""
 				if action == "set-token" {
 					if !tokenStdin || flags.apiKeyStdin {
-						return app.Result{}, result.New("input", "请使用 auth set-token --stdin，不可同时使用 --api-key-stdin")
+						return app.Result{}, result.New("input", i18n.T("Use auth set-token --stdin; cannot combine with --api-key-stdin"))
 					}
 					token, err = stdinSecret(deps.In)
 					if err != nil {
@@ -115,11 +116,11 @@ func newAuthCommand(service *app.Service, deps Dependencies, flags *globalFlags)
 					}
 				}
 				err = service.SaveMemberToken(cmd.Context(), conn, token)
-				return app.Result{Data: map[string]any{"context": conn.Context, "authenticated": action != "logout", "environment_override": "LANGBOT_USER_TOKEN 由调用者管理；logout 后请同时 unset"}}, err
+				return app.Result{Data: map[string]any{"context": conn.Context, "authenticated": action != "logout", "environment_override": i18n.T("LANGBOT_USER_TOKEN is caller-managed; unset it after logout")}}, err
 			})
 		}}
 		if action == "set-token" {
-			cmd.Flags().BoolVar(&tokenStdin, "stdin", false, "从 stdin 读取 token")
+			cmd.Flags().BoolVar(&tokenStdin, "stdin", false, i18n.T("Read token from stdin"))
 			_ = cmd.MarkFlagRequired("stdin")
 		}
 		root.AddCommand(cmd)

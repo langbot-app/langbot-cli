@@ -9,6 +9,7 @@ import (
 
 	"github.com/langbot-app/langbot-cli/internal/app"
 	"github.com/langbot-app/langbot-cli/internal/deploy"
+	"github.com/langbot-app/langbot-cli/internal/i18n"
 	"github.com/langbot-app/langbot-cli/internal/result"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -16,7 +17,7 @@ import (
 
 func newUpdateCommand(deps Dependencies, flags *globalFlags) *cobra.Command {
 	var check bool
-	cmd := &cobra.Command{Use: "update", Aliases: []string{"self-update"}, Short: "更新 lbctl", Args: cobra.NoArgs,
+	cmd := &cobra.Command{Use: "update", Aliases: []string{"self-update"}, Short: i18n.T("Update lbctl"), Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 3*time.Minute)
 			defer cancel()
@@ -27,11 +28,14 @@ func newUpdateCommand(deps Dependencies, flags *globalFlags) *cobra.Command {
 			return emitCommand(deps, flags, app.Result{Data: value}, err)
 		},
 	}
-	cmd.Flags().BoolVar(&check, "check", false, "仅检查更新，不安装")
+	cmd.Flags().BoolVar(&check, "check", false, i18n.T("Check for updates without installing"))
 	return cmd
 }
 
 func passiveUpdateNotice(deps Dependencies, flags *globalFlags) {
+	if flags.commandPath == "status" {
+		return
+	}
 	file, ok := deps.Err.(*os.File)
 	if !ok || !term.IsTerminal(int(file.Fd())) {
 		return

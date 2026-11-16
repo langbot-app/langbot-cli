@@ -7,12 +7,13 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/langbot-app/langbot-cli/internal/i18n"
 	"github.com/langbot-app/langbot-cli/internal/result"
 )
 
 func Normalize(value string) (string, error) {
 	invalid := func() (string, error) {
-		return "", result.New("input", "endpoint 必须是有效的 HTTP(S) 服务根地址，不含用户信息、查询或片段")
+		return "", result.New("input", i18n.T("endpoint must be a valid HTTP(S) service root URL without user info, query or fragment"))
 	}
 	if value == "" || strings.IndexFunc(value, unicode.IsControl) >= 0 || strings.ContainsAny(value, "\\#") {
 		return invalid()

@@ -62,12 +62,12 @@ func TestTemporaryEndpointDiscoveryDoesNotReuseCurrentContextKey(t *testing.T) {
 	deps := Dependencies{LookupEnv: environmentLookup, Transport: transport, LocalRunner: runner, LocalHTTP: localHTTP, LocalDir: localDir}
 	var out bytes.Buffer
 	deps.Out = &out
-	code := Execute(context.Background(), []string{"--config", configPath, "--endpoint", "http://127.0.0.1:5300", "--output", "json", "status"}, deps)
+	code := executeChinese(context.Background(), []string{"--config", configPath, "--endpoint", "http://127.0.0.1:5300", "--output", "json", "status"}, deps)
 	if code != 0 || requests != 1 || runner.calls == 0 || !strings.Contains(out.String(), `"management": "local_managed"`) || !strings.Contains(out.String(), `"name": "temporary"`) {
 		t.Fatalf("temporary local status failed: code=%d requests=%d output=%s", code, requests, out.String())
 	}
 	out.Reset()
-	code = Execute(context.Background(), []string{"--config", configPath, "--endpoint", "http://127.0.0.1:5300", "--output", "json", "whoami"}, deps)
+	code = executeChinese(context.Background(), []string{"--config", configPath, "--endpoint", "http://127.0.0.1:5300", "--output", "json", "whoami"}, deps)
 	if code != 3 || requests != 1 || !strings.Contains(out.String(), `"type": "auth"`) {
 		t.Fatalf("protected command accepted an anonymous endpoint override: code=%d requests=%d output=%s", code, requests, out.String())
 	}
@@ -81,7 +81,7 @@ func TestStatusReportsStoppedManagedDeploymentWithoutHTTP(t *testing.T) {
 		return nil, fmt.Errorf("connection refused")
 	})
 	var out bytes.Buffer
-	code := Execute(context.Background(), []string{"--config", configPath, "--endpoint", "http://127.0.0.1:5300", "--output", "json", "status"}, Dependencies{
+	code := executeChinese(context.Background(), []string{"--config", configPath, "--endpoint", "http://127.0.0.1:5300", "--output", "json", "status"}, Dependencies{
 		Out: &out, LookupEnv: environmentLookup, Transport: offline, LocalHTTP: &http.Client{Transport: offline}, LocalRunner: runner, LocalDir: localDir,
 	})
 	if code != 0 || runner.calls == 0 || !strings.Contains(out.String(), `"status": "stopped"`) || !strings.Contains(out.String(), `"discovery": "partial"`) {
@@ -93,7 +93,7 @@ func TestStatusDiscoversCloudWithoutDocker(t *testing.T) {
 	configPath := writeEnvironmentConfig(t, "https://cloud.example", "workspace-local")
 	runner := &recordingRunner{}
 	var out bytes.Buffer
-	code := Execute(context.Background(), []string{"--config", configPath, "--output", "json", "status"}, Dependencies{
+	code := executeChinese(context.Background(), []string{"--config", configPath, "--output", "json", "status"}, Dependencies{
 		Out: &out, LookupEnv: environmentLookup, Transport: discoveryTransport("cloud", false), LocalRunner: runner, LocalDir: filepath.Join(t.TempDir(), "deployment"),
 	})
 	if code != 0 || runner.calls != 0 {
@@ -109,15 +109,15 @@ func TestStatusDiscoversCloudWithoutDocker(t *testing.T) {
 func TestStatusDefaultOutputSummarizesActiveEnvironment(t *testing.T) {
 	configPath := writeEnvironmentConfig(t, "https://cloud.example", "workspace-local")
 	var out bytes.Buffer
-	code := Execute(context.Background(), []string{"--config", configPath, "status"}, Dependencies{
+	code := executeChinese(context.Background(), []string{"--config", configPath, "status"}, Dependencies{
 		Out: &out, LookupEnv: environmentLookup, Transport: discoveryTransport("cloud", false), LocalDir: filepath.Join(t.TempDir(), "deployment"),
 	})
 	if code != 0 {
 		t.Fatalf("default status failed: code=%d output=%s", code, out.String())
 	}
 	for _, expected := range []string{
-		"当前环境: active（LangBot 云端）", "连接: 已连接", "认证: 已验证",
-		"部署: LangBot 云端托管", "能力清单: 已获取", "加 -o json 或 -o yaml",
+		"当前环境：active（LangBot 云端）", "连接：已连接", "认证：已验证",
+		"部署：LangBot 云端托管", "能力清单：已获取", "加 -o json 或 -o yaml",
 	} {
 		if !strings.Contains(out.String(), expected) {
 			t.Fatalf("default status omitted %q: %s", expected, out.String())
@@ -132,7 +132,7 @@ func TestStatusKeepsLegacyDiscoveryPartial(t *testing.T) {
 	configPath := writeEnvironmentConfig(t, "https://legacy.example", "")
 	runner := &recordingRunner{}
 	var out bytes.Buffer
-	code := Execute(context.Background(), []string{"--config", configPath, "--output", "json", "status"}, Dependencies{
+	code := executeChinese(context.Background(), []string{"--config", configPath, "--output", "json", "status"}, Dependencies{
 		Out: &out, LookupEnv: environmentLookup, Transport: discoveryTransport("cloud", true), LocalRunner: runner, LocalDir: filepath.Join(t.TempDir(), "deployment"),
 	})
 	if code != 0 || runner.calls != 0 {
@@ -163,7 +163,7 @@ func TestStatusMatchesManagedSelfHostedDeployment(t *testing.T) {
 		return response(http.StatusOK, `{}`), nil
 	})}
 	var out bytes.Buffer
-	code := Execute(context.Background(), []string{"--config", configPath, "--output", "json", "status"}, Dependencies{
+	code := executeChinese(context.Background(), []string{"--config", configPath, "--output", "json", "status"}, Dependencies{
 		Out: &out, LookupEnv: environmentLookup, Transport: discoveryTransport("community", false), LocalRunner: runner, LocalHTTP: localHTTP, LocalDir: localDir,
 	})
 	if code != 0 || runner.calls == 0 {
@@ -180,7 +180,7 @@ func TestDoctorRoutesCloudWithoutDocker(t *testing.T) {
 	configPath := writeEnvironmentConfig(t, "https://cloud.example", "workspace-local")
 	runner := &recordingRunner{}
 	var out bytes.Buffer
-	code := Execute(context.Background(), []string{"--config", configPath, "--output", "json", "doctor"}, Dependencies{
+	code := executeChinese(context.Background(), []string{"--config", configPath, "--output", "json", "doctor"}, Dependencies{
 		Out: &out, LookupEnv: environmentLookup, Transport: discoveryTransport("cloud", false), LocalRunner: runner, LocalDir: filepath.Join(t.TempDir(), "deployment"),
 	})
 	if code != 0 || runner.calls != 0 || !strings.Contains(out.String(), `"runtime_binding"`) {
@@ -198,7 +198,7 @@ func TestStatusUsesVerifiedBindingWhenEditionIsUnknown(t *testing.T) {
 		return response(http.StatusOK, `{}`), nil
 	})}
 	var out bytes.Buffer
-	code := Execute(context.Background(), []string{"--config", configPath, "--output", "json", "status"}, Dependencies{
+	code := executeChinese(context.Background(), []string{"--config", configPath, "--output", "json", "status"}, Dependencies{
 		Out: &out, LookupEnv: environmentLookup, Transport: discoveryTransport("custom", false), LocalRunner: runner, LocalHTTP: localHTTP, LocalDir: localDir,
 	})
 	if code != 0 || runner.calls == 0 {
@@ -218,7 +218,7 @@ func TestStatusDoesNotUseEndpointFallbackAfterInstanceMismatch(t *testing.T) {
 	})
 	runner := &recordingRunner{}
 	var out bytes.Buffer
-	code := Execute(context.Background(), []string{"--config", configPath, "--output", "json", "status"}, Dependencies{
+	code := executeChinese(context.Background(), []string{"--config", configPath, "--output", "json", "status"}, Dependencies{
 		Out: &out, LookupEnv: environmentLookup, Transport: discoveryTransport("community", false), LocalRunner: runner, LocalDir: localDir,
 	})
 	if code != 0 || runner.calls != 0 {
@@ -236,7 +236,7 @@ func TestStatusDoesNotClaimNativeLifecycleSupport(t *testing.T) {
 	})
 	runner := &recordingRunner{}
 	var out bytes.Buffer
-	code := Execute(context.Background(), []string{"--config", configPath, "--output", "json", "status"}, Dependencies{
+	code := executeChinese(context.Background(), []string{"--config", configPath, "--output", "json", "status"}, Dependencies{
 		Out: &out, LookupEnv: environmentLookup, Transport: discoveryTransport("community", false), LocalRunner: runner, LocalDir: localDir,
 	})
 	if code != 0 || runner.calls != 0 {
@@ -284,7 +284,7 @@ func TestStatusSharesOneLocalRuntimeAcrossWorkspaceContexts(t *testing.T) {
 	}
 	for _, contextName := range []string{"workspace-a", "workspace-b"} {
 		var out bytes.Buffer
-		code := Execute(context.Background(), []string{"--config", configPath, "--context", contextName, "--output", "json", "status"}, Dependencies{
+		code := executeChinese(context.Background(), []string{"--config", configPath, "--context", contextName, "--output", "json", "status"}, Dependencies{
 			Out: &out, LookupEnv: lookup, Transport: transport, LocalRunner: runner, LocalHTTP: localHTTP, LocalDir: localDir,
 		})
 		if code != 0 || !strings.Contains(out.String(), `"workspace_uuid": "`+contextName+`"`) || !strings.Contains(out.String(), `"management": "local_managed"`) {
@@ -307,7 +307,7 @@ func TestStatusUsesManagedLocalRecordWhenNoContextIsSelected(t *testing.T) {
 		return response(http.StatusOK, `{}`), nil
 	})}
 	var out bytes.Buffer
-	code := Execute(context.Background(), []string{"--config", configPath, "--output", "json", "status"}, Dependencies{
+	code := executeChinese(context.Background(), []string{"--config", configPath, "--output", "json", "status"}, Dependencies{
 		Out: &out, LookupEnv: func(string) (string, bool) { return "", false }, Transport: discoveryTransport("community", false),
 		LocalRunner: runner, LocalHTTP: localHTTP, LocalDir: localDir,
 	})
@@ -329,7 +329,7 @@ func TestDoctorRunsLocalPreflightWithoutAConfiguredTarget(t *testing.T) {
 	localDir := filepath.Join(t.TempDir(), "missing", "deployment")
 	preflightRunner := &preflightRecordingRunner{}
 	var out bytes.Buffer
-	code := Execute(context.Background(), []string{"--config", configPath, "--output", "json", "doctor"}, Dependencies{
+	code := executeChinese(context.Background(), []string{"--config", configPath, "--output", "json", "doctor"}, Dependencies{
 		Out: &out, LookupEnv: func(string) (string, bool) { return "", false }, Transport: runnerTransport,
 		LocalRunner: preflightRunner, LocalDir: localDir,
 	})
@@ -380,7 +380,7 @@ func TestStatusTimeoutBoundsManagedDockerCall(t *testing.T) {
 	runner := &recordingRunner{blocking: true}
 	var out bytes.Buffer
 	started := time.Now()
-	code := Execute(context.Background(), []string{"--config", configPath, "--timeout", "20ms", "status"}, Dependencies{
+	code := executeChinese(context.Background(), []string{"--config", configPath, "--timeout", "20ms", "status"}, Dependencies{
 		Out: &out, LookupEnv: environmentLookup, Transport: discoveryTransport("community", false), LocalRunner: runner, LocalDir: localDir,
 	})
 	if code != 7 || time.Since(started) > time.Second || !strings.Contains(out.String(), "Docker daemon 不可达") {
@@ -466,7 +466,7 @@ func TestUpgradeRequiresExplicitConfirmation(t *testing.T) {
 		{[]string{"upgrade", "--version", "latest", "--yes"}, 2, "稳定 Release tag"},
 	} {
 		var out bytes.Buffer
-		code := Execute(context.Background(), append([]string{"--output", "json"}, test.args...), Dependencies{
+		code := executeChinese(context.Background(), append([]string{"--output", "json"}, test.args...), Dependencies{
 			Out: &out, LocalRunner: runner, LocalDir: filepath.Join(t.TempDir(), "deployment"),
 		})
 		if code != test.code || !strings.Contains(out.String(), test.want) || runner.calls != 0 {
@@ -478,7 +478,7 @@ func TestUpgradeRequiresExplicitConfirmation(t *testing.T) {
 func TestUninstallRequiresExplicitConfirmationBeforeDocker(t *testing.T) {
 	runner := &recordingRunner{}
 	var out bytes.Buffer
-	code := Execute(context.Background(), []string{"--output", "json", "uninstall"}, Dependencies{
+	code := executeChinese(context.Background(), []string{"--output", "json", "uninstall"}, Dependencies{
 		Out: &out, LocalRunner: runner, LocalDir: filepath.Join(t.TempDir(), "deployment"),
 	})
 	if code != 6 || runner.calls != 0 || !strings.Contains(out.String(), "--yes") {

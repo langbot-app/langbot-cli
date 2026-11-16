@@ -19,6 +19,19 @@ var cliPrivatePatterns = []*regexp.Regexp{
 }
 var cliIPv6 = regexp.MustCompile(`[a-fA-F0-9:]*:[a-fA-F0-9:]+(?:%[a-zA-Z0-9]+)?`)
 
+func sanitizeIdentity(value, home string, usernames []string) string {
+	patterns := []string{`\[redacted\]`}
+	if home != "" {
+		patterns = append(patterns, regexp.QuoteMeta(home))
+	}
+	for _, username := range usernames {
+		if utf8.RuneCountInString(username) >= 3 {
+			patterns = append(patterns, `\b`+regexp.QuoteMeta(username)+`\b`)
+		}
+	}
+	return regexp.MustCompile(strings.Join(patterns, "|")).ReplaceAllString(value, "[redacted]")
+}
+
 func SanitizeError(value string) string {
 	for _, pattern := range cliPrivatePatterns {
 		value = pattern.ReplaceAllString(value, "[redacted]")

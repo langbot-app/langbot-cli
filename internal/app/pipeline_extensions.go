@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"github.com/langbot-app/langbot-cli/internal/api"
+	"github.com/langbot-app/langbot-cli/internal/i18n"
 	"github.com/langbot-app/langbot-cli/internal/result"
 	"net/http"
 	"net/url"
@@ -20,24 +21,24 @@ func (s *Service) PipelineExtensionsUpdate(ctx context.Context, id string, body 
 	for _, field := range fields {
 		value, exists := body[field]
 		if !exists {
-			return Result{}, result.New("input", "扩展绑定为完整替换，必须提供字段 "+field)
+			return Result{}, result.New("input", i18n.T("Extension bindings replace all values; required field: ")+field)
 		}
 		if strings.HasPrefix(field, "bound_") {
 			items, ok := value.([]any)
 			if !ok {
-				return Result{}, result.New("input", field+" 必须是数组")
+				return Result{}, result.New("input", field+i18n.T(" must be an array"))
 			}
 			for _, item := range items {
 				if field == "bound_plugins" || field == "bound_mcp_resources" {
 					if _, ok := item.(map[string]any); !ok {
-						return Result{}, result.New("input", field+" 必须是对象数组")
+						return Result{}, result.New("input", field+i18n.T(" must be an array of objects"))
 					}
 				} else if name, ok := item.(string); !ok || strings.TrimSpace(name) == "" {
-					return Result{}, result.New("input", field+" 必须是非空字符串数组")
+					return Result{}, result.New("input", field+i18n.T(" must be a non-empty array of strings"))
 				}
 			}
 		} else if _, ok := value.(bool); !ok {
-			return Result{}, result.New("input", field+" 必须是布尔值")
+			return Result{}, result.New("input", field+i18n.T(" must be a boolean"))
 		}
 	}
 	preflight, err := s.writePreflight(ctx, "pipeline.extensions.update", "resource.manage", options)
@@ -59,7 +60,7 @@ func (s *Service) PipelineExtensionsUpdate(ctx context.Context, id string, body 
 	}
 	actual, ok := data.(map[string]any)
 	if !ok || !observableFieldsEqual(body, actual, fields...) {
-		return value, verificationError("扩展绑定回读结果与请求不一致")
+		return value, verificationError(i18n.T("Extension binding readback does not match the request"))
 	}
 	return value, nil
 }

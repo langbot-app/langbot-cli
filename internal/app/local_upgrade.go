@@ -11,6 +11,8 @@ import (
 
 	"github.com/langbot-app/langbot-cli/internal/api"
 	"github.com/langbot-app/langbot-cli/internal/deploy"
+	"github.com/langbot-app/langbot-cli/internal/i18n"
+	"github.com/langbot-app/langbot-cli/internal/progress"
 	"github.com/langbot-app/langbot-cli/internal/result"
 	"github.com/langbot-app/langbot-cli/internal/telemetry"
 )
@@ -28,7 +30,7 @@ type UpgradeOptions struct {
 
 func (s *Service) Upgrade(ctx context.Context, options UpgradeOptions) (Result, error) {
 	if !options.DryRun && !options.Yes {
-		return Result{}, result.New("precondition", "升级需要显式 --yes")
+		return Result{}, result.New("precondition", i18n.T("Upgrade requires explicit --yes"))
 	}
 	targetVersion := strings.TrimSpace(options.Version)
 	telemetry.SetStep(ctx, "resolve_version")
@@ -53,7 +55,11 @@ func (s *Service) Upgrade(ctx context.Context, options UpgradeOptions) (Result, 
 		return Result{}, err
 	}
 	var response Result
+	preview := record
+	preview.CoreVersion = targetVersion
+	s.deploymentContext(ctx, preview, diagnostics.Dir, "stored")
 	if record.Driver == deploy.DriverNative {
+		progress.Plan(ctx, 12)
 		data := map[string]any{"action": "upgrade", "version": targetVersion, "driver": record.Driver, "dry_run": options.DryRun,
 			"source_version": record.CoreVersion, "target_version": targetVersion}
 		if options.DryRun {
@@ -65,7 +71,7 @@ func (s *Service) Upgrade(ctx context.Context, options UpgradeOptions) (Result, 
 				return err
 			}
 			if current.DeploymentID != record.DeploymentID {
-				return result.New("precondition", "deployment changed")
+				return result.New("precondition", i18n.T("deployment changed"))
 			}
 			backup, err := deploy.UpgradeNative(operationCtx, diagnostics.Dir, current, targetVersion, s.nativeOutput(), s.deps.LocalHTTP)
 			data["backup_dir"] = backup
@@ -80,14 +86,14 @@ func (s *Service) Upgrade(ctx context.Context, options UpgradeOptions) (Result, 
 		}
 		current, readErr := diagnostics.Store.Read()
 		if readErr != nil || current.DeploymentID != record.DeploymentID {
-			return result.New("precondition", "本机部署绑定已变更")
+			return result.New("precondition", i18n.T("Local deployment binding changed"))
 		}
 		comparison, compareErr := deploy.CompareReleaseVersions(current.CoreVersion, targetVersion)
 		if compareErr != nil {
 			return result.New("input", compareErr.Error())
 		}
 		if comparison >= 0 {
-			return result.New("precondition", "目标版本必须高于当前版本")
+			return result.New("precondition", i18n.T("Target version must be newer than current version"))
 		}
 		compose, targetComposeDigest, composeErr := deploy.ComposeForUpgrade(current, diagnostics.Dir, targetVersion)
 		if composeErr != nil {
@@ -96,7 +102,7 @@ func (s *Service) Upgrade(ctx context.Context, options UpgradeOptions) (Result, 
 		if deploy.IsAdoptedLayout(current) {
 			resolved, err := diagnostics.Runner.Compose(operationCtx, current, "config", "--format", "json")
 			if err != nil {
-				return result.New("precondition", "无法解析接管部署的 Compose 配置")
+				return result.New("precondition", i18n.T("Unable to parse adopted Compose configuration"))
 			}
 			if err := deploy.ValidateAdoptedUpgradeConfig(current, resolved.Stdout); err != nil {
 				return result.New("precondition", err.Error())
@@ -104,15 +110,15 @@ func (s *Service) Upgrade(ctx context.Context, options UpgradeOptions) (Result, 
 		}
 		before, statusErr := diagnostics.Status(operationCtx)
 		if statusErr != nil || (before.Status != "running" && before.Status != "stopped") {
-			return result.New("precondition", "无法确认本机部署处于正常运行或停止状态")
+			return result.New("precondition", i18n.T("Unable to confirm local deployment is running normally or stopped"))
 		}
 		if before.Status == "running" {
 			info, infoErr := (api.Client{Transport: s.deps.Transport}).Info(operationCtx, api.Target{Endpoint: current.Endpoint, Timeout: 5 * time.Second})
 			if infoErr != nil || info.Version != current.CoreVersion {
-				return result.New("precondition", "运行中的 Core 版本与部署记录不一致")
+				return result.New("precondition", i18n.T("Running Core version does not match deployment record"))
 			}
 		} else if before.HTTP["reachable"] == true {
-			return result.New("precondition", "部署已停止，但 endpoint 被其他服务占用")
+			return result.New("precondition", i18n.T("Deployment stopped but endpoint is occupied by another service"))
 		}
 		dataBytes, freeBytes, dataErr := deploy.InspectUpgradeData(current)
 		if dataErr != nil {
@@ -120,14 +126,14 @@ func (s *Service) Upgrade(ctx context.Context, options UpgradeOptions) (Result, 
 		}
 		oldCompose, readErr := os.ReadFile(current.ComposeFile)
 		if readErr != nil {
-			return result.New("precondition", "无法读取当前 Compose 资产")
+			return result.New("precondition", i18n.T("Unable to read current Compose assets"))
 		}
 		sourceImage, err := deploy.ComposeSourceImage(oldCompose)
 		if err != nil {
 			return result.New("precondition", err.Error())
 		}
 		if deploy.IsAdoptedLayout(current) && composeDigest(oldCompose) != current.Asset.Digest {
-			return result.New("precondition", "接管后的 Compose 资产已变更，请重新 adopt 确认后升级")
+			return result.New("precondition", i18n.T("Adopted Compose assets changed; run adopt again before upgrading"))
 		}
 		sum := sha256.Sum256(oldCompose)
 		state := deploy.UpgradeState{
@@ -150,32 +156,34 @@ func (s *Service) Upgrade(ctx context.Context, options UpgradeOptions) (Result, 
 			return nil
 		}
 		// 官方镜像由 LangBot Release 发布流程生成；校验摘要后才停服。
+		telemetry.SetStep(operationCtx, "pull_image")
 		pulled, pullErr := diagnostics.Runner.Docker(operationCtx, "pull", state.TargetImage)
 		if pullErr != nil {
-			return mapDockerCommandError(pulled, pullErr, "拉取目标官方镜像失败，部署未修改")
+			return mapDockerCommandError(pulled, pullErr, i18n.T("Failed to pull target official images; deployment unchanged"))
 		}
 		inspected, inspectErr := diagnostics.Runner.Docker(operationCtx, "image", "inspect", "--format", "{{index .RepoDigests 0}}", state.TargetImage)
 		if inspectErr != nil {
-			return result.New("precondition", "无法验证目标镜像摘要，部署未修改")
+			return result.New("precondition", i18n.T("Unable to verify target image digest; deployment unchanged"))
 		}
 		state.TargetDigest = repositoryDigest(inspected.Stdout)
 		if !imageDigestPattern.MatchString(state.TargetDigest) {
-			return result.New("precondition", "目标镜像没有可验证的仓库摘要，部署未修改")
+			return result.New("precondition", i18n.T("Target image has no verifiable repository digest; deployment unchanged"))
 		}
 		plan["image_verification"] = "verified"
 		plan["target_image_digest"] = state.TargetDigest
 		latestCompose, err := os.ReadFile(current.ComposeFile)
 		if err != nil || composeDigest(latestCompose) != state.SourceCompose {
-			return result.New("precondition", "拉取镜像期间 Compose 资产已变更，部署未修改")
+			return result.New("precondition", i18n.T("Compose assets changed while pulling images; deployment unchanged"))
 		}
 		state.Phase = "image_verified"
 		if err := deploy.WriteUpgradeState(diagnostics.Dir, state); err != nil {
-			return result.New("server", "无法记录升级现场，部署未修改")
+			return result.New("server", i18n.T("Unable to record upgrade state; deployment unchanged"))
 		}
 		update := func(phase string) error {
+			telemetry.SetStep(operationCtx, phase)
 			state.Phase = phase
 			if err := deploy.WriteUpgradeState(diagnostics.Dir, state); err != nil {
-				return result.New("recovery_required", "无法持久化升级阶段，请检查现场")
+				return result.New("recovery_required", i18n.T("Unable to persist upgrade stage; inspect deployment state"))
 			}
 			return nil
 		}
@@ -185,7 +193,7 @@ func (s *Service) Upgrade(ctx context.Context, options UpgradeOptions) (Result, 
 			state.FailureStep = step
 			_ = deploy.WriteUpgradeState(diagnostics.Dir, state)
 			plan["upgrade"] = state
-			return result.New("recovery_required", message+"；请运行 status 和 doctor 检查现场")
+			return result.New("recovery_required", message+i18n.T("; run status and doctor to inspect deployment state"))
 		}
 		if err := update("stopping"); err != nil {
 			return err
@@ -194,7 +202,7 @@ func (s *Service) Upgrade(ctx context.Context, options UpgradeOptions) (Result, 
 			stopped, stopErr := diagnostics.Runner.Compose(operationCtx, current, "stop")
 			if stopErr != nil {
 				_ = stopped
-				return fail("stop", "停服结果无法确认")
+				return fail("stop", i18n.T("Unable to confirm services stopped"))
 			}
 		}
 		if err := update("stopped"); err != nil {
@@ -202,14 +210,15 @@ func (s *Service) Upgrade(ctx context.Context, options UpgradeOptions) (Result, 
 		}
 		stoppedStatus, stoppedErr := diagnostics.Status(operationCtx)
 		if stoppedErr != nil || stoppedStatus.Status != "stopped" {
-			return fail("stop_readback", "未能确认所有必需服务已停止")
+			return fail("stop_readback", i18n.T("Unable to confirm all required services stopped"))
 		}
 		if _, _, err := deploy.InspectUpgradeData(current); err != nil {
-			return fail("backup_preflight", "停服后数据范围或空间检查失败")
+			return fail("backup_preflight", i18n.T("Data scope or space check failed after stopping services"))
 		}
+		telemetry.SetStep(operationCtx, "backup_data")
 		backupDir, backupErr := deploy.CreateUpgradeBackup(operationCtx, current, state, diagnostics.Dir)
 		if backupErr != nil {
-			return fail("backup", "创建或验证完整备份失败")
+			return fail("backup", i18n.T("Failed to create or verify a complete backup"))
 		}
 		state.BackupDir = backupDir
 		plan["backup_dir"] = backupDir
@@ -221,13 +230,13 @@ func (s *Service) Upgrade(ctx context.Context, options UpgradeOptions) (Result, 
 		}
 		latestCompose, err = os.ReadFile(current.ComposeFile)
 		if err != nil || !strings.EqualFold(state.SourceCompose, composeDigest(latestCompose)) {
-			return fail("compose_changed", "备份期间 Compose 资产已变更")
+			return fail("compose_changed", i18n.T("Compose assets changed during backup"))
 		}
 		if err := deploy.WriteUpgradeCompose(current, compose); err != nil {
-			return fail("compose_switch", "替换 Compose 资产失败")
+			return fail("compose_switch", i18n.T("Failed to replace Compose assets"))
 		}
 		if err := deploy.WriteDeployIdentity(current, s.deps.Version); err != nil {
-			return fail("environment_switch", "更新部署来源环境变量失败")
+			return fail("environment_switch", i18n.T("Failed to update deployment source environment variables"))
 		}
 		if err := update("compose_switched"); err != nil {
 			return err
@@ -236,17 +245,17 @@ func (s *Service) Upgrade(ctx context.Context, options UpgradeOptions) (Result, 
 			return err
 		}
 		if _, err := diagnostics.Runner.Compose(operationCtx, current, "up", "-d", "--pull", "never"); err != nil {
-			return fail("compose_up", "启动目标版本失败")
+			return fail("compose_up", i18n.T("Failed to start the target version"))
 		}
 		if err := update("verifying"); err != nil {
 			return err
 		}
-		if err := s.waitForLocalVersion(operationCtx, current.Endpoint, targetVersion); err != nil {
-			return fail("http_version", "目标版本 HTTP 健康或版本验证失败")
+		if err := s.waitForLocalVersion(operationCtx, current, targetVersion); err != nil {
+			return fail("http_version", i18n.T("Target HTTP health or version verification failed"))
 		}
 		finalStatus, finalErr := diagnostics.Status(operationCtx)
 		if finalErr != nil || finalStatus.Status != "running" {
-			return fail("service_health", "目标版本必需服务未全部就绪")
+			return fail("service_health", i18n.T("Not all required target services are ready"))
 		}
 		current.CoreVersion = targetVersion
 		if deploy.IsAdoptedLayout(current) {
@@ -255,7 +264,7 @@ func (s *Service) Upgrade(ctx context.Context, options UpgradeOptions) (Result, 
 			current.Asset = deploy.AssetInfo{Name: state.TargetImage, Digest: state.TargetDigest}
 		}
 		if err := diagnostics.Store.Write(operationCtx, current); err != nil {
-			return fail("record_write", "写入目标版本部署记录失败")
+			return fail("record_write", i18n.T("Failed to write target version deployment record"))
 		}
 		if err := update("completed"); err != nil {
 			return err
@@ -277,11 +286,12 @@ func composeDigest(content []byte) string {
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
-func (s *Service) waitForLocalVersion(ctx context.Context, endpoint, version string) error {
+func (s *Service) waitForLocalVersion(ctx context.Context, record deploy.Record, version string) error {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
-		info, err := (api.Client{Transport: s.deps.Transport}).Info(ctx, api.Target{Endpoint: endpoint, Timeout: 5 * time.Second})
+		s.coreHealthProgress(ctx, record)
+		info, err := (api.Client{Transport: s.deps.Transport}).Info(ctx, api.Target{Endpoint: record.Endpoint, Timeout: 5 * time.Second})
 		if err == nil && info.Version == version {
 			return nil
 		}

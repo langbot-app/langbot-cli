@@ -14,7 +14,8 @@ fixtures = str(Path(__file__).resolve().parent / "testdata")
 def run_case(name, path, terminal):
     with tempfile.TemporaryDirectory(prefix="lbctl-wizard-") as home:
         env = dict(os.environ, PATH=path, LANGBOT_HOME=home + "/instances-root",
-                   XDG_CONFIG_HOME=home + "/config", LANG="en_US.UTF-8", LBCTL_NO_UPDATE_CHECK="1")
+                   HOME=home, XDG_CONFIG_HOME=home + "/config", LANG=os.environ.get("LANG", "C"),
+                   LANGBOT_TELEMETRY="0", LBCTL_NO_UPDATE_CHECK="1")
         args = [binary, "install", "--version", "v4.11.8", "--region", "global", "--dry-run", "--output", "json"]
         if not terminal:
             result = subprocess.run(args, env=env, capture_output=True, text=True, timeout=20)
@@ -38,7 +39,7 @@ def run_case(name, path, terminal):
                     if not chunk:
                         break
                     output.extend(chunk)
-                    if b"Select [1]:" in output and not answered:
+                    if (b"Select [1]:" in output or "请选择 [1]：".encode() in output) and not answered:
                         os.write(master, b"\n")
                         answered = True
                 if process.poll() is not None:
@@ -49,7 +50,7 @@ def run_case(name, path, terminal):
             assert '"driver": "native"' in text, text
             assert answered == (name == "docker-available"), text
             if name == "docker-unavailable":
-                assert "using native deployment" in text, text
+                assert "using native deployment" in text or "将使用原生部署" in text, text
             print(name + ": PASS\n" + text)
         finally:
             if process.poll() is None:

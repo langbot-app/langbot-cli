@@ -37,7 +37,7 @@ func invokeRawLookup(path string, env map[string]string, lookup func(string) (st
 
 func invokeRawLookupContext(ctx context.Context, path string, env map[string]string, lookup func(string) (string, bool), in io.Reader, args ...string) (int, string, string, error) {
 	var out, diagnostic bytes.Buffer
-	code := command.Execute(ctx, args, command.Dependencies{
+	code := command.Execute(ctx, append([]string{"--lang", "zh-Hans"}, args...), command.Dependencies{
 		In: in, Out: &out, Err: &diagnostic,
 		LookupEnv:         lookup,
 		DefaultConfigPath: func() (string, error) { return path, nil },

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/langbot-app/langbot-cli/internal/api"
+	"github.com/langbot-app/langbot-cli/internal/i18n"
 	"github.com/langbot-app/langbot-cli/internal/result"
 )
 
@@ -37,10 +38,10 @@ func (s *Service) ProviderGet(ctx context.Context, uuid string, options CheckOpt
 
 func (s *Service) ProviderCreate(ctx context.Context, body map[string]any, dryRun bool, options CheckOptions) (Result, error) {
 	if body == nil {
-		return Result{}, result.New("input", "Provider 请求体必须是 JSON object")
+		return Result{}, result.New("input", i18n.T("Provider request body must be a JSON object"))
 	}
 	if _, exists := body["uuid"]; exists {
-		return Result{}, result.New("input", "创建 Provider 时不能指定 uuid")
+		return Result{}, result.New("input", i18n.T("Cannot specify uuid when creating a Provider"))
 	}
 	preflight, err := s.writePreflight(ctx, "provider.create", "provider_secret.manage", options)
 	if err != nil {
@@ -60,7 +61,7 @@ func (s *Service) ProviderCreate(ctx context.Context, body map[string]any, dryRu
 		return Result{Data: data, Meta: preflight.Meta()}, readbackError(err)
 	}
 	if !observableFieldsEqual(body, provider, "name", "requester") {
-		return Result{Data: data, Meta: preflight.Meta()}, verificationError("创建后回读到的 Provider 内容不一致")
+		return Result{Data: data, Meta: preflight.Meta()}, verificationError(i18n.T("Provider content differs after creation"))
 	}
 	data["provider"] = provider
 	data["verified"] = true
@@ -72,13 +73,13 @@ func (s *Service) ProviderUpdate(ctx context.Context, uuid string, body map[stri
 		return Result{}, err
 	}
 	if body == nil {
-		return Result{}, result.New("input", "Provider 请求体必须是 JSON object")
+		return Result{}, result.New("input", i18n.T("Provider request body must be a JSON object"))
 	}
 	if err := validateBodyUUID(body, uuid); err != nil {
 		return Result{}, err
 	}
 	if len(withoutUUID(body)) == 0 {
-		return Result{}, result.New("input", "Provider 更新请求没有可修改字段")
+		return Result{}, result.New("input", i18n.T("Provider update contains no editable fields"))
 	}
 	preflight, err := s.writePreflight(ctx, "provider.update", "provider_secret.manage", options)
 	if err != nil {
@@ -97,7 +98,7 @@ func (s *Service) ProviderUpdate(ctx context.Context, uuid string, body map[stri
 		return Result{Data: data, Meta: preflight.Meta()}, readbackError(err)
 	}
 	if !observableFieldsEqual(body, provider, "name", "requester") {
-		return Result{Data: data, Meta: preflight.Meta()}, verificationError("更新后回读到的 Provider 内容不一致")
+		return Result{Data: data, Meta: preflight.Meta()}, verificationError(i18n.T("Provider content differs after update"))
 	}
 	data["provider"] = provider
 	data["verified"] = true
@@ -109,7 +110,7 @@ func (s *Service) ProviderDelete(ctx context.Context, uuid string, confirmed, dr
 		return Result{}, err
 	}
 	if !dryRun && !confirmed {
-		return Result{}, result.New("input", "删除 Provider 需要 --yes")
+		return Result{}, result.New("input", i18n.T("Deleting a Provider requires --yes"))
 	}
 	preflight, err := s.writePreflight(ctx, "provider.delete", "resource.manage", options)
 	if err != nil {
@@ -131,7 +132,7 @@ func (s *Service) ProviderDelete(ctx context.Context, uuid string, confirmed, dr
 	if err != nil {
 		return Result{Data: data, Meta: preflight.Meta()}, readbackError(err)
 	}
-	return Result{Data: data, Meta: preflight.Meta()}, verificationError("删除后 Provider 仍可读取")
+	return Result{Data: data, Meta: preflight.Meta()}, verificationError(i18n.T("Provider is still readable after deletion"))
 }
 
 func (s *Service) ProviderScanModels(ctx context.Context, uuid, modelType string, dryRun bool, options CheckOptions) (Result, error) {
@@ -140,7 +141,7 @@ func (s *Service) ProviderScanModels(ctx context.Context, uuid, modelType string
 	}
 	if modelType != "" {
 		if modelType != api.ModelTypeLLM && modelType != api.ModelTypeEmbedding && modelType != api.ModelTypeRerank {
-			return Result{}, result.New("input", "provider scan-models type 必须是 llm、embedding 或 rerank")
+			return Result{}, result.New("input", i18n.T("provider scan-models type must be llm, embedding or rerank"))
 		}
 	}
 	preflight, err := s.writePreflight(ctx, "provider.scan_models", "provider_secret.manage", options)
@@ -183,7 +184,7 @@ func (s *Service) probeAudioModel(ctx context.Context, preflight *WritePreflight
 	_, err := (api.Client{Transport: s.deps.Transport}).Models(ctx, readTarget(*preflight), parts[1], "")
 	if err != nil {
 		if result.AsError(err).HTTPStatus == 404 || result.AsError(err).HTTPStatus == 405 {
-			return result.New("incompatible", "当前 Core 未提供 "+parts[1]+" 模型路由")
+			return result.New("incompatible", i18n.T("Current Core does not provide ")+parts[1]+i18n.T(" model routing"))
 		}
 		return err
 	}
@@ -265,10 +266,10 @@ func (s *Service) ModelCreate(ctx context.Context, modelType string, body map[st
 		return Result{}, err
 	}
 	if body == nil {
-		return Result{}, result.New("input", "Model 请求体必须是 JSON object")
+		return Result{}, result.New("input", i18n.T("Model request body must be a JSON object"))
 	}
 	if _, exists := body["uuid"]; exists {
-		return Result{}, result.New("input", "创建 Model 时不能指定 uuid")
+		return Result{}, result.New("input", i18n.T("Cannot specify uuid when creating a Model"))
 	}
 	operation := "model." + modelType + ".create"
 	preflight, err := s.writePreflight(ctx, operation, "provider_secret.manage", options)
@@ -290,7 +291,7 @@ func (s *Service) ModelCreate(ctx context.Context, modelType string, body map[st
 		return Result{Data: data, Meta: preflight.Meta()}, readbackError(err)
 	}
 	if !observableModelFieldsEqual(body, model) {
-		return Result{Data: data, Meta: preflight.Meta()}, verificationError("创建后回读到的 Model 内容不一致")
+		return Result{Data: data, Meta: preflight.Meta()}, verificationError(i18n.T("Model content differs after creation"))
 	}
 	data["model"] = model
 	data["verified"] = true
@@ -305,13 +306,13 @@ func (s *Service) ModelUpdate(ctx context.Context, modelType, uuid string, body 
 		return Result{}, err
 	}
 	if body == nil {
-		return Result{}, result.New("input", "Model 请求体必须是 JSON object")
+		return Result{}, result.New("input", i18n.T("Model request body must be a JSON object"))
 	}
 	if err := validateBodyUUID(body, uuid); err != nil {
 		return Result{}, err
 	}
 	if len(withoutUUID(body)) == 0 {
-		return Result{}, result.New("input", "Model 更新请求没有可修改字段")
+		return Result{}, result.New("input", i18n.T("Model update contains no editable fields"))
 	}
 	operation := "model." + modelType + ".update"
 	preflight, err := s.writePreflight(ctx, operation, "provider_secret.manage", options)
@@ -332,7 +333,7 @@ func (s *Service) ModelUpdate(ctx context.Context, modelType, uuid string, body 
 		return Result{Data: data, Meta: preflight.Meta()}, readbackError(err)
 	}
 	if !observableModelFieldsEqual(body, model) {
-		return Result{Data: data, Meta: preflight.Meta()}, verificationError("更新后回读到的 Model 内容不一致")
+		return Result{Data: data, Meta: preflight.Meta()}, verificationError(i18n.T("Model content differs after update"))
 	}
 	data["model"] = model
 	data["verified"] = true
@@ -347,7 +348,7 @@ func (s *Service) ModelDelete(ctx context.Context, modelType, uuid string, confi
 		return Result{}, err
 	}
 	if !dryRun && !confirmed {
-		return Result{}, result.New("input", "删除 Model 需要 --yes")
+		return Result{}, result.New("input", i18n.T("Deleting a Model requires --yes"))
 	}
 	operation := "model." + modelType + ".delete"
 	preflight, err := s.writePreflight(ctx, operation, "resource.manage", options)
@@ -371,7 +372,7 @@ func (s *Service) ModelDelete(ctx context.Context, modelType, uuid string, confi
 	if err != nil {
 		return Result{Data: data, Meta: preflight.Meta()}, readbackError(err)
 	}
-	return Result{Data: data, Meta: preflight.Meta()}, verificationError("删除后 Model 仍可读取")
+	return Result{Data: data, Meta: preflight.Meta()}, verificationError(i18n.T("Model is still readable after deletion"))
 }
 
 func (s *Service) ModelTest(ctx context.Context, modelType, uuid string, body map[string]any, dryRun bool, options CheckOptions) (Result, error) {

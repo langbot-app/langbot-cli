@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/langbot-app/langbot-cli/internal/i18n"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -27,11 +28,11 @@ func mappingValue(node *yaml.Node, key string) *yaml.Node {
 func ComposeSourceImage(content []byte) (string, error) {
 	var document yaml.Node
 	if err := yaml.Unmarshal(content, &document); err != nil || len(document.Content) != 1 {
-		return "", errors.New("无法解析 Compose 资产")
+		return "", errors.New(i18n.T("Unable to parse Compose assets"))
 	}
 	image := mappingValue(mappingValue(mappingValue(document.Content[0], "services"), "langbot"), "image")
 	if image == nil || image.Kind != yaml.ScalarNode {
-		return "", errors.New("缺少 LangBot 镜像声明")
+		return "", errors.New(i18n.T("Missing LangBot image declaration"))
 	}
 	return image.Value, nil
 }
@@ -40,11 +41,11 @@ func ComposeSourceImage(content []byte) (string, error) {
 func replaceComposeImages(content []byte, target string) ([]byte, error) {
 	var document yaml.Node
 	if err := yaml.Unmarshal(content, &document); err != nil || len(document.Content) != 1 {
-		return nil, errors.New("无法解析 Compose 资产")
+		return nil, errors.New(i18n.T("Unable to parse Compose assets"))
 	}
 	root := document.Content[0]
 	if mappingValue(root, "include") != nil {
-		return nil, errors.New("升级暂不支持包含外部 Compose 文件的部署")
+		return nil, errors.New(i18n.T("Upgrade does not support external Compose files"))
 	}
 	services := mappingValue(root, "services")
 	lines := strings.SplitAfter(string(content), "\n")
@@ -61,10 +62,10 @@ func replaceComposeImages(content []byte, target string) ([]byte, error) {
 		image := mappingValue(service, "image")
 		if image == nil || image.Kind != yaml.ScalarNode || image.Tag != "!!str" || image.Anchor != "" ||
 			mappingValue(service, "build") != nil || mappingValue(service, "extends") != nil {
-			return nil, fmt.Errorf("服务 %s 需要直接声明官方 image，不能使用 build、extends 或镜像别名", name)
+			return nil, fmt.Errorf(i18n.T("Service %s must directly declare an official image, not build, extends or image aliases"), name)
 		}
 		if !strings.HasPrefix(image.Value, DefaultImageRepository+":") || strings.ContainsAny(image.Value, "$\r\n ") {
-			return nil, fmt.Errorf("服务 %s 不是可升级的官方 LangBot 镜像", name)
+			return nil, fmt.Errorf(i18n.T("Service %s is not an upgradable official LangBot image"), name)
 		}
 		original, replacement := image.Value, target
 		switch image.Style {
@@ -74,21 +75,21 @@ func replaceComposeImages(content []byte, target string) ([]byte, error) {
 			original, replacement = strconv.Quote(original), strconv.Quote(target)
 		case 0:
 		default:
-			return nil, errors.New("升级不支持多行镜像声明")
+			return nil, errors.New(i18n.T("Upgrade does not support multiline image declarations"))
 		}
 		if image.Line < 1 || image.Line > len(lines) || image.Column < 1 {
-			return nil, errors.New("无法定位 Compose 镜像声明")
+			return nil, errors.New(i18n.T("Unable to locate Compose image declaration"))
 		}
 		line := []rune(lines[image.Line-1])
 		if image.Column-1 > len(line) {
-			return nil, errors.New("无法定位 Compose 镜像声明")
+			return nil, errors.New(i18n.T("Unable to locate Compose image declaration"))
 		}
 		start := len(string(line[:image.Column-1]))
 		for _, previous := range lines[:image.Line-1] {
 			start += len(previous)
 		}
 		if !strings.HasPrefix(string(content[start:]), original) {
-			return nil, errors.New("Compose 镜像声明使用了不支持的转义格式")
+			return nil, errors.New(i18n.T("Compose image declaration uses unsupported escaping"))
 		}
 		edits = append(edits, edit{start, start + len(original), replacement})
 	}
@@ -113,19 +114,19 @@ func ValidateAdoptedUpgradeConfig(record Record, content string) error {
 		} `json:"services"`
 	}
 	if err := json.Unmarshal([]byte(content), &config); err != nil {
-		return errors.New("无法验证接管部署的 Compose 挂载")
+		return errors.New(i18n.T("Unable to verify adopted Compose mounts"))
 	}
 	dataRoot := upgradeMountPath(record.DataDir)
 	for _, name := range []string{"langbot", "langbot_plugin_runtime", "langbot_box"} {
 		service, exists := config.Services[name]
 		if !exists {
 			if name != "langbot_box" || record.Profile == "all" {
-				return fmt.Errorf("Compose 缺少服务 %s", name)
+				return fmt.Errorf(i18n.T("Compose is missing service %s"), name)
 			}
 			continue
 		}
 		if len(service.EnvFile) != 0 {
-			return errors.New("升级暂不支持服务级 env_file，请使用 Compose 项目的 .env")
+			return errors.New(i18n.T("Upgrade does not support service-level env_file; use the Compose project .env"))
 		}
 		coreData := false
 		for _, volume := range service.Volumes {
@@ -137,11 +138,11 @@ func ValidateAdoptedUpgradeConfig(record Record, content string) error {
 				continue
 			}
 			if volume.Type != "bind" || (source != dataRoot && !strings.HasPrefix(source, dataRoot+"/")) {
-				return fmt.Errorf("服务 %s 的可写挂载超出可完整备份的数据目录", name)
+				return fmt.Errorf(i18n.T("Service %s has writable mounts outside the fully backed-up data directory"), name)
 			}
 		}
 		if name == "langbot" && !coreData {
-			return errors.New("LangBot /app/data 挂载与部署记录的数据目录不一致")
+			return errors.New(i18n.T("LangBot /app/data mount does not match the deployment record data directory"))
 		}
 	}
 	return nil

@@ -2,7 +2,10 @@ package deploy
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"github.com/langbot-app/langbot-cli/internal/i18n"
+	"github.com/langbot-app/langbot-cli/internal/progress"
 	"io"
 	"io/fs"
 	"net/http"
@@ -30,9 +33,9 @@ func NativeCapabilities() []Check {
 		name, reason string
 		ok           bool
 	}{
-		{"box_sandbox", "Box 沙箱需要 Docker、Podman 或 nsjail", available("docker", "podman", "nsjail")},
-		{"stdio_mcp", "stdio MCP 需要 node 和 npx", available("node") && available("npx")},
-		{"audio", "音频处理需要 ffmpeg", available("ffmpeg")},
+		{"box_sandbox", i18n.T("Box sandbox requires Docker, Podman or nsjail"), available("docker", "podman", "nsjail")},
+		{"stdio_mcp", i18n.T("stdio MCP requires node and npx"), available("node") && available("npx")},
+		{"audio", i18n.T("Audio processing requires ffmpeg"), available("ffmpeg")},
 	} {
 		status := "ok"
 		if !item.ok {
@@ -57,7 +60,7 @@ func NativeHealth(ctx context.Context, record Record, client *http.Client) error
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return fmt.Errorf("healthz: HTTP %d", response.StatusCode)
+		return fmt.Errorf(i18n.T("healthz: HTTP %d"), response.StatusCode)
 	}
 	return nil
 }
@@ -66,11 +69,12 @@ func WaitNativeHealth(ctx context.Context, record Record, client *http.Client) e
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
+		progress.HealthFile(ctx, filepath.Join(filepath.Dir(record.DataDir), "logs", "langbot.log"))
 		if err := NativeHealth(ctx, record, client); err == nil {
 			return nil
 		}
 		if !NativeRunning(filepath.Dir(record.DataDir)) {
-			return fmt.Errorf("native process exited before becoming healthy; inspect logs")
+			return errors.New(i18n.T("native process exited before becoming healthy; inspect logs"))
 		}
 		select {
 		case <-ctx.Done():
@@ -102,7 +106,7 @@ func nativeCopyData(ctx context.Context, source, target string) error {
 			return os.MkdirAll(filepath.Join(target, rel), 0o700)
 		}
 		if entry.Type()&os.ModeSymlink != 0 {
-			return fmt.Errorf("cannot back up symlink %s", rel)
+			return fmt.Errorf(i18n.T("cannot back up symlink %s"), rel)
 		}
 		input, err := os.Open(path)
 		if err != nil {
@@ -151,7 +155,7 @@ func pruneNativeBackups(dir string) error {
 }
 
 func UpgradeNative(ctx context.Context, dir string, current Record, version string, out io.Writer, client *http.Client) (string, error) {
-	return upgradeNative(ctx, dir, current, version, out, client, nativeUpgradeOperations{PrepareNative, NativeStart, NativeStop, WaitNativeHealth})
+	return upgradeNative(ctx, dir, current, version, progress.Output(ctx, out), client, nativeUpgradeOperations{PrepareNative, NativeStart, NativeStop, WaitNativeHealth})
 }
 
 type nativeUpgradeOperations struct {
@@ -167,7 +171,7 @@ func upgradeNative(ctx context.Context, dir string, current Record, version stri
 		return "", err
 	}
 	if comparison >= 0 {
-		return "", fmt.Errorf("target version must be newer")
+		return "", errors.New(i18n.T("target version must be newer"))
 	}
 	next := current
 	next.CoreVersion = version
@@ -202,24 +206,24 @@ func upgradeNative(ctx context.Context, dir string, current Record, version stri
 	recoveryCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
 	defer cancel()
 	if stopErr := operations.stop(recoveryCtx, dir, next); stopErr != nil {
-		return backup, fmt.Errorf("upgrade failed: %v; rollback stop failed: %w", err, stopErr)
+		return backup, fmt.Errorf(i18n.T("upgrade failed: %v; rollback stop failed: %w"), err, stopErr)
 	}
 	failedData := filepath.Join(backup, "failed-data")
 	if restoreErr := os.Rename(current.DataDir, failedData); restoreErr != nil {
-		return backup, fmt.Errorf("rollback data move: %w", restoreErr)
+		return backup, fmt.Errorf(i18n.T("rollback data move: %w"), restoreErr)
 	}
 	if restoreErr := nativeCopyData(recoveryCtx, filepath.Join(backup, "data"), current.DataDir); restoreErr != nil {
-		return backup, fmt.Errorf("rollback data restore: %w", restoreErr)
+		return backup, fmt.Errorf(i18n.T("rollback data restore: %w"), restoreErr)
 	}
 	if restoreErr := store.Write(recoveryCtx, current); restoreErr != nil {
 		return backup, restoreErr
 	}
 	if startErr := operations.start(recoveryCtx, dir, current); startErr != nil {
-		return backup, fmt.Errorf("rollback start: %w", startErr)
+		return backup, fmt.Errorf(i18n.T("rollback start: %w"), startErr)
 	}
 	if healthErr := operations.health(recoveryCtx, current, client); healthErr != nil {
-		return backup, fmt.Errorf("rollback health: %w", healthErr)
+		return backup, fmt.Errorf(i18n.T("rollback health: %w"), healthErr)
 	}
 	_ = pruneNativeBackups(dir)
-	return backup, fmt.Errorf("upgrade failed; previous version and data restored: %w", err)
+	return backup, fmt.Errorf(i18n.T("upgrade failed; previous version and data restored: %w"), err)
 }

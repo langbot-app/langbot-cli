@@ -3,6 +3,7 @@ package command
 import (
 	"github.com/langbot-app/langbot-cli/internal/api"
 	"github.com/langbot-app/langbot-cli/internal/app"
+	"github.com/langbot-app/langbot-cli/internal/i18n"
 	"github.com/spf13/cobra"
 	"net/http"
 	"net/url"
@@ -14,8 +15,8 @@ func pipeline_extensionsGet(cmd *cobra.Command, service *app.Service, deps Depen
 	})
 }
 func addPipelineExtensions(root *cobra.Command, service *app.Service, deps Dependencies, flags *globalFlags) {
-	extensions := &cobra.Command{Use: "extensions", Short: "管理 Pipeline 扩展绑定", Args: cobra.NoArgs}
-	extensions.AddCommand(&cobra.Command{Use: "get <uuid>", Short: "读取绑定、可选扩展与 enable_all 开关", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	extensions := &cobra.Command{Use: "extensions", Short: i18n.T("Manage Pipeline extension bindings"), Args: cobra.NoArgs}
+	extensions.AddCommand(&cobra.Command{Use: "get <uuid>", Short: i18n.T("Read bindings, available extensions and enable_all toggles"), Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		if err := api.ValidateResourceID(args[0]); err != nil {
 			return err
 		}
@@ -23,7 +24,7 @@ func addPipelineExtensions(root *cobra.Command, service *app.Service, deps Depen
 	}})
 	var file string
 	var dryRun bool
-	update := &cobra.Command{Use: "update <uuid>", Short: "完整替换扩展绑定（所有绑定和开关字段必填）", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	update := &cobra.Command{Use: "update <uuid>", Short: i18n.T("Replace all extension bindings (all bindings and toggles required)"), Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		body, err := loadRequestBody(cmd.Context(), file, flags.apiKeyStdin, deps.In)
 		if err != nil {
 			return err
@@ -32,8 +33,8 @@ func addPipelineExtensions(root *cobra.Command, service *app.Service, deps Depen
 			return service.PipelineExtensionsUpdate(cmd.Context(), args[0], body, dryRun, connectionOptions(flags))
 		})
 	}}
-	update.Flags().StringVar(&file, "file", "", "JSON/YAML 请求文件；- 读取 stdin")
-	update.Flags().BoolVar(&dryRun, "dry-run", false, "只检查前置条件，不写入")
+	update.Flags().StringVar(&file, "file", "", i18n.T("JSON/YAML request file; - reads stdin"))
+	update.Flags().BoolVar(&dryRun, "dry-run", false, i18n.T("Check prerequisites without writing"))
 	extensions.AddCommand(update)
 	root.AddCommand(extensions)
 }

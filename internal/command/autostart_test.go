@@ -24,7 +24,7 @@ func TestAutostartNamedInstanceAndConnectionFlags(t *testing.T) {
 	}
 	for _, action := range []string{"status", "disable"} {
 		var output bytes.Buffer
-		code := Execute(context.Background(), []string{"autostart", action, "--name", "named", "--output", "json"}, Dependencies{Out: &output})
+		code := executeChinese(context.Background(), []string{"autostart", action, "--name", "named", "--output", "json"}, Dependencies{Out: &output})
 		var envelope struct {
 			OK   bool `json:"ok"`
 			Data struct {
@@ -38,7 +38,7 @@ func TestAutostartNamedInstanceAndConnectionFlags(t *testing.T) {
 		}
 	}
 	var output bytes.Buffer
-	if code := Execute(context.Background(), []string{"autostart", "enable", "--endpoint", "http://remote.example"}, Dependencies{Out: &output}); code != 2 {
+	if code := executeChinese(context.Background(), []string{"autostart", "enable", "--endpoint", "http://remote.example"}, Dependencies{Out: &output}); code != 2 {
 		t.Fatalf("connection flags accepted: %d %s", code, output.String())
 	}
 }

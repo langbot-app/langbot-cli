@@ -2,6 +2,7 @@ package deploy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +12,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/langbot-app/langbot-cli/internal/i18n"
 )
 
 var instanceNamePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`)
@@ -32,7 +35,7 @@ func Home() (string, error) {
 
 func InstanceDir(name string) (string, error) {
 	if !instanceNamePattern.MatchString(name) {
-		return "", fmt.Errorf("invalid instance name: %s", name)
+		return "", fmt.Errorf(i18n.T("invalid instance name: %s"), name)
 	}
 	base, err := Home()
 	return filepath.Join(base, "instances", name), err
@@ -44,7 +47,7 @@ func ResolveRegion(ctx context.Context, region string, client *http.Client) (str
 	}
 	if region != "" && region != "auto" {
 		if region != "cn" && region != "global" {
-			return "", fmt.Errorf("region must be auto, cn or global")
+			return "", errors.New(i18n.T("region must be auto, cn or global"))
 		}
 		return region, nil
 	}

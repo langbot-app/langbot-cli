@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gofrs/flock"
+	"github.com/langbot-app/langbot-cli/internal/i18n"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -36,7 +37,7 @@ func (l Locator) WithLock(ctx context.Context, fn func() error) error {
 	}
 	parent := filepath.Dir(path)
 	if info, err := os.Lstat(parent); err == nil && (info.Mode()&os.ModeSymlink != 0 || !info.IsDir()) {
-		return errors.New("本机部署定位目录不可用")
+		return errors.New(i18n.T("Local deployment locator directory unavailable"))
 	}
 	if err := os.MkdirAll(parent, 0o700); err != nil {
 		return err
@@ -49,7 +50,7 @@ func (l Locator) WithLock(ctx context.Context, fn func() error) error {
 		if err == nil {
 			err = context.DeadlineExceeded
 		}
-		return fmt.Errorf("等待本机部署定位锁失败: %w", err)
+		return fmt.Errorf(i18n.T("Failed to acquire local deployment locator lock: %w"), err)
 	}
 	defer func() { _ = lock.Unlock() }()
 	return fn()
@@ -58,7 +59,7 @@ func (l Locator) WithLock(ctx context.Context, fn func() error) error {
 func DefaultLocatorPath() (string, error) {
 	base, err := os.UserConfigDir()
 	if err != nil || strings.TrimSpace(base) == "" {
-		return "", errors.New("无法确定用户配置目录")
+		return "", errors.New(i18n.T("Unable to determine user configuration directory"))
 	}
 	return filepath.Join(base, "langbot", "deployment-location.yaml"), nil
 }
@@ -107,21 +108,21 @@ func (l Locator) read() (locatorRecord, error) {
 		return locatorRecord{SchemaVersion: locatorSchemaVersion, Dir: dir}, err
 	}
 	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
-		return locatorRecord{}, errors.New("本机部署定位记录不可用")
+		return locatorRecord{}, errors.New(i18n.T("Local deployment locator record unavailable"))
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return locatorRecord{}, errors.New("无法读取本机部署定位记录")
+		return locatorRecord{}, errors.New(i18n.T("Unable to read local deployment locator"))
 	}
 	var record locatorRecord
 	if err := yaml.Unmarshal(data, &record); err != nil || (record.SchemaVersion != 1 && record.SchemaVersion != locatorSchemaVersion) || !filepath.IsAbs(record.Dir) {
-		return locatorRecord{}, errors.New("本机部署定位记录损坏")
+		return locatorRecord{}, errors.New(i18n.T("Local deployment locator is corrupt"))
 	}
 	record.Dir = filepath.Clean(record.Dir)
 	dirs := []string{record.Dir}
 	for _, dir := range record.Dirs {
 		if !filepath.IsAbs(dir) {
-			return locatorRecord{}, errors.New("本机部署定位记录损坏")
+			return locatorRecord{}, errors.New(i18n.T("Local deployment locator is corrupt"))
 		}
 		dirs = appendUniqueDir(dirs, filepath.Clean(dir))
 	}
@@ -145,13 +146,13 @@ func (l Locator) Write(dir string) error {
 	}
 	parent := filepath.Dir(path)
 	if info, statErr := os.Lstat(parent); statErr == nil && (info.Mode()&os.ModeSymlink != 0 || !info.IsDir()) {
-		return errors.New("本机部署定位目录不可用")
+		return errors.New(i18n.T("Local deployment locator directory unavailable"))
 	}
 	if err := os.MkdirAll(parent, 0o700); err != nil {
 		return err
 	}
 	if info, statErr := os.Lstat(path); statErr == nil && info.Mode()&os.ModeSymlink != 0 {
-		return errors.New("本机部署定位记录不能是符号链接")
+		return errors.New(i18n.T("Local deployment locator must not be a symbolic link"))
 	}
 	record, err := l.read()
 	if err != nil {

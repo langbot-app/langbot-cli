@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/langbot-app/langbot-cli/internal/deploy"
+	"github.com/langbot-app/langbot-cli/internal/i18n"
+	"github.com/langbot-app/langbot-cli/internal/progress"
 	"github.com/langbot-app/langbot-cli/internal/result"
 	"github.com/langbot-app/langbot-cli/internal/telemetry"
 )
@@ -20,7 +22,7 @@ type UninstallOptions struct {
 
 func (s *Service) Uninstall(ctx context.Context, options UninstallOptions) (Result, error) {
 	if !options.Yes {
-		return Result{}, result.New("precondition", "卸载需要显式 --yes")
+		return Result{}, result.New("precondition", i18n.T("Uninstall requires explicit --yes"))
 	}
 	timeout, err := operationTimeout(options.Timeout, options.TimeoutSet, 2*time.Minute)
 	if err != nil {
@@ -33,6 +35,14 @@ func (s *Service) Uninstall(ctx context.Context, options UninstallOptions) (Resu
 		return Result{}, err
 	}
 	var response Result
+	total := 3
+	if record.Driver == deploy.DriverNative && !record.Uninstalled {
+		total = 5
+	}
+	if options.PurgeData {
+		total++
+	}
+	progress.Plan(ctx, total)
 	if record.Driver == deploy.DriverNative {
 		err := deploy.WithMutationLock(operationCtx, diagnostics.Dir, func() error {
 			current, err := diagnostics.Store.Read()
@@ -40,7 +50,7 @@ func (s *Service) Uninstall(ctx context.Context, options UninstallOptions) (Resu
 				return err
 			}
 			if current.DeploymentID != record.DeploymentID {
-				return result.New("precondition", "deployment changed")
+				return result.New("precondition", i18n.T("deployment changed"))
 			}
 			if current.Uninstalled && !options.PurgeData {
 				return nil
@@ -58,7 +68,7 @@ func (s *Service) Uninstall(ctx context.Context, options UninstallOptions) (Resu
 			if options.PurgeData {
 				telemetry.SetStep(ctx, "purge_data")
 				if current.DataDir != filepath.Join(diagnostics.Dir, "data") {
-					return result.New("precondition", "invalid data directory")
+					return result.New("precondition", i18n.T("invalid data directory"))
 				}
 				if err := os.RemoveAll(current.DataDir); err != nil {
 					return err
@@ -80,7 +90,7 @@ func (s *Service) Uninstall(ctx context.Context, options UninstallOptions) (Resu
 		}
 		current, readErr := diagnostics.Store.Read()
 		if readErr != nil || current.DeploymentID != record.DeploymentID {
-			return result.New("precondition", "本机部署绑定已变更")
+			return result.New("precondition", i18n.T("Local deployment binding changed"))
 		}
 		if options.PurgeData {
 			if err := deploy.ValidatePurgeData(diagnostics.Dir, current); err != nil {
@@ -89,7 +99,7 @@ func (s *Service) Uninstall(ctx context.Context, options UninstallOptions) (Resu
 		}
 		before, err := composeContainers(operationCtx, diagnostics.Runner, current)
 		if err != nil {
-			return result.New("precondition", "无法确认受管 Compose project 的容器状态")
+			return result.New("precondition", i18n.T("Unable to confirm container status for managed Compose project"))
 		}
 		data := map[string]any{
 			"action": "uninstall", "changed": len(before) > 0, "project": current.ComposeProject,
@@ -103,13 +113,13 @@ func (s *Service) Uninstall(ctx context.Context, options UninstallOptions) (Resu
 		defer readbackCancel()
 		after, readbackErr := composeContainers(readbackCtx, diagnostics.Runner, current)
 		if readbackErr != nil {
-			return result.New("result_unknown", "卸载命令已执行，但无法回读 Compose project")
+			return result.New("result_unknown", i18n.T("Uninstall ran but Compose project readback failed"))
 		}
 		if len(after) != 0 {
 			if commandErr != nil {
-				return uncertainDockerError(command, commandErr, "卸载命令结果无法确认")
+				return uncertainDockerError(command, commandErr, i18n.T("Unable to confirm uninstall result"))
 			}
-			return result.New("result_unknown", "卸载命令已执行，但受管容器仍然存在")
+			return result.New("result_unknown", i18n.T("Uninstall ran but managed containers still exist"))
 		}
 		data["project_removed"] = true
 		if options.PurgeData {
@@ -120,7 +130,7 @@ func (s *Service) Uninstall(ctx context.Context, options UninstallOptions) (Resu
 				data["recovery_path"] = recoveryPath
 			}
 			if purgeErr != nil {
-				return result.New("recovery_required", "数据清理未完成，请检查保留的清理现场")
+				return result.New("recovery_required", i18n.T("Data cleanup incomplete; inspect preserved cleanup state"))
 			}
 			if purged {
 				data["changed"] = true
@@ -138,7 +148,7 @@ func composeContainers(ctx context.Context, runner deploy.Runner, record deploy.
 	}
 	containers, err := deploy.ParseContainers(command.Stdout)
 	if err != nil {
-		return nil, errors.New("Compose 容器状态格式无效")
+		return nil, errors.New(i18n.T("Invalid Compose container status format"))
 	}
 	return containers, nil
 }

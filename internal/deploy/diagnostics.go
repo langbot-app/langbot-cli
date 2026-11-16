@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/langbot-app/langbot-cli/internal/clientidentity"
+	"github.com/langbot-app/langbot-cli/internal/i18n"
 )
 
 type Problem struct {
@@ -54,15 +55,15 @@ func (d Diagnostics) Status(ctx context.Context) (StatusResult, error) {
 	}
 	if errors.Is(err, ErrNotManaged) {
 		result.Evidence["record"] = "unmanaged"
-		return result, Problem{Kind: "precondition", Msg: "目标目录不是 lbctl 管理的部署"}
+		return result, Problem{Kind: "precondition", Msg: i18n.T("Target directory is not managed by lbctl")}
 	}
 	if errors.Is(err, ErrCorrupt) {
 		result.Evidence["record"] = "corrupt"
-		return result, Problem{Kind: "precondition", Msg: "本地部署记录损坏"}
+		return result, Problem{Kind: "precondition", Msg: i18n.T("Local deployment record is corrupt")}
 	}
 	if err != nil {
 		result.Evidence["record"] = "unreadable"
-		return result, Problem{Kind: "precondition", Msg: "无法读取本地部署记录"}
+		return result, Problem{Kind: "precondition", Msg: i18n.T("Unable to read local deployment record")}
 	}
 	result.Record = record
 	if record.Driver == DriverNative {
@@ -79,24 +80,24 @@ func (d Diagnostics) Status(ctx context.Context) (StatusResult, error) {
 	}
 	if upgrade, upgradeErr := ReadUpgradeState(d.Dir); upgradeErr == nil {
 		if upgrade.DeploymentID != record.DeploymentID {
-			return result, Problem{Kind: "precondition", Msg: "升级记录与部署不一致"}
+			return result, Problem{Kind: "precondition", Msg: i18n.T("Upgrade record does not match the deployment")}
 		}
 		if upgrade.Phase == "completed" && upgrade.TargetVersion != record.CoreVersion {
-			return result, Problem{Kind: "precondition", Msg: "已完成的升级记录与 Core 版本不一致"}
+			return result, Problem{Kind: "precondition", Msg: i18n.T("Completed upgrade record does not match Core version")}
 		}
 		result.Upgrade = &upgrade
 	} else if !errors.Is(upgradeErr, os.ErrNotExist) {
-		return result, Problem{Kind: "precondition", Msg: "升级记录损坏或无法读取"}
+		return result, Problem{Kind: "precondition", Msg: i18n.T("Upgrade record is corrupt or unreadable")}
 	}
 	result.RequiredServices = requiredServices(record)
 	result.Evidence["record"] = "valid"
 	if !regularFile(record.ComposeFile) {
 		result.Evidence["compose_asset"] = "missing_or_invalid"
-		return result, Problem{Kind: "precondition", Msg: "Compose 部署文件不存在或不可用"}
+		return result, Problem{Kind: "precondition", Msg: i18n.T("Compose deployment file does not exist or is unavailable")}
 	}
 	result.Evidence["compose_asset"] = "valid"
 	if d.Runner == nil {
-		return result, Problem{Kind: "internal", Msg: "本地 Docker runner 未配置"}
+		return result, Problem{Kind: "internal", Msg: i18n.T("Local Docker runner is not configured")}
 	}
 	dockerResult, err := d.Runner.Docker(ctx, "info", "--format", "{{.ServerVersion}}")
 	if err != nil {
@@ -107,12 +108,12 @@ func (d Diagnostics) Status(ctx context.Context) (StatusResult, error) {
 	command, err := d.Runner.Compose(ctx, record, "ps", "--format", "json")
 	if err != nil {
 		result.Evidence["compose"] = "unavailable"
-		return result, Problem{Kind: "incompatible", Msg: "无法读取 Compose 服务状态"}
+		return result, Problem{Kind: "incompatible", Msg: i18n.T("Unable to read Compose service status")}
 	}
 	containers, err := ParseContainers(command.Stdout)
 	if err != nil {
 		result.Evidence["compose"] = "invalid"
-		return result, Problem{Kind: "incompatible", Msg: "Compose 服务状态格式无效"}
+		return result, Problem{Kind: "incompatible", Msg: i18n.T("Invalid Compose service status format")}
 	}
 	result.Containers = containers
 	result.Evidence["compose"] = "available"
@@ -125,7 +126,7 @@ func (d Diagnostics) Status(ctx context.Context) (StatusResult, error) {
 	}
 	result.Status = inferStatus(record, containers, health, healthErr)
 	if result.Status == "unknown" {
-		return result, Problem{Kind: "network", Msg: "无法确认本地部署状态"}
+		return result, Problem{Kind: "network", Msg: i18n.T("Unable to confirm local deployment status")}
 	}
 	return result, nil
 }
@@ -145,43 +146,43 @@ func (d Diagnostics) Doctor(ctx context.Context) ([]Check, error) {
 		checks = append(checks, Check{Name: name, Status: status, Reason: reason, Detail: detail})
 	}
 	if d.Runner == nil {
-		return nil, Problem{Kind: "internal", Msg: "本地 Docker runner 未配置"}
+		return nil, Problem{Kind: "internal", Msg: i18n.T("Local Docker runner is not configured")}
 	}
 	if _, err := d.Runner.Docker(ctx, "--version"); err != nil {
-		add("docker_cli", "error", "找不到可用的 Docker CLI", nil)
+		add("docker_cli", "error", i18n.T("No usable Docker CLI found"), nil)
 	} else {
-		add("docker_cli", "ok", "Docker CLI 可用", nil)
+		add("docker_cli", "ok", i18n.T("Docker CLI is available"), nil)
 	}
 	daemonResult, daemonErr := d.Runner.Docker(ctx, "info", "--format", "{{.ServerVersion}}")
 	if daemonErr != nil {
-		if strings.Contains(daemonResult.Stderr, localContextRequired) {
-			add("docker_daemon", "error", "当前 Docker context 指向远程 daemon", nil)
-			add("permission", "warn", "未访问本机 Docker daemon，无法验证当前用户权限", nil)
+		if strings.Contains(daemonResult.Stderr, i18n.T(localContextRequired)) {
+			add("docker_daemon", "error", i18n.T("Current Docker context points to a remote daemon"), nil)
+			add("permission", "warn", i18n.T("Local Docker daemon was not accessed; unable to verify user permissions"), nil)
 		} else if isPermissionError(daemonResult.Stderr) {
-			add("docker_daemon", "error", "当前用户无权访问 Docker daemon", nil)
-			add("permission", "error", "Docker daemon 权限检查失败", nil)
+			add("docker_daemon", "error", i18n.T("Current user cannot access Docker daemon"), nil)
+			add("permission", "error", i18n.T("Docker daemon permission check failed"), nil)
 		} else {
-			add("docker_daemon", "error", "Docker daemon 不可达", nil)
-			add("permission", "warn", "Docker daemon 不可达，无法验证当前用户权限", nil)
+			add("docker_daemon", "error", i18n.T("Docker daemon is unreachable"), nil)
+			add("permission", "warn", i18n.T("Docker daemon is unreachable; cannot verify current user permissions"), nil)
 		}
 	} else {
-		add("docker_daemon", "ok", "Docker daemon 可用", nil)
+		add("docker_daemon", "ok", i18n.T("Docker daemon is available"), nil)
 		if currentUserIsRoot() {
-			add("permission", "warn", "当前进程以 root 运行", nil)
+			add("permission", "warn", i18n.T("Current process runs as root"), nil)
 		} else {
-			add("permission", "ok", "当前用户可访问 Docker daemon", nil)
+			add("permission", "ok", i18n.T("Current user can access Docker daemon"), nil)
 		}
 	}
 	compose, composeErr := d.Runner.Docker(ctx, "compose", "version", "--short")
 	if composeErr != nil || !isComposeV2(compose.Stdout) {
-		add("compose_v2", "error", "需要 Docker Compose v2 或更高版本", strings.TrimSpace(compose.Stdout))
+		add("compose_v2", "error", i18n.T("Docker Compose v2 or newer is required"), strings.TrimSpace(compose.Stdout))
 	} else {
-		add("compose_v2", "ok", "Docker Compose 插件可用", strings.TrimSpace(compose.Stdout))
+		add("compose_v2", "ok", i18n.T("Docker Compose plugin is available"), strings.TrimSpace(compose.Stdout))
 	}
 	if supportedPlatform() {
-		add("platform", "ok", "当前平台可执行只读预检", CurrentPlatform())
+		add("platform", "ok", i18n.T("Current platform supports read-only preflight"), CurrentPlatform())
 	} else {
-		add("platform", "error", "当前平台不在 lbctl 支持范围内", CurrentPlatform())
+		add("platform", "error", i18n.T("Current platform is not supported by lbctl"), CurrentPlatform())
 	}
 
 	diskPath := d.Dir
@@ -190,24 +191,24 @@ func (d Diagnostics) Doctor(ctx context.Context) ([]Check, error) {
 			ancestor, ancestorErr := nearestExistingDir(d.Dir)
 			if ancestorErr == nil {
 				diskPath = ancestor
-				add("data_dir", "ok", "部署目录尚未创建，已找到现有上级目录", map[string]any{"dir": d.Dir, "ancestor": ancestor})
+				add("data_dir", "ok", i18n.T("Deployment directory not created yet; existing parent found"), map[string]any{"dir": d.Dir, "ancestor": ancestor})
 			} else {
-				add("data_dir", "error", "无法访问部署目录的上级目录", d.Dir)
+				add("data_dir", "error", i18n.T("Unable to access deployment parent directory"), d.Dir)
 			}
 		} else {
-			add("data_dir", "error", "部署目录不可访问", d.Dir)
+			add("data_dir", "error", i18n.T("Deployment directory inaccessible"), d.Dir)
 		}
 	} else if !stat.IsDir() {
-		add("data_dir", "error", "部署路径不是目录", d.Dir)
+		add("data_dir", "error", i18n.T("Deployment path is not a directory"), d.Dir)
 	} else {
-		add("data_dir", "ok", "部署目录可访问", d.Dir)
+		add("data_dir", "ok", i18n.T("Deployment directory accessible"), d.Dir)
 	}
 	if free, err := availableBytes(diskPath); err != nil {
-		add("disk_space", "warn", "无法读取可用磁盘空间", nil)
+		add("disk_space", "warn", i18n.T("Unable to read available disk space"), nil)
 	} else {
-		status, reason := "ok", "可用磁盘空间充足"
+		status, reason := "ok", i18n.T("Available disk space is sufficient")
 		if free < 1<<30 {
-			status, reason = "warn", "可用磁盘空间低于 1 GiB"
+			status, reason = "warn", i18n.T("Available disk space is below 1 GiB")
 		}
 		add("disk_space", status, reason, free)
 	}
@@ -218,55 +219,55 @@ func (d Diagnostics) Doctor(ctx context.Context) ([]Check, error) {
 	}
 	switch {
 	case errors.Is(recordErr, ErrNotInstalled):
-		add("deployment_record", "warn", "尚未发现受管部署记录", nil)
+		add("deployment_record", "warn", i18n.T("No managed deployment records found"), nil)
 	case errors.Is(recordErr, ErrNotManaged):
 		if asset := findComposeAsset(d.Dir); asset != "" {
-			add("deployment_record", "warn", "发现非受管 Compose 目录；仅提供只读诊断，接管需显式操作", map[string]any{"status": "unmanaged", "compose_file": asset})
+			add("deployment_record", "warn", i18n.T("Found an unmanaged Compose directory; read-only diagnostics only, adoption requires an explicit action"), map[string]any{"status": "unmanaged", "compose_file": asset})
 		} else {
-			add("deployment_record", "warn", "目标目录不是 lbctl 受管部署", map[string]any{"status": "unmanaged"})
+			add("deployment_record", "warn", i18n.T("Target directory is not an lbctl-managed deployment"), map[string]any{"status": "unmanaged"})
 		}
 	case recordErr != nil:
-		add("deployment_record", "error", "部署记录损坏或版本不兼容", nil)
+		add("deployment_record", "error", i18n.T("Deployment record corrupt or version incompatible"), nil)
 	default:
-		add("deployment_record", "ok", "部署记录有效", record)
+		add("deployment_record", "ok", i18n.T("Deployment record valid"), record)
 	}
 	if recordErr == nil {
 		if upgrade, upgradeErr := ReadUpgradeState(d.Dir); upgradeErr == nil {
 			if upgrade.DeploymentID != record.DeploymentID || upgrade.Phase != "completed" || upgrade.TargetVersion != record.CoreVersion {
-				add("upgrade", "error", "存在未完成的升级，需要人工检查恢复现场", upgrade)
+				add("upgrade", "error", i18n.T("An upgrade is unfinished; inspect recovery state manually"), upgrade)
 			} else {
-				add("upgrade", "ok", "上次升级已完成", upgrade)
+				add("upgrade", "ok", i18n.T("Previous upgrade completed"), upgrade)
 			}
 		} else if !errors.Is(upgradeErr, os.ErrNotExist) {
-			add("upgrade", "error", "升级记录损坏或无法读取", nil)
+			add("upgrade", "error", i18n.T("Upgrade record is corrupt or unreadable"), nil)
 		}
 		if !regularFile(record.ComposeFile) {
-			add("compose_assets", "error", "Compose 文件不存在", record.ComposeFile)
+			add("compose_assets", "error", i18n.T("Compose file does not exist"), record.ComposeFile)
 		} else {
-			add("compose_assets", "ok", "Compose 文件可访问", record.ComposeFile)
+			add("compose_assets", "ok", i18n.T("Compose file is accessible"), record.ComposeFile)
 		}
 		composeResult, err := d.Runner.Compose(ctx, record, "ps", "--format", "json")
 		if err != nil {
-			add("container_visibility", "error", "无法读取受管容器状态", nil)
+			add("container_visibility", "error", i18n.T("Unable to read managed container status"), nil)
 		} else {
-			add("container_visibility", "ok", "受管容器状态可读取", nil)
+			add("container_visibility", "ok", i18n.T("Managed container status is readable"), nil)
 			portStatus, portReason := d.portCheckForRecord(ctx, record, composeResult.Stdout)
 			add("default_port", portStatus, portReason, port)
 		}
 	} else {
 		if available, err := portAvailable(port); err != nil {
-			add("default_port", "warn", "默认端口检查失败", port)
+			add("default_port", "warn", i18n.T("Default port check failed"), port)
 		} else if !available {
-			add("default_port", "warn", "默认端口已被占用", port)
+			add("default_port", "warn", i18n.T("Default port in use"), port)
 		} else {
-			add("default_port", "ok", "默认端口可用", port)
+			add("default_port", "ok", i18n.T("Default port available"), port)
 		}
 		if asset := findComposeAsset(d.Dir); asset != "" {
-			add("compose_assets", "warn", "发现非受管 Compose 资产，仅做只读识别", asset)
-			add("container_visibility", "warn", "非受管部署未绑定 Compose project，不读取容器", nil)
+			add("compose_assets", "warn", i18n.T("Found unmanaged Compose assets; read-only identification only"), asset)
+			add("container_visibility", "warn", i18n.T("Unmanaged deployment has no Compose project binding; containers not read"), nil)
 		} else {
-			add("compose_assets", "warn", "尚未安装，暂无 Compose 资产", nil)
-			add("container_visibility", "warn", "尚未安装，暂无受管容器", nil)
+			add("compose_assets", "warn", i18n.T("Not installed; no Compose assets"), nil)
+			add("container_visibility", "warn", i18n.T("Not installed; no managed containers"), nil)
 		}
 	}
 	for _, check := range checks {
@@ -277,7 +278,7 @@ func (d Diagnostics) Doctor(ctx context.Context) ([]Check, error) {
 		if check.Name == "compose_v2" {
 			kind = "incompatible"
 		}
-		return checks, Problem{Kind: kind, Msg: "本机预检存在错误项"}
+		return checks, Problem{Kind: kind, Msg: i18n.T("Local preflight has errors")}
 	}
 	return checks, nil
 }
@@ -318,15 +319,15 @@ func isPermissionError(stderr string) bool {
 func dockerProblem(command CommandResult, err error) Problem {
 	var executableError *exec.Error
 	if errors.As(err, &executableError) || errors.Is(err, exec.ErrNotFound) {
-		return Problem{Kind: "precondition", Msg: "找不到可用的 Docker CLI"}
+		return Problem{Kind: "precondition", Msg: i18n.T("No usable Docker CLI found")}
 	}
 	if isPermissionError(command.Stderr) {
-		return Problem{Kind: "permission", Msg: "当前用户无权访问 Docker daemon"}
+		return Problem{Kind: "permission", Msg: i18n.T("Current user cannot access Docker daemon")}
 	}
-	if strings.Contains(command.Stderr, localContextRequired) {
-		return Problem{Kind: "precondition", Msg: localContextRequired}
+	if strings.Contains(command.Stderr, i18n.T(localContextRequired)) {
+		return Problem{Kind: "precondition", Msg: i18n.T(localContextRequired)}
 	}
-	return Problem{Kind: "network", Msg: "Docker daemon 不可达"}
+	return Problem{Kind: "network", Msg: i18n.T("Docker daemon is unreachable")}
 }
 
 func supportedPlatform() bool {
@@ -342,7 +343,7 @@ func nearestExistingDir(path string) (string, error) {
 		info, err := os.Stat(current)
 		if err == nil {
 			if !info.IsDir() {
-				return "", errors.New("上级路径不是目录")
+				return "", errors.New(i18n.T("Parent path is not a directory"))
 			}
 			return current, nil
 		}
@@ -359,7 +360,7 @@ func nearestExistingDir(path string) (string, error) {
 
 func portAvailable(port int) (bool, error) {
 	if port <= 0 || port > 65535 {
-		return false, errors.New("端口无效")
+		return false, errors.New(i18n.T("Invalid port"))
 	}
 	listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
 	if err != nil {
@@ -392,7 +393,7 @@ func (d Diagnostics) probeHTTP(ctx context.Context, record Record) (map[string]a
 	defer resp.Body.Close()
 	data := map[string]any{"reachable": true, "http_status": resp.StatusCode, "endpoint": endpoint}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return data, fmt.Errorf("HTTP %d", resp.StatusCode)
+		return data, fmt.Errorf(i18n.T("HTTP %d"), resp.StatusCode)
 	}
 	return data, nil
 }
@@ -472,17 +473,17 @@ func (d Diagnostics) portCheckForRecord(ctx context.Context, record Record, raw 
 	if err == nil {
 		health, healthErr := d.probeHTTP(ctx, record)
 		if healthErr == nil && health["reachable"] == true && serviceRunning(containers, "langbot") {
-			return "ok", "默认端口由受管部署使用"
+			return "ok", i18n.T("Default port used by managed deployment")
 		}
 	}
 	available, err := portAvailable(record.Port)
 	if err != nil {
-		return "warn", "默认端口检查失败"
+		return "warn", i18n.T("Default port check failed")
 	}
 	if !available {
-		return "warn", "默认端口已被其他进程占用"
+		return "warn", i18n.T("Default port occupied by another process")
 	}
-	return "ok", "默认端口可用"
+	return "ok", i18n.T("Default port available")
 }
 
 func serviceRunning(containers []Container, wanted string) bool {

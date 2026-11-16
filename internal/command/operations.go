@@ -9,6 +9,7 @@ import (
 
 	"github.com/langbot-app/langbot-cli/internal/api"
 	"github.com/langbot-app/langbot-cli/internal/app"
+	"github.com/langbot-app/langbot-cli/internal/i18n"
 	"github.com/langbot-app/langbot-cli/internal/result"
 	"github.com/spf13/cobra"
 )
@@ -154,7 +155,7 @@ func commandGroup(root *cobra.Command, path []string) *cobra.Command {
 			}
 		}
 		if next == nil {
-			next = &cobra.Command{Use: name, Short: "管理 " + name, Args: cobra.NoArgs}
+			next = &cobra.Command{Use: name, Short: i18n.T("Manage ") + name, Args: cobra.NoArgs}
 			root.AddCommand(next)
 		}
 		root = next
@@ -165,7 +166,7 @@ func commandGroup(root *cobra.Command, path []string) *cobra.Command {
 func addOperationCommands(root *cobra.Command, service *app.Service, deps Dependencies, flags *globalFlags) {
 	op := commandGroup(root, []string{"op"})
 	var domain, search string
-	list := &cobra.Command{Use: "list", Short: "列出当前身份可执行的操作", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+	list := &cobra.Command{Use: "list", Short: i18n.T("List operations available to the current identity"), Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		return emitCall(deps, flags, func() (app.Result, error) {
 			session, err := service.OpenOperations(cmd.Context(), connectionOptions(flags), false)
 			if err != nil {
@@ -175,10 +176,10 @@ func addOperationCommands(root *cobra.Command, service *app.Service, deps Depend
 			return session.Result(value), err
 		})
 	}}
-	list.Flags().StringVar(&domain, "domain", "", "按操作域筛选")
-	list.Flags().StringVar(&search, "search", "", "搜索操作描述")
+	list.Flags().StringVar(&domain, "domain", "", i18n.T("Filter by operation domain"))
+	list.Flags().StringVar(&search, "search", "", i18n.T("Search operation descriptions"))
 	op.AddCommand(list)
-	op.AddCommand(&cobra.Command{Use: "describe <id>", Short: "显示操作的风险、权限和输入输出 schema", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	op.AddCommand(&cobra.Command{Use: "describe <id>", Short: i18n.T("Show operation risks, permissions and input/output schema"), Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		return emitCall(deps, flags, func() (app.Result, error) {
 			if err := api.ValidateOperationID(args[0]); err != nil {
 				return app.Result{}, err
@@ -210,16 +211,16 @@ func confirmOperation(deps Dependencies, yes bool, stdinUsed bool) error {
 	}
 	file, ok := deps.In.(*os.File)
 	if !ok || stdinUsed {
-		return result.New("precondition", "写操作需要 --yes；非交互模式不会请求确认")
+		return result.New("precondition", i18n.T("Writes require --yes; non-interactive mode does not prompt"))
 	}
 	info, err := file.Stat()
 	if err != nil || info.Mode()&os.ModeCharDevice == 0 {
-		return result.New("precondition", "写操作需要 --yes")
+		return result.New("precondition", i18n.T("Writes require --yes"))
 	}
-	fmt.Fprint(deps.Err, "确认执行此写操作？[y/N] ")
+	fmt.Fprint(deps.Err, i18n.T("Confirm this write operation? [y/N] "))
 	answer, err := bufio.NewReader(file).ReadString('\n')
 	if err != nil || (strings.TrimSpace(strings.ToLower(answer)) != "y" && strings.TrimSpace(strings.ToLower(answer)) != "yes") {
-		return result.New("precondition", "操作未确认")
+		return result.New("precondition", i18n.T("Operation unconfirmed"))
 	}
 	return nil
 }
@@ -233,15 +234,15 @@ func addOperationCommand(parent *cobra.Command, spec operationCommand, service *
 	for _, field := range fields {
 		use += " <" + field + ">"
 	}
-	cmd := &cobra.Command{Use: use, Short: "调用 " + spec.id, Args: cobra.ExactArgs(len(fields))}
+	cmd := &cobra.Command{Use: use, Short: i18n.T("Call ") + spec.id, Args: cobra.ExactArgs(len(fields))}
 	if spec.id != "" {
-		cmd.Long = "调用 " + spec.id + "。--file 接受操作输入对象，位置参数自动填入同名字段。\n输入字段：" + friendlyOperationDetails[spec.id].fields
+		cmd.Long = i18n.T("Call ") + spec.id + i18n.T(". --file accepts an operation input object; positional arguments fill matching fields.\nInput fields: ") + friendlyOperationDetails[spec.id].fields
 	}
-	cmd.Flags().StringVar(&file, "file", "", "操作输入 JSON/YAML 对象；- 从 stdin 读取；字段见 op describe")
-	cmd.Flags().BoolVar(&yes, "yes", false, "确认写操作")
+	cmd.Flags().StringVar(&file, "file", "", i18n.T("Operation input JSON/YAML object; - reads stdin; see op describe for fields"))
+	cmd.Flags().BoolVar(&yes, "yes", false, i18n.T("Confirm write"))
 	if spec.id == "" && !spec.stream {
-		cmd.Flags().StringVar(&decodeField, "decode-binary", "", "将指定 base64 输出字段解码为文件")
-		cmd.Flags().StringVarP(&destination, "out-file", "O", "", "解码后的文件路径，须与 --decode-binary 一起使用")
+		cmd.Flags().StringVar(&decodeField, "decode-binary", "", i18n.T("Decode the specified base64 output field to a file"))
+		cmd.Flags().StringVarP(&destination, "out-file", "O", "", i18n.T("Decoded output path; use with --decode-binary"))
 	}
 	if spec.stream && spec.id == "" {
 		_ = cmd.MarkFlagRequired("file")
@@ -249,7 +250,7 @@ func addOperationCommand(parent *cobra.Command, spec operationCommand, service *
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		return emitCall(deps, flags, func() (app.Result, error) {
 			if (decodeField == "") != (destination == "") {
-				return app.Result{}, result.New("input", "--decode-binary 与 -O 必须同时使用")
+				return app.Result{}, result.New("input", i18n.T("--decode-binary and -O must be used together"))
 			}
 			identifier := spec.id
 			if identifier == "" {
@@ -269,7 +270,7 @@ func addOperationCommand(parent *cobra.Command, spec operationCommand, service *
 			if spec.id != "" {
 				for index, field := range fields {
 					if value, exists := body[field]; exists && value != args[index] {
-						return app.Result{}, result.New("input", "请求体与位置参数不一致："+field)
+						return app.Result{}, result.New("input", i18n.T("Request body does not match positional argument: ")+field)
 					}
 					body[field] = args[index]
 				}
@@ -294,7 +295,7 @@ func addOperationCommand(parent *cobra.Command, spec operationCommand, service *
 			}
 			streaming, _ := description["streaming"].(bool)
 			if streaming != spec.stream {
-				return session.Result(nil), result.New("input", "操作执行模式不匹配，请使用 op call 或 op stream")
+				return session.Result(nil), result.New("input", i18n.T("Operation execution mode mismatch; use op call or op stream"))
 			}
 			if err := session.Authorize(description); err != nil {
 				return session.Result(nil), err
@@ -321,14 +322,14 @@ func addOperationCommand(parent *cobra.Command, spec operationCommand, service *
 				object, _ := value.(map[string]any)
 				encoded, ok := object[decodeField].(string)
 				if !ok {
-					return session.Result(nil), result.New("input", "输出中没有指定的 base64 字段")
+					return session.Result(nil), result.New("input", i18n.T("Output does not contain the specified base64 field"))
 				}
 				decoded, decodeErr := base64.StdEncoding.DecodeString(encoded)
 				if decodeErr != nil {
-					return session.Result(nil), result.New("incompatible", "输出字段不是有效 base64")
+					return session.Result(nil), result.New("incompatible", i18n.T("Output field is not valid base64"))
 				}
 				if os.WriteFile(destination, decoded, 0o600) != nil {
-					return session.Result(nil), result.New("input", "无法保存解码文件")
+					return session.Result(nil), result.New("input", i18n.T("Unable to save decoded file"))
 				}
 				value = map[string]any{"file": destination, "bytes": len(decoded)}
 			}

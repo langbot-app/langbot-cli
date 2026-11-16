@@ -6,6 +6,7 @@ import (
 	"math"
 	"strings"
 
+	"github.com/langbot-app/langbot-cli/internal/i18n"
 	"github.com/langbot-app/langbot-cli/internal/result"
 )
 
@@ -22,12 +23,12 @@ func (s *Service) SandboxConfig(ctx context.Context, action string, body map[str
 		return Result{Data: settings, Meta: preflight.Meta()}, err
 	}
 	if action != "update" && action != "check" && action != "test" {
-		return Result{}, result.New("input", "未知的沙箱配置操作")
+		return Result{}, result.New("input", i18n.T("Unknown sandbox configuration operation"))
 	}
 	if !dryRun && !confirmed && action != "check" {
-		message := "保存工作区沙箱配置需要 --yes；仅影响新任务，已有任务保留原配置快照"
+		message := i18n.T("Saving workspace sandbox settings requires --yes; only new tasks are affected, existing tasks retain their snapshots")
 		if action == "test" {
-			message = "测试会创建、执行并删除临时 E2B 沙箱，消耗配额并可能计费；请显式提供 --yes"
+			message = i18n.T("Test creates, executes and deletes a temporary E2B sandbox, consuming quota and potentially incurring charges; explicitly pass --yes")
 		}
 		return Result{}, result.New("input", message)
 	}
@@ -90,17 +91,17 @@ func (s *Service) SandboxConfig(ctx context.Context, action string, body map[str
 			}
 			return Result{Data: data, Meta: preflight.Meta()}, nil
 		}
-		failure := result.New("precondition", "E2B 连接检查未通过，请查看后端诊断")
+		failure := result.New("precondition", i18n.T("E2B connection check failed; see backend diagnostics"))
 		if action == "test" {
-			failure = result.New("server", "E2B 执行或清理未确认成功，请查看 template_validation、reason 和 cleanup_reason")
+			failure = result.New("server", i18n.T("E2B execution or cleanup was not confirmed; inspect template_validation, reason and cleanup_reason"))
 			if backend["template_validation"] == "unsupported" {
-				failure = result.New("incompatible", "Core 或 Box SDK/Runtime 未确认支持临时 E2B 执行测试；请查看后端诊断")
+				failure = result.New("incompatible", i18n.T("Core or Box SDK/Runtime has not confirmed temporary E2B test support; see backend diagnostics"))
 			}
 		}
 		failure.Type = "sandbox_" + action + "_failed"
 		return Result{Data: data, Meta: preflight.Meta()}, failure
 	}
-	return Result{Data: data, Meta: preflight.Meta()}, result.New("incompatible", "服务端未返回 E2B 后端诊断；请检查 Core、Box SDK 和 Runtime 支持")
+	return Result{Data: data, Meta: preflight.Meta()}, result.New("incompatible", i18n.T("Server did not return E2B backend diagnostics; check Core, Box SDK and Runtime support"))
 }
 
 func validateSandboxBody(action string, body map[string]any) error {
@@ -109,7 +110,7 @@ func validateSandboxBody(action string, body map[string]any) error {
 		fields = append(fields, "backend", "limits")
 		backend, _ := body["backend"].(string)
 		if backend != "docker" && backend != "e2b" && backend != "nsjail" {
-			return result.New("input", "backend 必须为 docker、e2b 或 nsjail")
+			return result.New("input", i18n.T("backend must be docker, e2b or nsjail"))
 		}
 	}
 	if err := validateBodyFields(body, fields...); err != nil {
@@ -118,21 +119,21 @@ func validateSandboxBody(action string, body map[string]any) error {
 	if raw := body["e2b"]; raw != nil {
 		e2b, ok := raw.(map[string]any)
 		if !ok {
-			return result.New("input", "e2b 必须是对象")
+			return result.New("input", i18n.T("e2b must be an object"))
 		}
 		if err := validateBodyFields(e2b, "api_url", "sandbox_url", "api_key", "template"); err != nil {
 			return err
 		}
 		for _, value := range e2b {
 			if _, ok := value.(string); !ok {
-				return result.New("input", "E2B 配置字段必须是字符串")
+				return result.New("input", i18n.T("E2B configuration fields must be strings"))
 			}
 		}
 	}
 	if raw := body["limits"]; raw != nil {
 		limits, ok := raw.(map[string]any)
 		if !ok {
-			return result.New("input", "limits 必须是对象")
+			return result.New("input", i18n.T("limits must be an object"))
 		}
 		if err := validateBodyFields(limits, "timeout_sec", "idle_ttl_sec", "max_sessions", "cpus", "memory_mb", "pids_limit", "workspace_quota_mb"); err != nil {
 			return err
@@ -143,7 +144,7 @@ func validateSandboxBody(action string, body map[string]any) error {
 			}
 			n, ok := sandboxNumber(value)
 			if !ok || n <= 0 || name != "cpus" && math.Trunc(n) != n {
-				return result.New("input", "limits 必须使用正数；除 cpus 外只接受整数")
+				return result.New("input", i18n.T("limits must be positive; only cpus accepts fractions"))
 			}
 		}
 	}
@@ -177,15 +178,15 @@ func validateSandboxLimits(body, settings map[string]any) error {
 			continue
 		}
 		if capabilities[name] != true {
-			return result.New("precondition", name+" 不受所选后端或当前平台策略支持")
+			return result.New("precondition", name+i18n.T(" is not supported by the selected backend or platform policy"))
 		}
 		n, _ := sandboxNumber(value)
 		cap, ok := sandboxNumber(caps[name])
 		if !ok {
-			return result.New("incompatible", "服务端未返回 "+name+" 的有效上限")
+			return result.New("incompatible", i18n.T("Server did not return ")+name+i18n.T(" effective limit"))
 		}
 		if n > cap {
-			return result.New("input", name+" 超过服务端上限")
+			return result.New("input", name+i18n.T(" exceeds the server limit"))
 		}
 	}
 	return nil

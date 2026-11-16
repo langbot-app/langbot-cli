@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"unicode/utf16"
+
+	"github.com/langbot-app/langbot-cli/internal/i18n"
 )
 
 var ErrNativeInterrupted = errors.New("native command interrupted")
@@ -74,7 +76,7 @@ type nativeRunKey interface {
 func writeNativeRun(key nativeRunKey, record Record, binary, dir string) error {
 	command := `"` + binary + `" _native-run "` + dir + strings.Repeat(`\`, len(dir)-len(strings.TrimRight(dir, `\`))) + `"`
 	if len(utf16.Encode([]rune(command))) > 260 {
-		return fmt.Errorf("HKCU Run command exceeds 260 characters; use shorter lbctl and deployment paths")
+		return errors.New(i18n.T("HKCU Run command exceeds 260 characters; use shorter lbctl and deployment paths"))
 	}
 	return key.SetStringValue(nativeServiceName(record), command)
 }

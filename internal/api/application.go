@@ -12,6 +12,7 @@ import (
 
 	"github.com/langbot-app/langbot-cli/internal/clientidentity"
 	"github.com/langbot-app/langbot-cli/internal/endpoint"
+	"github.com/langbot-app/langbot-cli/internal/i18n"
 	"github.com/langbot-app/langbot-cli/internal/result"
 )
 
@@ -21,7 +22,7 @@ func ValidateOperationID(identifier string) error {
 	if identifier == "" || strings.IndexFunc(identifier, func(character rune) bool {
 		return !(character >= 'a' && character <= 'z' || character >= '0' && character <= '9' || character == '_' || character == '.')
 	}) >= 0 || strings.Contains(identifier, "..") {
-		return result.New("input", "操作 ID 必须由小写字母、数字、下划线和点组成")
+		return result.New("input", i18n.T("Operation ID must contain only lowercase letters, digits, underscores and dots"))
 	}
 	return nil
 }
@@ -29,7 +30,7 @@ func ValidateOperationID(identifier string) error {
 func (c Client) applicationRequest(ctx context.Context, target Target, method, path string, body io.Reader, contentType string) (*http.Response, context.CancelFunc, error) {
 	base, err := endpoint.Normalize(target.Endpoint)
 	if err != nil {
-		return nil, nil, result.New("input", "服务地址无效")
+		return nil, nil, result.New("input", i18n.T("Invalid service URL"))
 	}
 	timeout := target.Timeout
 	if timeout <= 0 {
@@ -39,7 +40,7 @@ func (c Client) applicationRequest(ctx context.Context, target Target, method, p
 	request, err := http.NewRequestWithContext(callCtx, method, strings.TrimRight(base, "/")+path, body)
 	if err != nil {
 		cancel()
-		return nil, nil, result.New("input", "无法构造操作请求")
+		return nil, nil, result.New("input", i18n.T("Unable to construct operation request"))
 	}
 	if target.UserToken != "" {
 		request.Header.Set("Authorization", "Bearer "+target.UserToken)
@@ -61,7 +62,7 @@ func (c Client) applicationRequest(ctx context.Context, target Target, method, p
 func applicationBody(body map[string]any) (io.Reader, error) {
 	encoded, err := json.Marshal(bodyOrEmpty(body))
 	if err != nil || len(encoded) > maxRequestBytes {
-		return nil, result.New("input", "操作请求体无效或过大")
+		return nil, result.New("input", i18n.T("Operation request body is invalid or too large"))
 	}
 	return bytes.NewReader(encoded), nil
 }
@@ -69,7 +70,7 @@ func applicationBody(body map[string]any) (io.Reader, error) {
 func applicationResponse(response *http.Response, target Target, bare bool) (any, error) {
 	data, tooLarge, err := readLimited(response.Body)
 	if err != nil || tooLarge {
-		return nil, result.New("network", "读取操作响应失败或响应过大")
+		return nil, result.New("network", i18n.T("Failed to read operation response, or response too large"))
 	}
 	parsed, parseErr := parseEnvelope(data)
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
@@ -80,7 +81,7 @@ func applicationResponse(response *http.Response, target Target, bare bool) (any
 	}
 	if !bare {
 		if parseErr != nil {
-			return nil, result.New("incompatible", "操作响应格式无效")
+			return nil, result.New("incompatible", i18n.T("Invalid operation response format"))
 		}
 		if !isSuccessCode(parsed.Code) {
 			return nil, businessError(parsed.Code, responseRequestID(response.Header, parsed, target.secret()), response.StatusCode, target.secret())
@@ -91,7 +92,7 @@ func applicationResponse(response *http.Response, target Target, bare bool) (any
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.UseNumber()
 	if err := decoder.Decode(&value); err != nil {
-		return nil, result.New("incompatible", "操作响应不是有效 JSON")
+		return nil, result.New("incompatible", i18n.T("Operation response is not valid JSON"))
 	}
 	return redactConnectionSecret(value, target.secret()), nil
 }
@@ -117,7 +118,7 @@ func (c Client) OperationDescribe(ctx context.Context, target Target, identifier
 	}
 	description, ok := value.(map[string]any)
 	if !ok || description["id"] != identifier {
-		return nil, result.New("incompatible", "操作描述格式无效")
+		return nil, result.New("incompatible", i18n.T("Invalid operation description format"))
 	}
 	return description, nil
 }
@@ -166,7 +167,7 @@ func (c Client) OperationStream(ctx context.Context, target Target, identifier s
 		return err
 	}
 	if !strings.HasPrefix(response.Header.Get("Content-Type"), "text/event-stream") {
-		return result.New("incompatible", "操作未返回 SSE 流")
+		return result.New("incompatible", i18n.T("Operation did not return an SSE stream"))
 	}
 	scanner := bufio.NewScanner(response.Body)
 	scanner.Buffer(make([]byte, 4096), maxResponseBytes)
@@ -179,7 +180,7 @@ func (c Client) OperationStream(ctx context.Context, target Target, identifier s
 		}
 		if strings.HasPrefix(line, "data:") {
 			if len(data)+len(line) > maxResponseBytes {
-				return result.New("incompatible", "SSE 事件过大")
+				return result.New("incompatible", i18n.T("SSE event is too large"))
 			}
 			data += strings.TrimPrefix(strings.TrimPrefix(line, "data:"), " ") + "\n"
 			continue
@@ -188,7 +189,7 @@ func (c Client) OperationStream(ctx context.Context, target Target, identifier s
 			continue
 		}
 		if event == "error" {
-			failure := result.New("server", "流式操作失败；请检查操作日志")
+			failure := result.New("server", i18n.T("Streaming operation failed; inspect operation logs"))
 			var detail struct {
 				Code json.RawMessage `json:"code"`
 			}
@@ -205,7 +206,7 @@ func (c Client) OperationStream(ctx context.Context, target Target, identifier s
 			decoder := json.NewDecoder(strings.NewReader(data))
 			decoder.UseNumber()
 			if decoder.Decode(&value) != nil {
-				return result.New("incompatible", "SSE 事件不是有效 JSON")
+				return result.New("incompatible", i18n.T("SSE event is not valid JSON"))
 			}
 			if err := emit(redactConnectionSecret(value, target.secret())); err != nil {
 				return err
@@ -216,5 +217,5 @@ func (c Client) OperationStream(ctx context.Context, target Target, identifier s
 	if scanner.Err() != nil {
 		return transportError(ctx, scanner.Err())
 	}
-	return result.New("network", "SSE 流在 done 事件前断开；请勿自动重试")
+	return result.New("network", i18n.T("SSE stream disconnected before done; do not retry automatically"))
 }

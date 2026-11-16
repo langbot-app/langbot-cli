@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -12,9 +13,11 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gofrs/flock"
+	"github.com/langbot-app/langbot-cli/internal/i18n"
 	"github.com/langbot-app/langbot-cli/internal/telemetry"
 )
 
@@ -61,7 +64,7 @@ func (updater Updater) Latest(ctx context.Context) (string, error) {
 		return "", err
 	}
 	if !releaseVersionPattern.MatchString(payload.Version) {
-		return "", fmt.Errorf("invalid lbctl release version")
+		return "", errors.New(i18n.T("invalid lbctl release version"))
 	}
 	return payload.Version, nil
 }
@@ -97,7 +100,7 @@ func (updater Updater) Update(ctx context.Context, current string, check bool) (
 		platform = CurrentPlatform()
 	}
 	if _, ok := UVAssets[platform]; !ok {
-		return result, fmt.Errorf("unsupported update platform")
+		return result, errors.New(i18n.T("unsupported update platform"))
 	}
 	asset := "lbctl_" + strings.ReplaceAll(platform, "/", "_")
 	telemetry.SetStep(ctx, "download_update")
@@ -118,7 +121,7 @@ func (updater Updater) Update(ctx context.Context, current string, check bool) (
 		}
 	}
 	if len(expected) != 64 {
-		return result, fmt.Errorf("release checksum absent for %s", asset)
+		return result, fmt.Errorf(i18n.T("release checksum absent for %s"), asset)
 	}
 	data, err := Fetch(ctx, updater.client(), base+asset, 200<<20)
 	if err != nil {
@@ -126,7 +129,7 @@ func (updater Updater) Update(ctx context.Context, current string, check bool) (
 	}
 	sum := sha256.Sum256(data)
 	if hex.EncodeToString(sum[:]) != expected {
-		return result, fmt.Errorf("lbctl checksum mismatch")
+		return result, errors.New(i18n.T("lbctl checksum mismatch"))
 	}
 	telemetry.SetStep(ctx, "replace_binary")
 	info, err := os.Stat(binary)
@@ -213,6 +216,14 @@ func ReadUpdateCache() UpdateCache {
 }
 
 func RefreshUpdateCache(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	return RefreshUpdateCacheWith(ctx, (Updater{}).Latest, func(ctx context.Context) (string, error) {
+		return LatestCore(ctx, nil)
+	})
+}
+
+func RefreshUpdateCacheWith(ctx context.Context, latestLBCTL, latestCore func(context.Context) (string, error)) error {
 	path, err := UpdateCachePath()
 	if err != nil {
 		return err
@@ -230,17 +241,33 @@ func RefreshUpdateCache(ctx context.Context) error {
 	}
 	defer lock.Unlock()
 	cache := ReadUpdateCache()
-	if time.Since(cache.CheckedAt) < 24*time.Hour {
+	if cache.LBCTL != "" && cache.Core != "" && time.Since(cache.CheckedAt) < 24*time.Hour {
 		return nil
 	}
-	cache.CheckedAt = time.Now().UTC()
-	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	defer cancel()
-	if latest, err := (Updater{}).Latest(ctx); err == nil {
-		cache.LBCTL = latest
+	var lbctl, core string
+	var lbctlErr, coreErr error
+	var checks sync.WaitGroup
+	checks.Add(2)
+	go func() {
+		defer checks.Done()
+		lbctl, lbctlErr = latestLBCTL(ctx)
+	}()
+	go func() {
+		defer checks.Done()
+		core, coreErr = latestCore(ctx)
+	}()
+	checks.Wait()
+	if lbctlErr != nil && coreErr != nil {
+		return errors.Join(lbctlErr, coreErr)
 	}
-	if latest, err := LatestCore(ctx, nil); err == nil {
-		cache.Core = latest
+	if lbctlErr == nil {
+		cache.LBCTL = lbctl
+	}
+	if coreErr == nil {
+		cache.Core = core
+	}
+	if lbctlErr == nil && coreErr == nil {
+		cache.CheckedAt = time.Now().UTC()
 	}
 	cache.Instances = map[string]string{}
 	if dirs, err := (Locator{}).Directories(); err == nil {

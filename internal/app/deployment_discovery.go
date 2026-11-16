@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/langbot-app/langbot-cli/internal/deploy"
+	"github.com/langbot-app/langbot-cli/internal/i18n"
 	"github.com/langbot-app/langbot-cli/internal/result"
 )
 
@@ -28,18 +29,18 @@ func (s *Service) DeploymentDiscover(ctx context.Context) (Result, error) {
 	runner := s.localRunner()
 	command, err := runner.Docker(ctx, "compose", "ls", "--all", "--format", "json")
 	if err != nil {
-		return Result{}, mapDockerCommandError(command, err, "无法发现本机 Compose 项目")
+		return Result{}, mapDockerCommandError(command, err, i18n.T("Unable to discover local Compose projects"))
 	}
 	var projects []struct {
 		Name        string
 		ConfigFiles string
 	}
 	if err := json.Unmarshal([]byte(command.Stdout), &projects); err != nil {
-		return Result{}, result.New("server", "Compose 项目列表格式无效")
+		return Result{}, result.New("server", i18n.T("Invalid Compose project list format"))
 	}
 	dirs, err := s.deploymentDirs()
 	if err != nil {
-		return Result{}, result.New("precondition", "本机部署定位记录不可用")
+		return Result{}, result.New("precondition", i18n.T("Local deployment locator record unavailable"))
 	}
 	registered := map[string]string{}
 	for _, dir := range dirs {
@@ -51,7 +52,7 @@ func (s *Service) DeploymentDiscover(ctx context.Context) (Result, error) {
 	skipped := []string{}
 	for _, project := range projects {
 		if ctx.Err() != nil {
-			return Result{}, result.New("network", "发现本机部署超时")
+			return Result{}, result.New("network", i18n.T("Local deployment discovery timed out"))
 		}
 		if !validComposeProject(project.Name) {
 			continue
@@ -100,7 +101,7 @@ func (s *Service) DeploymentDiscover(ctx context.Context) (Result, error) {
 		entries = append(entries, entry)
 	}
 	if ctx.Err() != nil {
-		return Result{}, result.New("network", "发现本机部署超时")
+		return Result{}, result.New("network", i18n.T("Local deployment discovery timed out"))
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Project < entries[j].Project })
 	sort.Strings(skipped)

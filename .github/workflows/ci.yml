@@ -40,16 +40,22 @@ jobs:
             $errors | ForEach-Object { Write-Error $_.Message }
             exit 1
           }
+      - name: Test PowerShell 5.1 installer without HTTP charset
+        if: runner.os == 'Windows'
+        run: python scripts/test-installer-ps51.py
   native-e2e:
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
+        locale: [C, zh_CN.UTF-8]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     env:
       LBCTL_NO_UPDATE_CHECK: '1'
       LANGBOT_TELEMETRY: '0'
+      LANG: ${{ matrix.locale }}
+      LC_ALL: ${{ matrix.locale }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -71,6 +77,10 @@ jobs:
           $bin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           "LANGBOT_HOME=$env:RUNNER_TEMP/lang517-native" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - if: runner.os != 'Windows'
+        run: python3 scripts/test-install-wizard.py "$RUNNER_TEMP/bin/lbctl"
+      - if: runner.os != 'Windows'
+        run: python3 scripts/test-progress.py "$RUNNER_TEMP/bin/lbctl"
+      - if: runner.os != 'Windows'
         run: sh scripts/test-native-e2e.sh
       - if: runner.os == 'Windows'
         shell: pwsh
@@ -80,7 +90,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: native-logs-${{ matrix.os }}
+          name: native-logs-${{ matrix.os }}-${{ matrix.locale }}
           path: ${{ runner.temp }}/lang517-native/instances/*/logs/
   build:
     runs-on: ubuntu-latest

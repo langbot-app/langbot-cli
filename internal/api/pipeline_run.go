@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"github.com/langbot-app/langbot-cli/internal/i18n"
 	"github.com/langbot-app/langbot-cli/internal/result"
 	"net/http"
 	"net/url"
@@ -17,7 +18,7 @@ func (c Client) PipelineRun(ctx context.Context, target Target, id, message stri
 	}
 	data, ok := redactConnectionSecret(resp.Data, target.secret()).(map[string]any)
 	if !ok {
-		return nil, result.New("incompatible", "试运行返回格式无效，执行状态未知；请勿自动重试")
+		return nil, result.New("incompatible", i18n.T("Invalid test response format; execution state unknown, do not retry automatically"))
 	}
 	return data, nil
 }

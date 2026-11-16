@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/gofrs/flock"
+	"github.com/langbot-app/langbot-cli/internal/i18n"
 )
 
 const (
@@ -44,42 +45,42 @@ func PreflightInstall(ctx context.Context, assets InstallAssets, runner Runner) 
 	dir := assets.Dir
 	ports, err := assets.Ports.hostPorts(assets.Port)
 	if err != nil || !ValidComposeProject(assets.Project) {
-		return nil, Problem{Kind: "input", Msg: "安装端口映射或 Compose project 无效"}
+		return nil, Problem{Kind: "input", Msg: i18n.T("Invalid installation port mapping or Compose project")}
 	}
 	checks := make([]Check, 0, 6)
 	add := func(name, status, reason string, detail any) {
 		checks = append(checks, Check{Name: name, Status: status, Reason: reason, Detail: detail})
 	}
 	if runner == nil {
-		return checks, Problem{Kind: "internal", Msg: "本地 Docker runner 未配置"}
+		return checks, Problem{Kind: "internal", Msg: i18n.T("Local Docker runner is not configured")}
 	}
 	if _, err := runner.Docker(ctx, "--version"); err != nil {
-		add("docker_cli", "error", "找不到可用的 Docker CLI", nil)
+		add("docker_cli", "error", i18n.T("No usable Docker CLI found"), nil)
 	} else {
-		add("docker_cli", "ok", "Docker CLI 可用", nil)
+		add("docker_cli", "ok", i18n.T("Docker CLI is available"), nil)
 	}
 	if result, err := runner.Docker(ctx, "info", "--format", "{{.ServerVersion}}"); err != nil {
 		problem := dockerProblem(result, err)
 		add("docker_daemon", "error", problem.Msg, nil)
 	} else {
-		add("docker_daemon", "ok", "Docker daemon 可用", nil)
+		add("docker_daemon", "ok", i18n.T("Docker daemon is available"), nil)
 	}
 	if result, err := runner.Docker(ctx, "compose", "version", "--short"); err != nil || !isComposeV2(result.Stdout) {
-		add("compose_v2", "error", "需要 Docker Compose v2 或更高版本", strings.TrimSpace(result.Stdout))
+		add("compose_v2", "error", i18n.T("Docker Compose v2 or newer is required"), strings.TrimSpace(result.Stdout))
 	} else {
-		add("compose_v2", "ok", "Docker Compose 插件可用", strings.TrimSpace(result.Stdout))
+		add("compose_v2", "ok", i18n.T("Docker Compose plugin is available"), strings.TrimSpace(result.Stdout))
 	}
 	if occupied, err := InstallProjectOccupied(ctx, runner, assets.Project); err != nil {
-		add("compose_project", "error", "无法检查受管 Compose project", assets.Project)
+		add("compose_project", "error", i18n.T("Unable to inspect managed Compose project"), assets.Project)
 	} else if occupied {
-		add("compose_project", "error", "受管 Compose project 已存在", assets.Project)
+		add("compose_project", "error", i18n.T("Managed Compose project already exists"), assets.Project)
 	} else {
-		add("compose_project", "ok", "受管 Compose project 未被占用", assets.Project)
+		add("compose_project", "ok", i18n.T("Managed Compose project is not in use"), assets.Project)
 	}
 	if err := ValidateInstallTarget(dir, true); err != nil {
-		add("install_dir", "error", "目标目录不为空或不可用", dir)
+		add("install_dir", "error", i18n.T("Target directory is not empty or unavailable"), dir)
 	} else {
-		add("install_dir", "ok", "目标目录可用", dir)
+		add("install_dir", "ok", i18n.T("Target directory available"), dir)
 	}
 	diskPath := dir
 	if _, err := os.Stat(diskPath); err != nil {
@@ -88,24 +89,24 @@ func PreflightInstall(ctx context.Context, assets InstallAssets, runner Runner) 
 		}
 	}
 	if free, err := availableBytes(diskPath); err != nil {
-		add("disk_space", "error", "无法读取可用磁盘空间", nil)
+		add("disk_space", "error", i18n.T("Unable to read available disk space"), nil)
 	} else if free < 2<<30 {
-		add("disk_space", "error", "可用磁盘空间低于 2 GiB", free)
+		add("disk_space", "error", i18n.T("Available disk space is below 2 GiB"), free)
 	} else {
-		add("disk_space", "ok", "可用磁盘空间充足", free)
+		add("disk_space", "ok", i18n.T("Available disk space is sufficient"), free)
 	}
 	for _, candidate := range ports {
 		if available, err := portAvailable(candidate); err != nil {
-			add("port", "error", "无法检查端口", candidate)
+			add("port", "error", i18n.T("Unable to check port"), candidate)
 		} else if !available {
-			add("port", "error", "安装所需端口已被占用", candidate)
+			add("port", "error", i18n.T("Required installation ports are in use"), candidate)
 		} else {
-			add("port", "ok", "端口可用", candidate)
+			add("port", "ok", i18n.T("Port available"), candidate)
 		}
 	}
 	for _, check := range checks {
 		if check.Status == "error" {
-			return checks, Problem{Kind: "precondition", Msg: "安装前置检查未通过"}
+			return checks, Problem{Kind: "precondition", Msg: i18n.T("Installation preflight failed")}
 		}
 	}
 	return checks, nil
@@ -113,7 +114,7 @@ func PreflightInstall(ctx context.Context, assets InstallAssets, runner Runner) 
 
 func InstallProjectOccupied(ctx context.Context, runner Runner, project string) (bool, error) {
 	if !ValidComposeProject(project) {
-		return false, errors.New("Compose project 名称无效")
+		return false, errors.New(i18n.T("Invalid Compose project name"))
 	}
 	filter := "label=com.docker.compose.project=" + project
 	for _, args := range [][]string{
@@ -138,20 +139,20 @@ func NewInstallAssets(dir, version, profile string, port int, network InstallNet
 	}
 	version = strings.TrimSpace(version)
 	if !releaseVersionPattern.MatchString(version) {
-		return InstallAssets{}, errors.New("版本必须为 vX.Y.Z 形式的稳定 Release tag")
+		return InstallAssets{}, errors.New(i18n.T("Version must be a stable Release tag in vX.Y.Z format"))
 	}
 	profile = strings.ToLower(strings.TrimSpace(profile))
 	if profile == "" {
 		profile = "basic"
 	}
 	if profile != "basic" && profile != "all" {
-		return InstallAssets{}, errors.New("profile 只支持 basic 或 all")
+		return InstallAssets{}, errors.New(i18n.T("profile only supports basic or all"))
 	}
 	if port == 0 {
 		port = defaultPort
 	}
 	if port < 1 || port > 65535 {
-		return InstallAssets{}, errors.New("端口必须在 1-65535 之间")
+		return InstallAssets{}, errors.New(i18n.T("Port must be between 1 and 65535"))
 	}
 	project, ports, err := resolveInstallNetwork(port, network)
 	if err != nil {
@@ -196,7 +197,7 @@ func (a InstallAssets) Record(deploymentID, imageDigest string) Record {
 
 func (a *InstallAssets) SetImageRepository(repository string) error {
 	if !regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._:/-]*$`).MatchString(repository) {
-		return errors.New("invalid image repository")
+		return errors.New(i18n.T("invalid image repository"))
 	}
 	a.Image = repository + ":" + a.Version
 	a.Compose = []byte(renderCompose(a.Image, a.Port, filepath.Join(a.Dir, "data", "box"), a.Ports))
@@ -270,7 +271,7 @@ func WithMutationLock(ctx context.Context, dir string, fn func() error) error {
 		if err == nil {
 			err = context.DeadlineExceeded
 		}
-		return fmt.Errorf("等待本地部署锁失败: %w", err)
+		return fmt.Errorf(i18n.T("Failed to acquire local deployment lock: %w"), err)
 	}
 	defer func() { _ = lock.Unlock() }()
 	return fn()

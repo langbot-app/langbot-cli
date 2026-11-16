@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"os"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/langbot-app/langbot-cli/internal/api"
@@ -18,7 +17,9 @@ import (
 	"github.com/langbot-app/langbot-cli/internal/clientidentity"
 	"github.com/langbot-app/langbot-cli/internal/config"
 	"github.com/langbot-app/langbot-cli/internal/deploy"
+	"github.com/langbot-app/langbot-cli/internal/i18n"
 	"github.com/langbot-app/langbot-cli/internal/output"
+	"github.com/langbot-app/langbot-cli/internal/progress"
 	"github.com/langbot-app/langbot-cli/internal/requestbody"
 	"github.com/langbot-app/langbot-cli/internal/result"
 	"github.com/langbot-app/langbot-cli/internal/telemetry"
@@ -26,6 +27,7 @@ import (
 )
 
 type Dependencies struct {
+	NoticeHome        string
 	Telemetry         *telemetry.Client
 	In                io.Reader
 	Out               io.Writer
@@ -44,6 +46,11 @@ type Dependencies struct {
 }
 
 type globalFlags struct {
+	notice         string
+	noticeMachine  bool
+	display        *progress.Display
+	language       string
+	verbose        bool
 	operationError error
 
 	asMember    bool
@@ -79,6 +86,34 @@ func Execute(ctx context.Context, args []string, deps Dependencies) int {
 	})
 	root := newRoot(deps, flags, service)
 	root.AddCommand(newUpdateCommand(deps, flags))
+	selected, remaining, _ := root.Find(args)
+	var parseErr error
+	if selected != nil {
+		parseErr = selected.ParseFlags(remaining)
+	}
+	_, formatErr := output.NormalizeFormat(flags.output)
+	machine := (flags.output != "" && formatErr == nil) || (selected != nil && selected.Name() == "schema")
+	if humanHelpRequest(root, selected, parseErr) {
+		machine = false
+	}
+	lang := i18n.English
+	if selected == nil || selected.Name() != "schema" || deps.NoticeHome != "" || !machine {
+		lang = i18n.Detect(flags.language, deps.LookupEnv, i18n.SystemLanguage)
+	}
+	verbose := flags.verbose
+	restoreLanguage := i18n.UseMode(lang, machine)
+	defer restoreLanguage()
+	if deps.NoticeHome != "" {
+		var notice bytes.Buffer
+		_ = i18n.FirstRun(deps.NoticeHome, &notice, lang)
+		flags.notice, flags.noticeMachine = notice.String(), machine
+	}
+	root = newRoot(deps, flags, service)
+	root.AddCommand(newUpdateCommand(deps, flags))
+	if _, file := deps.Err.(*os.File); file && selected != nil && !hasHelpFlag(args) && selected.Name() != "help" && selected.Name() != "schema" {
+		flags.display = progress.New(deps.Err, deps.LookupEnv, machine, verbose)
+		ctx = progress.WithContext(ctx, flags.display)
+	}
 	root.SetArgs(args)
 	var operation *telemetry.Operation
 	if selected, _, _ := root.Find(args); selected != nil && !hasHelpFlag(args) {
@@ -87,13 +122,17 @@ func Execute(ctx context.Context, args []string, deps Dependencies) int {
 		}
 	}
 	executed, err := root.ExecuteContextC(ctx)
+	showNotice(deps, flags)
+	if flags.display != nil {
+		flags.display.Finish(err == nil && flags.exitCode == 0)
+	}
 	if operation != nil {
 		operationErr := err
 		if operationErr == nil {
 			operationErr = flags.operationError
 		}
 		if operationErr == nil && flags.exitCode != 0 {
-			operationErr = fmt.Errorf("output failed")
+			operationErr = errors.New(i18n.T("output failed"))
 		}
 		code := ""
 		if operationErr != nil {
@@ -139,28 +178,34 @@ func normalizeDependencies(deps Dependencies) Dependencies {
 func newRoot(deps Dependencies, flags *globalFlags, service *app.Service) *cobra.Command {
 	root := &cobra.Command{
 		Use:           "lbctl",
-		Short:         "LangBot 服务管理 CLI",
+		Short:         i18n.T("LangBot service management CLI"),
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Args:          cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 0 {
-				return result.New("input", "未知命令或参数；请运行 lbctl --help 查看可用命令")
+				return result.New("input", i18n.T("Unknown command or argument; run lbctl --help for available commands"))
 			}
-			return cmd.Help()
+			if flags.outputSet {
+				return emitCommand(deps, flags, app.Result{Data: map[string]any{"command": "lbctl"}}, nil)
+			}
+			_, err := fmt.Fprintln(deps.Out, i18n.Human("LangBot · Production-grade platform for building agentic IM bots · Open source")+"\n\n"+i18n.Human("Deploy:    lbctl install · upgrade · uninstall")+"\n"+i18n.Human("Manage:    lbctl status · start · stop · restart · logs")+"\n"+i18n.Human("Configure: lbctl context · model · bot · pipeline")+"\n\n"+i18n.Human("All commands: lbctl --help"))
+			return err
 		},
 	}
 	root.SetOut(deps.Out)
 	root.SetErr(deps.Err)
 	root.SetFlagErrorFunc(commandFlagError)
 	persistent := root.PersistentFlags()
-	persistent.BoolVar(&flags.asMember, "as-member", false, "使用成员会话而不是 API Key")
-	persistent.StringVar(&flags.config, "config", "", "配置文件路径；其次使用 LANGBOT_CONFIG，再使用 ~/.config/langbot/config.yaml")
-	persistent.StringVar(&flags.context, "context", "", "使用指定 context")
-	persistent.StringVar(&flags.endpoint, "endpoint", "", "临时服务地址")
-	persistent.StringVar(&flags.timeout, "timeout", "", "操作超时时间")
-	persistent.BoolVar(&flags.apiKeyStdin, "api-key-stdin", false, "从 stdin 读取本次请求的 API Key，等待上限由 --timeout 控制")
-	persistent.StringVarP(&flags.output, "output", "o", "", "输出格式：json 或 yaml；默认简洁模式（schema 默认 JSON）")
+	persistent.StringVar(&flags.language, "lang", "", i18n.T("Output language: en or zh-Hans (auto-detected by default)"))
+	persistent.BoolVar(&flags.verbose, "verbose", false, i18n.T("Show full subprocess output"))
+	persistent.BoolVar(&flags.asMember, "as-member", false, i18n.T("Use a member session instead of an API Key"))
+	persistent.StringVar(&flags.config, "config", "", i18n.T("Configuration file path; otherwise LANGBOT_CONFIG, then ~/.config/langbot/config.yaml"))
+	persistent.StringVar(&flags.context, "context", "", i18n.T("Use the specified context"))
+	persistent.StringVar(&flags.endpoint, "endpoint", "", i18n.T("Temporary service URL"))
+	persistent.StringVar(&flags.timeout, "timeout", "", i18n.T("Operation timeout"))
+	persistent.BoolVar(&flags.apiKeyStdin, "api-key-stdin", false, i18n.T("Read the request API Key from stdin; bounded by --timeout"))
+	persistent.StringVarP(&flags.output, "output", "o", "", i18n.T("Output format: json or yaml; defaults to concise output (schema defaults to JSON)"))
 	root.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
 		commandPath := strings.ReplaceAll(strings.TrimPrefix(cmd.CommandPath(), "lbctl "), " ", ".")
 		cmd.SetContext(clientidentity.WithContext(cmd.Context(), deps.Version, commandPath))
@@ -174,14 +219,14 @@ func newRoot(deps Dependencies, flags *globalFlags, service *app.Service) *cobra
 		selectOutput(cmd, flags)
 		flags.configSet = cmd.InheritedFlags().Changed("config")
 		if flags.configSet && strings.TrimSpace(flags.config) == "" {
-			return result.New("input", "config 不能为空")
+			return result.New("input", i18n.T("config must not be empty"))
 		}
 		flags.contextSet = cmd.InheritedFlags().Changed("context")
 		flags.endpointSet = cmd.InheritedFlags().Changed("endpoint")
 		flags.timeoutSet = cmd.InheritedFlags().Changed("timeout")
 		if flags.outputSet {
 			if _, err := output.NormalizeFormat(flags.output); err != nil {
-				return result.New("input", "输出格式无效，请使用 json 或 yaml")
+				return result.New("input", i18n.T("Invalid output format; use json or yaml"))
 			}
 		}
 		return nil
@@ -190,6 +235,7 @@ func newRoot(deps Dependencies, flags *globalFlags, service *app.Service) *cobra
 	root.AddCommand(newAuthCommand(service, deps, flags))
 	addImageDownload(root, service, deps, flags)
 	root.AddCommand(newStatusCommand(service, deps, flags))
+	root.AddCommand(newInstanceListCommand(service, deps, flags))
 	root.AddCommand(newDoctorCommand(service, deps, flags))
 	root.AddCommand(newInstallCommand(service, deps, flags))
 	root.AddCommand(newAutostartCommand(service, deps, flags))
@@ -225,18 +271,18 @@ func newRoot(deps Dependencies, flags *globalFlags, service *app.Service) *cobra
 }
 
 func newProviderCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
-	command := &cobra.Command{Use: "provider", Short: "管理 Provider", Args: cobra.NoArgs}
-	command.AddCommand(&cobra.Command{Use: "list", Short: "列出 Provider", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+	command := &cobra.Command{Use: "provider", Short: i18n.T("Manage Providers"), Args: cobra.NoArgs}
+	command.AddCommand(&cobra.Command{Use: "list", Short: i18n.T("List Providers"), Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		return emitCall(deps, flags, func() (app.Result, error) { return service.ProviderList(cmd.Context(), connectionOptions(flags)) })
 	}})
-	command.AddCommand(&cobra.Command{Use: "get <uuid>", Short: "读取 Provider", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	command.AddCommand(&cobra.Command{Use: "get <uuid>", Short: i18n.T("Read a Provider"), Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		return emitCall(deps, flags, func() (app.Result, error) {
 			return service.ProviderGet(cmd.Context(), args[0], connectionOptions(flags))
 		})
 	}})
 	var createFile string
 	var createDryRun bool
-	create := &cobra.Command{Use: "create", Short: "创建 Provider", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+	create := &cobra.Command{Use: "create", Short: i18n.T("Create a Provider"), Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		body, err := loadRequestBody(cmd.Context(), createFile, flags.apiKeyStdin, deps.In)
 		if err != nil {
 			return emitCommand(deps, flags, app.Result{}, err)
@@ -245,12 +291,12 @@ func newProviderCommand(service *app.Service, deps Dependencies, flags *globalFl
 			return service.ProviderCreate(cmd.Context(), body, createDryRun, connectionOptions(flags))
 		})
 	}}
-	create.Flags().StringVar(&createFile, "file", "", "JSON/YAML 请求体文件，使用 - 从 stdin 读取")
-	create.Flags().BoolVar(&createDryRun, "dry-run", false, "只检查前置条件，不写入")
+	create.Flags().StringVar(&createFile, "file", "", i18n.T("JSON/YAML request body file; use - to read stdin"))
+	create.Flags().BoolVar(&createDryRun, "dry-run", false, i18n.T("Check prerequisites without writing"))
 	command.AddCommand(create)
 	var updateFile string
 	var updateDryRun bool
-	update := &cobra.Command{Use: "update <uuid>", Short: "更新 Provider", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	update := &cobra.Command{Use: "update <uuid>", Short: i18n.T("Update a Provider"), Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		body, err := loadRequestBody(cmd.Context(), updateFile, flags.apiKeyStdin, deps.In)
 		if err != nil {
 			return emitCommand(deps, flags, app.Result{}, err)
@@ -259,58 +305,58 @@ func newProviderCommand(service *app.Service, deps Dependencies, flags *globalFl
 			return service.ProviderUpdate(cmd.Context(), args[0], body, updateDryRun, connectionOptions(flags))
 		})
 	}}
-	update.Flags().StringVar(&updateFile, "file", "", "JSON/YAML 请求体文件，使用 - 从 stdin 读取")
-	update.Flags().BoolVar(&updateDryRun, "dry-run", false, "只检查前置条件，不写入")
+	update.Flags().StringVar(&updateFile, "file", "", i18n.T("JSON/YAML request body file; use - to read stdin"))
+	update.Flags().BoolVar(&updateDryRun, "dry-run", false, i18n.T("Check prerequisites without writing"))
 	command.AddCommand(update)
 	var deleteYes, deleteDryRun bool
-	deleteCommand := &cobra.Command{Use: "delete <uuid>", Short: "删除 Provider", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	deleteCommand := &cobra.Command{Use: "delete <uuid>", Short: i18n.T("Delete a Provider"), Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		return emitCall(deps, flags, func() (app.Result, error) {
 			return service.ProviderDelete(cmd.Context(), args[0], deleteYes, deleteDryRun, connectionOptions(flags))
 		})
 	}}
-	deleteCommand.Flags().BoolVar(&deleteYes, "yes", false, "确认删除")
-	deleteCommand.Flags().BoolVar(&deleteDryRun, "dry-run", false, "只检查前置条件，不删除")
+	deleteCommand.Flags().BoolVar(&deleteYes, "yes", false, i18n.T("Confirm deletion"))
+	deleteCommand.Flags().BoolVar(&deleteDryRun, "dry-run", false, i18n.T("Check prerequisites without deleting"))
 	command.AddCommand(deleteCommand)
 	var scanType string
 	var scanDryRun bool
-	scan := &cobra.Command{Use: "scan-models <uuid>", Short: "扫描 Provider 模型", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	scan := &cobra.Command{Use: "scan-models <uuid>", Short: i18n.T("Scan Provider models"), Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		return emitCall(deps, flags, func() (app.Result, error) {
 			return service.ProviderScanModels(cmd.Context(), args[0], strings.ToLower(strings.TrimSpace(scanType)), scanDryRun, connectionOptions(flags))
 		})
 	}}
-	scan.Flags().StringVar(&scanType, "type", "", "模型类型：llm、embedding 或 rerank")
-	scan.Flags().BoolVar(&scanDryRun, "dry-run", false, "只检查前置条件，不调用服务")
+	scan.Flags().StringVar(&scanType, "type", "", i18n.T("Model type: llm, embedding or rerank"))
+	scan.Flags().BoolVar(&scanDryRun, "dry-run", false, i18n.T("Check prerequisites without calling the service"))
 	command.AddCommand(scan)
 	return command
 }
 
 func newModelCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
-	command := &cobra.Command{Use: "model", Short: "管理 Model", Args: cobra.NoArgs}
+	command := &cobra.Command{Use: "model", Short: i18n.T("Manage Models"), Args: cobra.NoArgs}
 	var listType, providerUUID string
-	list := &cobra.Command{Use: "list", Short: "列出 Model", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+	list := &cobra.Command{Use: "list", Short: i18n.T("List Models"), Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		return emitCall(deps, flags, func() (app.Result, error) {
 			return service.ModelList(cmd.Context(), strings.ToLower(strings.TrimSpace(listType)), providerUUID, connectionOptions(flags))
 		})
 	}}
-	list.Flags().StringVar(&listType, "type", "", "模型类型：llm、embedding、rerank、asr 或 tts；不指定时聚合三类原有模型")
-	list.Flags().StringVar(&providerUUID, "provider", "", "按 Provider UUID 筛选")
+	list.Flags().StringVar(&listType, "type", "", i18n.T("Model type: llm, embedding, rerank, asr or tts; defaults to aggregating the three original types"))
+	list.Flags().StringVar(&providerUUID, "provider", "", i18n.T("Filter by Provider UUID"))
 	command.AddCommand(list)
 	var getType string
-	get := &cobra.Command{Use: "get <uuid>", Short: "读取 Model", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	get := &cobra.Command{Use: "get <uuid>", Short: i18n.T("Read a Model"), Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		if strings.TrimSpace(getType) == "" {
-			return emitCommand(deps, flags, app.Result{}, result.New("input", "model get 必须指定 --type"))
+			return emitCommand(deps, flags, app.Result{}, result.New("input", i18n.T("model get requires --type")))
 		}
 		return emitCall(deps, flags, func() (app.Result, error) {
 			return service.ModelGet(cmd.Context(), strings.ToLower(strings.TrimSpace(getType)), args[0], connectionOptions(flags))
 		})
 	}}
-	get.Flags().StringVar(&getType, "type", "", "模型类型：llm、embedding、rerank、asr 或 tts（必填）")
+	get.Flags().StringVar(&getType, "type", "", i18n.T("Model type: llm, embedding, rerank, asr or tts (required)"))
 	command.AddCommand(get)
 	var createType, createFile string
 	var createDryRun bool
-	create := &cobra.Command{Use: "create", Short: "创建 Model", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+	create := &cobra.Command{Use: "create", Short: i18n.T("Create a Model"), Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		if strings.TrimSpace(createType) == "" {
-			return emitCommand(deps, flags, app.Result{}, result.New("input", "model create 必须指定 --type"))
+			return emitCommand(deps, flags, app.Result{}, result.New("input", i18n.T("model create requires --type")))
 		}
 		body, err := loadRequestBody(cmd.Context(), createFile, flags.apiKeyStdin, deps.In)
 		if err != nil {
@@ -320,15 +366,15 @@ func newModelCommand(service *app.Service, deps Dependencies, flags *globalFlags
 			return service.ModelCreate(cmd.Context(), strings.ToLower(strings.TrimSpace(createType)), body, createDryRun, connectionOptions(flags))
 		})
 	}}
-	create.Flags().StringVar(&createType, "type", "", "模型类型：llm、embedding、rerank、asr 或 tts（必填）")
-	create.Flags().StringVar(&createFile, "file", "", "JSON/YAML 请求体文件，使用 - 从 stdin 读取")
-	create.Flags().BoolVar(&createDryRun, "dry-run", false, "只检查前置条件，不写入")
+	create.Flags().StringVar(&createType, "type", "", i18n.T("Model type: llm, embedding, rerank, asr or tts (required)"))
+	create.Flags().StringVar(&createFile, "file", "", i18n.T("JSON/YAML request body file; use - to read stdin"))
+	create.Flags().BoolVar(&createDryRun, "dry-run", false, i18n.T("Check prerequisites without writing"))
 	command.AddCommand(create)
 	var updateType, updateFile string
 	var updateDryRun bool
-	update := &cobra.Command{Use: "update <uuid>", Short: "更新 Model", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	update := &cobra.Command{Use: "update <uuid>", Short: i18n.T("Update a Model"), Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		if strings.TrimSpace(updateType) == "" {
-			return emitCommand(deps, flags, app.Result{}, result.New("input", "model update 必须指定 --type"))
+			return emitCommand(deps, flags, app.Result{}, result.New("input", i18n.T("model update requires --type")))
 		}
 		body, err := loadRequestBody(cmd.Context(), updateFile, flags.apiKeyStdin, deps.In)
 		if err != nil {
@@ -338,29 +384,29 @@ func newModelCommand(service *app.Service, deps Dependencies, flags *globalFlags
 			return service.ModelUpdate(cmd.Context(), strings.ToLower(strings.TrimSpace(updateType)), args[0], body, updateDryRun, connectionOptions(flags))
 		})
 	}}
-	update.Flags().StringVar(&updateType, "type", "", "模型类型：llm、embedding、rerank、asr 或 tts（必填）")
-	update.Flags().StringVar(&updateFile, "file", "", "JSON/YAML 请求体文件，使用 - 从 stdin 读取")
-	update.Flags().BoolVar(&updateDryRun, "dry-run", false, "只检查前置条件，不写入")
+	update.Flags().StringVar(&updateType, "type", "", i18n.T("Model type: llm, embedding, rerank, asr or tts (required)"))
+	update.Flags().StringVar(&updateFile, "file", "", i18n.T("JSON/YAML request body file; use - to read stdin"))
+	update.Flags().BoolVar(&updateDryRun, "dry-run", false, i18n.T("Check prerequisites without writing"))
 	command.AddCommand(update)
 	var deleteType string
 	var deleteYes, deleteDryRun bool
-	deleteCommand := &cobra.Command{Use: "delete <uuid>", Short: "删除 Model", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	deleteCommand := &cobra.Command{Use: "delete <uuid>", Short: i18n.T("Delete a Model"), Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		if strings.TrimSpace(deleteType) == "" {
-			return emitCommand(deps, flags, app.Result{}, result.New("input", "model delete 必须指定 --type"))
+			return emitCommand(deps, flags, app.Result{}, result.New("input", i18n.T("model delete requires --type")))
 		}
 		return emitCall(deps, flags, func() (app.Result, error) {
 			return service.ModelDelete(cmd.Context(), strings.ToLower(strings.TrimSpace(deleteType)), args[0], deleteYes, deleteDryRun, connectionOptions(flags))
 		})
 	}}
-	deleteCommand.Flags().StringVar(&deleteType, "type", "", "模型类型：llm、embedding、rerank、asr 或 tts（必填）")
-	deleteCommand.Flags().BoolVar(&deleteYes, "yes", false, "确认删除")
-	deleteCommand.Flags().BoolVar(&deleteDryRun, "dry-run", false, "只检查前置条件，不删除")
+	deleteCommand.Flags().StringVar(&deleteType, "type", "", i18n.T("Model type: llm, embedding, rerank, asr or tts (required)"))
+	deleteCommand.Flags().BoolVar(&deleteYes, "yes", false, i18n.T("Confirm deletion"))
+	deleteCommand.Flags().BoolVar(&deleteDryRun, "dry-run", false, i18n.T("Check prerequisites without deleting"))
 	command.AddCommand(deleteCommand)
 	var testType, testFile string
 	var testDryRun bool
-	test := &cobra.Command{Use: "test <uuid>", Short: "测试 Model", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	test := &cobra.Command{Use: "test <uuid>", Short: i18n.T("Test a Model"), Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		if strings.TrimSpace(testType) == "" {
-			return emitCommand(deps, flags, app.Result{}, result.New("input", "model test 必须指定 --type"))
+			return emitCommand(deps, flags, app.Result{}, result.New("input", i18n.T("model test requires --type")))
 		}
 		body, err := loadOptionalRequestBody(cmd.Context(), testFile, flags.apiKeyStdin, deps.In)
 		if err != nil {
@@ -370,17 +416,17 @@ func newModelCommand(service *app.Service, deps Dependencies, flags *globalFlags
 			return service.ModelTest(cmd.Context(), strings.ToLower(strings.TrimSpace(testType)), args[0], body, testDryRun, connectionOptions(flags))
 		})
 	}}
-	test.Flags().StringVar(&testType, "type", "", "模型类型：llm、embedding、rerank、asr 或 tts（必填）")
-	test.Flags().StringVar(&testFile, "file", "", "JSON/YAML 请求体文件，使用 - 从 stdin 读取；省略时使用空对象")
-	test.Flags().BoolVar(&testDryRun, "dry-run", false, "只检查前置条件，不调用服务")
+	test.Flags().StringVar(&testType, "type", "", i18n.T("Model type: llm, embedding, rerank, asr or tts (required)"))
+	test.Flags().StringVar(&testFile, "file", "", i18n.T("JSON/YAML request body file; use - to read stdin; defaults to an empty object"))
+	test.Flags().BoolVar(&testDryRun, "dry-run", false, i18n.T("Check prerequisites without calling the service"))
 	command.AddCommand(test)
 	return command
 }
 
 func newBotCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
-	command := &cobra.Command{Use: "bot", Short: "管理 Bot 资源", Args: cobra.NoArgs}
+	command := &cobra.Command{Use: "bot", Short: i18n.T("Manage Bot resources"), Args: cobra.NoArgs}
 	command.AddCommand(&cobra.Command{
-		Use: "list", Short: "列出 Bot", Args: cobra.NoArgs,
+		Use: "list", Short: i18n.T("List Bots"), Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return emitCall(deps, flags, func() (app.Result, error) {
 				return service.BotList(cmd.Context(), connectionOptions(flags))
@@ -388,7 +434,7 @@ func newBotCommand(service *app.Service, deps Dependencies, flags *globalFlags) 
 		},
 	})
 	command.AddCommand(&cobra.Command{
-		Use: "get <id>", Short: "读取指定 Bot", Args: cobra.ExactArgs(1),
+		Use: "get <id>", Short: i18n.T("Read a Bot"), Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return emitCall(deps, flags, func() (app.Result, error) {
 				return service.BotGet(cmd.Context(), args[0], connectionOptions(flags))
@@ -405,7 +451,7 @@ func newBotCreateCommand(service *app.Service, deps Dependencies, flags *globalF
 	var file string
 	var dryRun bool
 	command := &cobra.Command{
-		Use: "create", Short: "创建 Bot", Args: cobra.NoArgs,
+		Use: "create", Short: i18n.T("Create a Bot"), Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			body, err := loadRequestBody(cmd.Context(), file, flags.apiKeyStdin, deps.In)
 			if err != nil {
@@ -416,8 +462,8 @@ func newBotCreateCommand(service *app.Service, deps Dependencies, flags *globalF
 			})
 		},
 	}
-	command.Flags().StringVar(&file, "file", "", "JSON/YAML 请求体文件，使用 - 从 stdin 读取")
-	command.Flags().BoolVar(&dryRun, "dry-run", false, "只检查目标和操作前提，不写入")
+	command.Flags().StringVar(&file, "file", "", i18n.T("JSON/YAML request body file; use - to read stdin"))
+	command.Flags().BoolVar(&dryRun, "dry-run", false, i18n.T("Check target and operation prerequisites without writing"))
 	return command
 }
 
@@ -425,7 +471,7 @@ func newBotUpdateCommand(service *app.Service, deps Dependencies, flags *globalF
 	var file string
 	var dryRun bool
 	command := &cobra.Command{
-		Use: "update <id>", Short: "更新 Bot", Args: cobra.ExactArgs(1),
+		Use: "update <id>", Short: i18n.T("Update a Bot"), Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			body, err := loadRequestBody(cmd.Context(), file, flags.apiKeyStdin, deps.In)
 			if err != nil {
@@ -436,8 +482,8 @@ func newBotUpdateCommand(service *app.Service, deps Dependencies, flags *globalF
 			})
 		},
 	}
-	command.Flags().StringVar(&file, "file", "", "JSON/YAML 请求体文件，使用 - 从 stdin 读取")
-	command.Flags().BoolVar(&dryRun, "dry-run", false, "只检查目标和操作前提，不写入")
+	command.Flags().StringVar(&file, "file", "", i18n.T("JSON/YAML request body file; use - to read stdin"))
+	command.Flags().BoolVar(&dryRun, "dry-run", false, i18n.T("Check target and operation prerequisites without writing"))
 	return command
 }
 
@@ -445,22 +491,22 @@ func newBotDeleteCommand(service *app.Service, deps Dependencies, flags *globalF
 	var yes bool
 	var dryRun bool
 	command := &cobra.Command{
-		Use: "delete <id>", Short: "删除 Bot", Args: cobra.ExactArgs(1),
+		Use: "delete <id>", Short: i18n.T("Delete a Bot"), Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return emitCall(deps, flags, func() (app.Result, error) {
 				return service.BotDelete(cmd.Context(), args[0], yes, dryRun, connectionOptions(flags))
 			})
 		},
 	}
-	command.Flags().BoolVar(&yes, "yes", false, "确认删除")
-	command.Flags().BoolVar(&dryRun, "dry-run", false, "只检查目标和操作前提，不写入")
+	command.Flags().BoolVar(&yes, "yes", false, i18n.T("Confirm deletion"))
+	command.Flags().BoolVar(&dryRun, "dry-run", false, i18n.T("Check target and operation prerequisites without writing"))
 	return command
 }
 
 func newPipelineCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
-	command := &cobra.Command{Use: "pipeline", Short: "管理 Pipeline 资源", Args: cobra.NoArgs}
+	command := &cobra.Command{Use: "pipeline", Short: i18n.T("Manage Pipeline resources"), Args: cobra.NoArgs}
 	command.AddCommand(&cobra.Command{
-		Use: "list", Short: "列出 Pipeline", Args: cobra.NoArgs,
+		Use: "list", Short: i18n.T("List Pipelines"), Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return emitCall(deps, flags, func() (app.Result, error) {
 				return service.PipelineList(cmd.Context(), connectionOptions(flags))
@@ -468,7 +514,7 @@ func newPipelineCommand(service *app.Service, deps Dependencies, flags *globalFl
 		},
 	})
 	command.AddCommand(&cobra.Command{
-		Use: "get <id>", Short: "读取指定 Pipeline", Args: cobra.ExactArgs(1),
+		Use: "get <id>", Short: i18n.T("Read a Pipeline"), Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return emitCall(deps, flags, func() (app.Result, error) {
 				return service.PipelineGet(cmd.Context(), args[0], connectionOptions(flags))
@@ -487,7 +533,7 @@ func newPipelineApplyCommand(service *app.Service, deps Dependencies, flags *glo
 	var file string
 	var dryRun bool
 	command := &cobra.Command{
-		Use: "apply", Short: "创建或更新 Pipeline", Args: cobra.NoArgs,
+		Use: "apply", Short: i18n.T("Create or update a Pipeline"), Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			body, err := loadRequestBody(cmd.Context(), file, flags.apiKeyStdin, deps.In)
 			if err != nil {
@@ -498,22 +544,22 @@ func newPipelineApplyCommand(service *app.Service, deps Dependencies, flags *glo
 			})
 		},
 	}
-	command.Flags().StringVar(&file, "file", "", "JSON/YAML 请求体文件，使用 - 从 stdin 读取")
-	command.Flags().BoolVar(&dryRun, "dry-run", false, "只检查目标和操作前提，不写入")
+	command.Flags().StringVar(&file, "file", "", i18n.T("JSON/YAML request body file; use - to read stdin"))
+	command.Flags().BoolVar(&dryRun, "dry-run", false, i18n.T("Check target and operation prerequisites without writing"))
 	return command
 }
 
 func newPipelineCopyCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
 	var dryRun bool
 	command := &cobra.Command{
-		Use: "copy <id>", Short: "复制 Pipeline", Args: cobra.ExactArgs(1),
+		Use: "copy <id>", Short: i18n.T("Copy a Pipeline"), Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return emitCall(deps, flags, func() (app.Result, error) {
 				return service.PipelineCopy(cmd.Context(), args[0], dryRun, connectionOptions(flags))
 			})
 		},
 	}
-	command.Flags().BoolVar(&dryRun, "dry-run", false, "只检查目标和操作前提，不写入")
+	command.Flags().BoolVar(&dryRun, "dry-run", false, i18n.T("Check target and operation prerequisites without writing"))
 	return command
 }
 
@@ -521,40 +567,40 @@ func newPipelineDeleteCommand(service *app.Service, deps Dependencies, flags *gl
 	var yes bool
 	var dryRun bool
 	command := &cobra.Command{
-		Use: "delete <id>", Short: "删除 Pipeline", Args: cobra.ExactArgs(1),
+		Use: "delete <id>", Short: i18n.T("Delete a Pipeline"), Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return emitCall(deps, flags, func() (app.Result, error) {
 				return service.PipelineDelete(cmd.Context(), args[0], yes, dryRun, connectionOptions(flags))
 			})
 		},
 	}
-	command.Flags().BoolVar(&yes, "yes", false, "确认删除")
-	command.Flags().BoolVar(&dryRun, "dry-run", false, "只检查目标和操作前提，不写入")
+	command.Flags().BoolVar(&yes, "yes", false, i18n.T("Confirm deletion"))
+	command.Flags().BoolVar(&dryRun, "dry-run", false, i18n.T("Check target and operation prerequisites without writing"))
 	return command
 }
 
 func newTaskCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
-	command := &cobra.Command{Use: "task", Short: "查看异步任务", Args: cobra.NoArgs}
+	command := &cobra.Command{Use: "task", Short: i18n.T("Show an asynchronous task"), Args: cobra.NoArgs}
 	var taskType, taskKind string
 	list := &cobra.Command{
-		Use: "list", Short: "列出异步任务", Args: cobra.NoArgs,
+		Use: "list", Short: i18n.T("List asynchronous tasks"), Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return emitCall(deps, flags, func() (app.Result, error) {
 				return service.TaskList(cmd.Context(), taskType, taskKind, connectionOptions(flags))
 			})
 		},
 	}
-	list.Flags().StringVar(&taskType, "type", "", "按任务类型筛选")
-	list.Flags().StringVar(&taskKind, "kind", "", "按任务 kind 筛选")
+	list.Flags().StringVar(&taskType, "type", "", i18n.T("Filter by task type"))
+	list.Flags().StringVar(&taskKind, "kind", "", i18n.T("Filter by task kind"))
 	command.AddCommand(list)
 	var wait bool
 	var pollInterval time.Duration
 	var waitTimeout time.Duration
 	get := &cobra.Command{
-		Use: "get <id>", Short: "读取异步任务状态", Args: cobra.ExactArgs(1),
+		Use: "get <id>", Short: i18n.T("Read asynchronous task status"), Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if wait && (pollInterval <= 0 || waitTimeout <= 0) {
-				return emitCommand(deps, flags, app.Result{}, result.New("input", "等待间隔和等待超时必须为正数"))
+				return emitCommand(deps, flags, app.Result{}, result.New("input", i18n.T("Polling interval and wait timeout must be positive")))
 			}
 			return emitCall(deps, flags, func() (app.Result, error) {
 				options := connectionOptions(flags)
@@ -567,26 +613,26 @@ func newTaskCommand(service *app.Service, deps Dependencies, flags *globalFlags)
 			})
 		},
 	}
-	get.Flags().BoolVar(&wait, "wait", false, "等待任务进入终态")
-	get.Flags().DurationVar(&pollInterval, "poll-interval", time.Second, "任务轮询间隔")
-	get.Flags().DurationVar(&waitTimeout, "wait-timeout", 5*time.Minute, "本地等待超时")
+	get.Flags().BoolVar(&wait, "wait", false, i18n.T("Wait for the task to reach a terminal state"))
+	get.Flags().DurationVar(&pollInterval, "poll-interval", time.Second, i18n.T("Task polling interval"))
+	get.Flags().DurationVar(&waitTimeout, "wait-timeout", 5*time.Minute, i18n.T("Local wait timeout"))
 	command.AddCommand(get)
 	return command
 }
 
 func newKnowledgeBaseCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
-	command := &cobra.Command{Use: "knowledge-base", Aliases: []string{"kb"}, Short: "管理知识库", Args: cobra.NoArgs}
-	command.AddCommand(&cobra.Command{Use: "list", Short: "列出知识库", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+	command := &cobra.Command{Use: "knowledge-base", Aliases: []string{"kb"}, Short: i18n.T("Manage knowledge bases"), Args: cobra.NoArgs}
+	command.AddCommand(&cobra.Command{Use: "list", Short: i18n.T("List knowledge bases"), Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		return emitCall(deps, flags, func() (app.Result, error) { return service.KnowledgeBaseList(cmd.Context(), connectionOptions(flags)) })
 	}})
-	command.AddCommand(&cobra.Command{Use: "get <id>", Short: "读取知识库", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	command.AddCommand(&cobra.Command{Use: "get <id>", Short: i18n.T("Read a knowledge base"), Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		return emitCall(deps, flags, func() (app.Result, error) {
 			return service.KnowledgeBaseGet(cmd.Context(), args[0], connectionOptions(flags))
 		})
 	}})
 	var createFile string
 	var createDryRun bool
-	create := &cobra.Command{Use: "create", Short: "创建知识库", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+	create := &cobra.Command{Use: "create", Short: i18n.T("Create a knowledge base"), Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		body, err := loadRequestBody(cmd.Context(), createFile, flags.apiKeyStdin, deps.In)
 		if err != nil {
 			return emitCommand(deps, flags, app.Result{}, err)
@@ -595,12 +641,12 @@ func newKnowledgeBaseCommand(service *app.Service, deps Dependencies, flags *glo
 			return service.KnowledgeBaseCreate(cmd.Context(), body, createDryRun, connectionOptions(flags))
 		})
 	}}
-	create.Flags().StringVar(&createFile, "file", "", "JSON/YAML 请求体文件，使用 - 从 stdin 读取")
-	create.Flags().BoolVar(&createDryRun, "dry-run", false, "只检查前置条件，不写入")
+	create.Flags().StringVar(&createFile, "file", "", i18n.T("JSON/YAML request body file; use - to read stdin"))
+	create.Flags().BoolVar(&createDryRun, "dry-run", false, i18n.T("Check prerequisites without writing"))
 	command.AddCommand(create)
 	var updateFile string
 	var updateDryRun bool
-	update := &cobra.Command{Use: "update <id>", Short: "更新知识库", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	update := &cobra.Command{Use: "update <id>", Short: i18n.T("Update a knowledge base"), Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		body, err := loadRequestBody(cmd.Context(), updateFile, flags.apiKeyStdin, deps.In)
 		if err != nil {
 			return emitCommand(deps, flags, app.Result{}, err)
@@ -609,20 +655,20 @@ func newKnowledgeBaseCommand(service *app.Service, deps Dependencies, flags *glo
 			return service.KnowledgeBaseUpdate(cmd.Context(), args[0], body, updateDryRun, connectionOptions(flags))
 		})
 	}}
-	update.Flags().StringVar(&updateFile, "file", "", "JSON/YAML 请求体文件，使用 - 从 stdin 读取")
-	update.Flags().BoolVar(&updateDryRun, "dry-run", false, "只检查前置条件，不写入")
+	update.Flags().StringVar(&updateFile, "file", "", i18n.T("JSON/YAML request body file; use - to read stdin"))
+	update.Flags().BoolVar(&updateDryRun, "dry-run", false, i18n.T("Check prerequisites without writing"))
 	command.AddCommand(update)
 	var deleteYes, deleteDryRun bool
-	deleteCommand := &cobra.Command{Use: "delete <id>", Short: "删除知识库", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	deleteCommand := &cobra.Command{Use: "delete <id>", Short: i18n.T("Delete a knowledge base"), Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		return emitCall(deps, flags, func() (app.Result, error) {
 			return service.KnowledgeBaseDelete(cmd.Context(), args[0], deleteYes, deleteDryRun, connectionOptions(flags))
 		})
 	}}
-	deleteCommand.Flags().BoolVar(&deleteYes, "yes", false, "确认删除")
-	deleteCommand.Flags().BoolVar(&deleteDryRun, "dry-run", false, "只检查前置条件，不写入")
+	deleteCommand.Flags().BoolVar(&deleteYes, "yes", false, i18n.T("Confirm deletion"))
+	deleteCommand.Flags().BoolVar(&deleteDryRun, "dry-run", false, i18n.T("Check prerequisites without writing"))
 	command.AddCommand(deleteCommand)
 	var retrieveFile string
-	retrieve := &cobra.Command{Use: "retrieve <id>", Short: "检索知识库", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	retrieve := &cobra.Command{Use: "retrieve <id>", Short: i18n.T("Search a knowledge base"), Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		body, err := loadRequestBody(cmd.Context(), retrieveFile, flags.apiKeyStdin, deps.In)
 		if err != nil {
 			return emitCommand(deps, flags, app.Result{}, err)
@@ -631,22 +677,22 @@ func newKnowledgeBaseCommand(service *app.Service, deps Dependencies, flags *glo
 			return service.KnowledgeBaseRetrieve(cmd.Context(), args[0], body, connectionOptions(flags))
 		})
 	}}
-	retrieve.Flags().StringVar(&retrieveFile, "file", "", "JSON/YAML 请求体文件，使用 - 从 stdin 读取")
+	retrieve.Flags().StringVar(&retrieveFile, "file", "", i18n.T("JSON/YAML request body file; use - to read stdin"))
 	command.AddCommand(retrieve)
-	files := &cobra.Command{Use: "file", Short: "管理知识库文件", Args: cobra.NoArgs}
-	files.AddCommand(&cobra.Command{Use: "list <id>", Short: "列出知识库文件", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	files := &cobra.Command{Use: "file", Short: i18n.T("Manage knowledge-base files"), Args: cobra.NoArgs}
+	files.AddCommand(&cobra.Command{Use: "list <id>", Short: i18n.T("List knowledge-base files"), Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		return emitCall(deps, flags, func() (app.Result, error) {
 			return service.KnowledgeBaseFileList(cmd.Context(), args[0], connectionOptions(flags))
 		})
 	}})
 	var fileYes, fileDryRun bool
-	fileDelete := &cobra.Command{Use: "delete <id> <file-id>", Short: "删除知识库文件", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
+	fileDelete := &cobra.Command{Use: "delete <id> <file-id>", Short: i18n.T("Delete a knowledge-base file"), Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
 		return emitCall(deps, flags, func() (app.Result, error) {
 			return service.KnowledgeBaseFileDelete(cmd.Context(), args[0], args[1], fileYes, fileDryRun, connectionOptions(flags))
 		})
 	}}
-	fileDelete.Flags().BoolVar(&fileYes, "yes", false, "确认删除")
-	fileDelete.Flags().BoolVar(&fileDryRun, "dry-run", false, "只检查前置条件，不写入")
+	fileDelete.Flags().BoolVar(&fileYes, "yes", false, i18n.T("Confirm deletion"))
+	fileDelete.Flags().BoolVar(&fileDryRun, "dry-run", false, i18n.T("Check prerequisites without writing"))
 	files.AddCommand(fileDelete)
 	command.AddCommand(files)
 	var filenames []string
@@ -657,14 +703,14 @@ func newKnowledgeBaseCommand(service *app.Service, deps Dependencies, flags *glo
 	var pollInterval time.Duration
 	var waitTimeout time.Duration
 	ingest := &cobra.Command{
-		Use: "ingest <knowledge-base-id>", Short: "上传单个、多份文件或目录并提交知识库入库", Args: cobra.ExactArgs(1),
+		Use: "ingest <knowledge-base-id>", Short: i18n.T("Upload one or more files or a directory for knowledge-base ingestion"), Args: cobra.ExactArgs(1),
 		Example: "  lbctl knowledge-base ingest <id> --file guide.pdf --file faq.md --wait\n  lbctl knowledge-base ingest <id> --dir ./documents --dry-run\n  lbctl knowledge-base ingest <id> --dir ./documents --wait",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if dryRun && wait {
-				return emitCommand(deps, flags, app.Result{}, result.New("input", "--dry-run 不能与 --wait 同时使用"))
+				return emitCommand(deps, flags, app.Result{}, result.New("input", i18n.T("--dry-run cannot be combined with --wait")))
 			}
 			if wait && (pollInterval <= 0 || waitTimeout <= 0) {
-				return emitCommand(deps, flags, app.Result{}, result.New("input", "等待间隔和等待超时必须为正数"))
+				return emitCommand(deps, flags, app.Result{}, result.New("input", i18n.T("Polling interval and wait timeout must be positive")))
 			}
 			return emitCall(deps, flags, func() (app.Result, error) {
 				return service.KnowledgeBaseIngestFiles(cmd.Context(), args[0], filenames, directory, parserPluginID, dryRun, app.WaitOptions{
@@ -673,36 +719,36 @@ func newKnowledgeBaseCommand(service *app.Service, deps Dependencies, flags *glo
 			})
 		},
 	}
-	ingest.Flags().StringArrayVar(&filenames, "file", nil, "本地文件；可重复传入，与 --dir 至少提供一项，不支持 stdin")
-	ingest.Flags().StringVar(&directory, "dir", "", "递归导入目录，跳过点开头项和符号链接；可与 --file 合用")
-	ingest.Flags().StringVar(&parserPluginID, "parser-plugin-id", "", "可选的解析器插件 ID")
-	ingest.Flags().BoolVar(&dryRun, "dry-run", false, "检查前置条件但不上传或提交")
-	ingest.Flags().BoolVar(&wait, "wait", false, "逐个等待所有输入文件的入库任务；批量等待不支持 ZIP，请先解压")
-	ingest.Flags().DurationVar(&pollInterval, "poll-interval", time.Second, "任务轮询间隔")
-	ingest.Flags().DurationVar(&waitTimeout, "wait-timeout", 5*time.Minute, "每个文件的本地等待超时")
+	ingest.Flags().StringArrayVar(&filenames, "file", nil, i18n.T("Local file; repeatable; provide this or --dir; stdin not supported"))
+	ingest.Flags().StringVar(&directory, "dir", "", i18n.T("Recursively import a directory, skipping dotfiles and symbolic links; can combine with --file"))
+	ingest.Flags().StringVar(&parserPluginID, "parser-plugin-id", "", i18n.T("Optional parser plugin ID"))
+	ingest.Flags().BoolVar(&dryRun, "dry-run", false, i18n.T("Check prerequisites without uploading or submitting"))
+	ingest.Flags().BoolVar(&wait, "wait", false, i18n.T("Wait for each input file ingestion task; batch wait does not support ZIP, extract first"))
+	ingest.Flags().DurationVar(&pollInterval, "poll-interval", time.Second, i18n.T("Task polling interval"))
+	ingest.Flags().DurationVar(&waitTimeout, "wait-timeout", 5*time.Minute, i18n.T("Local wait timeout for each file"))
 	command.AddCommand(ingest)
 	return command
 }
 
 func newPluginCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
-	command := &cobra.Command{Use: "plugin", Short: "管理 Plugin", Args: cobra.NoArgs}
-	command.AddCommand(&cobra.Command{Use: "list", Short: "列出 Plugin", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+	command := &cobra.Command{Use: "plugin", Short: i18n.T("Manage Plugins"), Args: cobra.NoArgs}
+	command.AddCommand(&cobra.Command{Use: "list", Short: i18n.T("List Plugins"), Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		return emitCall(deps, flags, func() (app.Result, error) { return service.PluginList(cmd.Context(), connectionOptions(flags)) })
 	}})
-	command.AddCommand(&cobra.Command{Use: "get <author> <name>", Short: "读取 Plugin", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
+	command.AddCommand(&cobra.Command{Use: "get <author> <name>", Short: i18n.T("Read a Plugin"), Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
 		return emitCall(deps, flags, func() (app.Result, error) {
 			return service.PluginGet(cmd.Context(), args[0], args[1], connectionOptions(flags))
 		})
 	}})
-	configCommand := &cobra.Command{Use: "config", Short: "管理 Plugin 配置", Args: cobra.NoArgs}
-	configCommand.AddCommand(&cobra.Command{Use: "get <author> <name>", Short: "读取 Plugin 配置", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
+	configCommand := &cobra.Command{Use: "config", Short: i18n.T("Manage Plugin configuration"), Args: cobra.NoArgs}
+	configCommand.AddCommand(&cobra.Command{Use: "get <author> <name>", Short: i18n.T("Read Plugin configuration"), Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
 		return emitCall(deps, flags, func() (app.Result, error) {
 			return service.PluginConfigGet(cmd.Context(), args[0], args[1], connectionOptions(flags))
 		})
 	}})
 	var configFile string
 	var configDryRun bool
-	configUpdate := &cobra.Command{Use: "update <author> <name>", Short: "更新 Plugin 配置", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
+	configUpdate := &cobra.Command{Use: "update <author> <name>", Short: i18n.T("Update Plugin configuration"), Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
 		body, err := loadRequestBody(cmd.Context(), configFile, flags.apiKeyStdin, deps.In)
 		if err != nil {
 			return emitCommand(deps, flags, app.Result{}, err)
@@ -711,23 +757,23 @@ func newPluginCommand(service *app.Service, deps Dependencies, flags *globalFlag
 			return service.PluginConfigUpdate(cmd.Context(), args[0], args[1], body, configDryRun, connectionOptions(flags))
 		})
 	}}
-	configUpdate.Flags().StringVar(&configFile, "file", "", "JSON/YAML 配置文件，使用 - 从 stdin 读取")
-	configUpdate.Flags().BoolVar(&configDryRun, "dry-run", false, "只检查前置条件，不写入")
+	configUpdate.Flags().StringVar(&configFile, "file", "", i18n.T("JSON/YAML configuration file; use - to read stdin"))
+	configUpdate.Flags().BoolVar(&configDryRun, "dry-run", false, i18n.T("Check prerequisites without writing"))
 	configCommand.AddCommand(configUpdate)
 	command.AddCommand(configCommand)
 	var logLevel string
 	var logLimit int
-	logs := &cobra.Command{Use: "logs <author> <name>", Short: "读取 Plugin 日志", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
+	logs := &cobra.Command{Use: "logs <author> <name>", Short: i18n.T("Read Plugin logs"), Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
 		return emitCall(deps, flags, func() (app.Result, error) {
 			return service.PluginLogs(cmd.Context(), args[0], args[1], logLevel, logLimit, connectionOptions(flags))
 		})
 	}}
-	logs.Flags().StringVar(&logLevel, "level", "", "按日志级别筛选")
-	logs.Flags().IntVar(&logLimit, "limit", 200, "返回日志条数，上限 500")
+	logs.Flags().StringVar(&logLevel, "level", "", i18n.T("Filter by log level"))
+	logs.Flags().IntVar(&logLimit, "limit", 200, i18n.T("Number of log entries to return, maximum 500"))
 	command.AddCommand(logs)
 	var deleteData, deleteConfirmed, deleteDryRun, deleteWait bool
 	var deletePollInterval, deleteWaitTimeout time.Duration
-	deleteCommand := &cobra.Command{Use: "delete <author> <name>", Short: "删除 Plugin", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
+	deleteCommand := &cobra.Command{Use: "delete <author> <name>", Short: i18n.T("Delete a Plugin"), Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
 		if err := validateWaitFlags(deleteDryRun, deleteWait, deletePollInterval, deleteWaitTimeout); err != nil {
 			return emitCommand(deps, flags, app.Result{}, err)
 		}
@@ -735,24 +781,24 @@ func newPluginCommand(service *app.Service, deps Dependencies, flags *globalFlag
 			return service.PluginDelete(cmd.Context(), args[0], args[1], deleteData, deleteConfirmed, deleteDryRun, deleteWait, app.WaitOptions{Wait: deleteWait, PollInterval: deletePollInterval, WaitTimeout: deleteWaitTimeout}, connectionOptions(flags))
 		})
 	}}
-	deleteCommand.Flags().BoolVar(&deleteData, "delete-data", false, "同时删除 Plugin 数据")
-	deleteCommand.Flags().BoolVar(&deleteConfirmed, "yes", false, "确认删除")
-	deleteCommand.Flags().BoolVar(&deleteDryRun, "dry-run", false, "只检查前置条件，不删除")
-	deleteCommand.Flags().BoolVar(&deleteWait, "wait", false, "等待删除任务进入终态并回读验证")
-	deleteCommand.Flags().DurationVar(&deletePollInterval, "poll-interval", time.Second, "任务轮询间隔")
-	deleteCommand.Flags().DurationVar(&deleteWaitTimeout, "wait-timeout", 5*time.Minute, "本地等待超时")
+	deleteCommand.Flags().BoolVar(&deleteData, "delete-data", false, i18n.T("Also delete Plugin data"))
+	deleteCommand.Flags().BoolVar(&deleteConfirmed, "yes", false, i18n.T("Confirm deletion"))
+	deleteCommand.Flags().BoolVar(&deleteDryRun, "dry-run", false, i18n.T("Check prerequisites without deleting"))
+	deleteCommand.Flags().BoolVar(&deleteWait, "wait", false, i18n.T("Wait for deletion to finish and verify by reading back"))
+	deleteCommand.Flags().DurationVar(&deletePollInterval, "poll-interval", time.Second, i18n.T("Task polling interval"))
+	deleteCommand.Flags().DurationVar(&deleteWaitTimeout, "wait-timeout", 5*time.Minute, i18n.T("Local wait timeout"))
 	command.AddCommand(deleteCommand)
-	install := &cobra.Command{Use: "install", Short: "安装 Plugin", Args: cobra.NoArgs}
+	install := &cobra.Command{Use: "install", Short: i18n.T("Install a Plugin"), Args: cobra.NoArgs}
 	newTaskFlags := func(cmd *cobra.Command, dryRun, wait *bool, pollInterval, waitTimeout *time.Duration) {
-		cmd.Flags().BoolVar(dryRun, "dry-run", false, "只检查前置条件，不安装或升级")
-		cmd.Flags().BoolVar(wait, "wait", false, "等待任务进入终态")
-		cmd.Flags().DurationVar(pollInterval, "poll-interval", time.Second, "任务轮询间隔")
-		cmd.Flags().DurationVar(waitTimeout, "wait-timeout", 5*time.Minute, "本地等待超时")
+		cmd.Flags().BoolVar(dryRun, "dry-run", false, i18n.T("Check prerequisites without installing or upgrading"))
+		cmd.Flags().BoolVar(wait, "wait", false, i18n.T("Wait for the task to reach a terminal state"))
+		cmd.Flags().DurationVar(pollInterval, "poll-interval", time.Second, i18n.T("Task polling interval"))
+		cmd.Flags().DurationVar(waitTimeout, "wait-timeout", 5*time.Minute, i18n.T("Local wait timeout"))
 	}
 	var githubFile string
 	var githubDryRun, githubWait, githubConfirm bool
 	var githubPollInterval, githubWaitTimeout time.Duration
-	github := &cobra.Command{Use: "github", Short: "从 GitHub 安装 Plugin", Args: cobra.NoArgs,
+	github := &cobra.Command{Use: "github", Short: i18n.T("Install a Plugin from GitHub"), Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			body, err := loadRequestBody(cmd.Context(), githubFile, flags.apiKeyStdin, deps.In)
 			if err != nil {
@@ -766,17 +812,17 @@ func newPluginCommand(service *app.Service, deps Dependencies, flags *globalFlag
 			})
 		},
 	}
-	github.Flags().StringVar(&githubFile, "file", "", "JSON/YAML 请求体文件，使用 - 从 stdin 读取")
-	github.Flags().BoolVar(&githubConfirm, "confirm-permissions", false, "等待安装完成，确认全部声明权限并启用")
+	github.Flags().StringVar(&githubFile, "file", "", i18n.T("JSON/YAML request body file; use - to read stdin"))
+	github.Flags().BoolVar(&githubConfirm, "confirm-permissions", false, i18n.T("Wait for installation, confirm all declared permissions and enable"))
 	newTaskFlags(github, &githubDryRun, &githubWait, &githubPollInterval, &githubWaitTimeout)
 	install.AddCommand(github)
 
 	var marketplaceFile, marketplaceVersion string
 	var marketplaceDryRun, marketplaceWait, marketplaceConfirm bool
 	var marketplacePollInterval, marketplaceWaitTimeout time.Duration
-	marketplace := &cobra.Command{Use: "marketplace [author name]", Short: "从 Marketplace 安装 Plugin", Args: func(_ *cobra.Command, args []string) error {
+	marketplace := &cobra.Command{Use: "marketplace [author name]", Short: i18n.T("Install a Plugin from Marketplace"), Args: func(_ *cobra.Command, args []string) error {
 		if len(args) != 0 && len(args) != 2 {
-			return result.New("input", "请提供 author name，或使用 --file")
+			return result.New("input", i18n.T("Provide author name or use --file"))
 		}
 		return nil
 	},
@@ -784,7 +830,7 @@ func newPluginCommand(service *app.Service, deps Dependencies, flags *globalFlag
 			body := map[string]any{}
 			if len(args) == 2 {
 				if marketplaceFile != "" {
-					return result.New("input", "author name 不能与 --file 同时使用")
+					return result.New("input", i18n.T("author name cannot be combined with --file"))
 				}
 				body["plugin_author"], body["plugin_name"] = args[0], args[1]
 			} else {
@@ -805,16 +851,16 @@ func newPluginCommand(service *app.Service, deps Dependencies, flags *globalFlag
 			})
 		},
 	}
-	marketplace.Flags().StringVar(&marketplaceFile, "file", "", "JSON/YAML 请求体文件，使用 - 从 stdin 读取")
-	marketplace.Flags().StringVar(&marketplaceVersion, "version", "", "指定市场版本")
-	marketplace.Flags().BoolVar(&marketplaceConfirm, "confirm-permissions", false, "等待安装完成，确认全部声明权限并启用")
+	marketplace.Flags().StringVar(&marketplaceFile, "file", "", i18n.T("JSON/YAML request body file; use - to read stdin"))
+	marketplace.Flags().StringVar(&marketplaceVersion, "version", "", i18n.T("Specify Marketplace version"))
+	marketplace.Flags().BoolVar(&marketplaceConfirm, "confirm-permissions", false, i18n.T("Wait for installation, confirm all declared permissions and enable"))
 	newTaskFlags(marketplace, &marketplaceDryRun, &marketplaceWait, &marketplacePollInterval, &marketplaceWaitTimeout)
 	install.AddCommand(marketplace)
 
 	var localFile string
 	var localDryRun, localWait, localConfirm bool
 	var localPollInterval, localWaitTimeout time.Duration
-	local := &cobra.Command{Use: "local", Short: "从本地包安装 Plugin", Args: cobra.NoArgs,
+	local := &cobra.Command{Use: "local", Short: i18n.T("Install a Plugin from a local package"), Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := validateWaitFlags(localDryRun, localWait, localPollInterval, localWaitTimeout); err != nil {
 				return emitCommand(deps, flags, app.Result{}, err)
@@ -824,15 +870,15 @@ func newPluginCommand(service *app.Service, deps Dependencies, flags *globalFlag
 			})
 		},
 	}
-	local.Flags().StringVar(&localFile, "file", "", "本地 Plugin 包文件")
-	local.Flags().BoolVar(&localConfirm, "confirm-permissions", false, "等待安装完成，确认全部声明权限并启用")
+	local.Flags().StringVar(&localFile, "file", "", i18n.T("Local Plugin package file"))
+	local.Flags().BoolVar(&localConfirm, "confirm-permissions", false, i18n.T("Wait for installation, confirm all declared permissions and enable"))
 	newTaskFlags(local, &localDryRun, &localWait, &localPollInterval, &localWaitTimeout)
 	install.AddCommand(local)
 	command.AddCommand(install)
 
 	var upgradeDryRun, upgradeWait bool
 	var upgradePollInterval, upgradeWaitTimeout time.Duration
-	upgrade := &cobra.Command{Use: "upgrade <author> <name>", Short: "升级已安装 Plugin", Args: cobra.ExactArgs(2),
+	upgrade := &cobra.Command{Use: "upgrade <author> <name>", Short: i18n.T("Upgrade an installed Plugin"), Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := validateWaitFlags(upgradeDryRun, upgradeWait, upgradePollInterval, upgradeWaitTimeout); err != nil {
 				return emitCommand(deps, flags, app.Result{}, err)
@@ -848,16 +894,16 @@ func newPluginCommand(service *app.Service, deps Dependencies, flags *globalFlag
 }
 
 func newSkillCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
-	command := &cobra.Command{Use: "skill", Short: "管理 Skill", Args: cobra.NoArgs}
-	command.AddCommand(&cobra.Command{Use: "list", Short: "列出 Skill", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+	command := &cobra.Command{Use: "skill", Short: i18n.T("Manage Skills"), Args: cobra.NoArgs}
+	command.AddCommand(&cobra.Command{Use: "list", Short: i18n.T("List Skills"), Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		return emitCall(deps, flags, func() (app.Result, error) { return service.SkillList(cmd.Context(), connectionOptions(flags)) })
 	}})
-	command.AddCommand(&cobra.Command{Use: "get <name>", Short: "读取 Skill", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	command.AddCommand(&cobra.Command{Use: "get <name>", Short: i18n.T("Read a Skill"), Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		return emitCall(deps, flags, func() (app.Result, error) { return service.SkillGet(cmd.Context(), args[0], connectionOptions(flags)) })
 	}})
 	var createFile string
 	var createDryRun bool
-	create := &cobra.Command{Use: "create", Short: "创建 Skill", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+	create := &cobra.Command{Use: "create", Short: i18n.T("Create a Skill"), Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		body, err := loadRequestBody(cmd.Context(), createFile, flags.apiKeyStdin, deps.In)
 		if err != nil {
 			return emitCommand(deps, flags, app.Result{}, err)
@@ -866,12 +912,12 @@ func newSkillCommand(service *app.Service, deps Dependencies, flags *globalFlags
 			return service.SkillCreate(cmd.Context(), body, createDryRun, connectionOptions(flags))
 		})
 	}}
-	create.Flags().StringVar(&createFile, "file", "", "JSON/YAML 请求体文件，使用 - 从 stdin 读取")
-	create.Flags().BoolVar(&createDryRun, "dry-run", false, "只检查前置条件，不写入")
+	create.Flags().StringVar(&createFile, "file", "", i18n.T("JSON/YAML request body file; use - to read stdin"))
+	create.Flags().BoolVar(&createDryRun, "dry-run", false, i18n.T("Check prerequisites without writing"))
 	command.AddCommand(create)
 	var updateFile string
 	var updateDryRun bool
-	update := &cobra.Command{Use: "update <name>", Short: "更新 Skill", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	update := &cobra.Command{Use: "update <name>", Short: i18n.T("Update a Skill"), Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		body, err := loadRequestBody(cmd.Context(), updateFile, flags.apiKeyStdin, deps.In)
 		if err != nil {
 			return emitCommand(deps, flags, app.Result{}, err)
@@ -880,37 +926,37 @@ func newSkillCommand(service *app.Service, deps Dependencies, flags *globalFlags
 			return service.SkillUpdate(cmd.Context(), args[0], body, updateDryRun, connectionOptions(flags))
 		})
 	}}
-	update.Flags().StringVar(&updateFile, "file", "", "JSON/YAML 请求体文件，使用 - 从 stdin 读取")
-	update.Flags().BoolVar(&updateDryRun, "dry-run", false, "只检查前置条件，不写入")
+	update.Flags().StringVar(&updateFile, "file", "", i18n.T("JSON/YAML request body file; use - to read stdin"))
+	update.Flags().BoolVar(&updateDryRun, "dry-run", false, i18n.T("Check prerequisites without writing"))
 	command.AddCommand(update)
 	var deleteConfirmed, deleteDryRun bool
-	deleteCommand := &cobra.Command{Use: "delete <name>", Short: "删除 Skill", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	deleteCommand := &cobra.Command{Use: "delete <name>", Short: i18n.T("Delete a Skill"), Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		return emitCall(deps, flags, func() (app.Result, error) {
 			return service.SkillDelete(cmd.Context(), args[0], deleteConfirmed, deleteDryRun, connectionOptions(flags))
 		})
 	}}
-	deleteCommand.Flags().BoolVar(&deleteConfirmed, "yes", false, "确认删除")
-	deleteCommand.Flags().BoolVar(&deleteDryRun, "dry-run", false, "只检查前置条件，不删除")
+	deleteCommand.Flags().BoolVar(&deleteConfirmed, "yes", false, i18n.T("Confirm deletion"))
+	deleteCommand.Flags().BoolVar(&deleteDryRun, "dry-run", false, i18n.T("Check prerequisites without deleting"))
 	command.AddCommand(deleteCommand)
 	var filesPath string
 	var includeHidden bool
-	fileCommand := &cobra.Command{Use: "file", Short: "管理 Skill 文件", Args: cobra.NoArgs}
-	files := &cobra.Command{Use: "list <name>", Short: "列出 Skill 文件", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	fileCommand := &cobra.Command{Use: "file", Short: i18n.T("Manage Skill files"), Args: cobra.NoArgs}
+	files := &cobra.Command{Use: "list <name>", Short: i18n.T("List Skill files"), Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		return emitCall(deps, flags, func() (app.Result, error) {
 			return service.SkillFiles(cmd.Context(), args[0], filesPath, includeHidden, connectionOptions(flags))
 		})
 	}}
-	files.Flags().StringVar(&filesPath, "path", ".", "Skill 包内的相对目录")
-	files.Flags().BoolVar(&includeHidden, "include-hidden", false, "包含隐藏文件")
+	files.Flags().StringVar(&filesPath, "path", ".", i18n.T("Relative directory in the Skill package"))
+	files.Flags().BoolVar(&includeHidden, "include-hidden", false, i18n.T("Include hidden files"))
 	fileCommand.AddCommand(files)
-	fileCommand.AddCommand(&cobra.Command{Use: "read <name> <path>", Short: "读取 Skill 文件", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
+	fileCommand.AddCommand(&cobra.Command{Use: "read <name> <path>", Short: i18n.T("Read a Skill file"), Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
 		return emitCall(deps, flags, func() (app.Result, error) {
 			return service.SkillFileRead(cmd.Context(), args[0], args[1], connectionOptions(flags))
 		})
 	}})
 	var contentFile string
 	var fileDryRun bool
-	fileWrite := &cobra.Command{Use: "write <name> <path>", Short: "写入 Skill 文件", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
+	fileWrite := &cobra.Command{Use: "write <name> <path>", Short: i18n.T("Write a Skill file"), Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
 		if err := requestbody.ValidateSources(contentFile, flags.apiKeyStdin); err != nil {
 			return emitCommand(deps, flags, app.Result{}, err)
 		}
@@ -922,19 +968,19 @@ func newSkillCommand(service *app.Service, deps Dependencies, flags *globalFlags
 			return service.SkillFileWrite(cmd.Context(), args[0], args[1], content, fileDryRun, connectionOptions(flags))
 		})
 	}}
-	fileWrite.Flags().StringVar(&contentFile, "file", "", "写入内容文件，使用 - 从 stdin 读取")
-	fileWrite.Flags().BoolVar(&fileDryRun, "dry-run", false, "只检查前置条件，不写入")
+	fileWrite.Flags().StringVar(&contentFile, "file", "", i18n.T("Content file; use - to read stdin"))
+	fileWrite.Flags().BoolVar(&fileDryRun, "dry-run", false, i18n.T("Check prerequisites without writing"))
 	fileCommand.AddCommand(fileWrite)
 	command.AddCommand(fileCommand)
-	command.AddCommand(&cobra.Command{Use: "preview <name>", Short: "预览 Skill", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	command.AddCommand(&cobra.Command{Use: "preview <name>", Short: i18n.T("Preview a Skill"), Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		return emitCall(deps, flags, func() (app.Result, error) {
 			return service.SkillPreview(cmd.Context(), args[0], connectionOptions(flags))
 		})
 	}})
-	install := &cobra.Command{Use: "install", Short: "安装 Skill", Args: cobra.NoArgs}
+	install := &cobra.Command{Use: "install", Short: i18n.T("Install a Skill"), Args: cobra.NoArgs}
 	var githubFile string
 	var githubDryRun bool
-	github := &cobra.Command{Use: "github", Short: "从 GitHub 安装 Skill", Args: cobra.NoArgs,
+	github := &cobra.Command{Use: "github", Short: i18n.T("Install a Skill from GitHub"), Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			body, err := loadRequestBody(cmd.Context(), githubFile, flags.apiKeyStdin, deps.In)
 			if err != nil {
@@ -945,41 +991,41 @@ func newSkillCommand(service *app.Service, deps Dependencies, flags *globalFlags
 			})
 		},
 	}
-	github.Flags().StringVar(&githubFile, "file", "", "JSON/YAML 请求体文件，使用 - 从 stdin 读取")
-	github.Flags().BoolVar(&githubDryRun, "dry-run", false, "使用服务端预览，不安装")
+	github.Flags().StringVar(&githubFile, "file", "", i18n.T("JSON/YAML request body file; use - to read stdin"))
+	github.Flags().BoolVar(&githubDryRun, "dry-run", false, i18n.T("Use server preview without installing"))
 	install.AddCommand(github)
 
 	var sourcePaths []string
 	var uploadFile string
 	var uploadDryRun bool
-	upload := &cobra.Command{Use: "upload", Short: "从 ZIP 安装 Skill", Args: cobra.NoArgs,
+	upload := &cobra.Command{Use: "upload", Short: i18n.T("Install a Skill from ZIP"), Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return emitCall(deps, flags, func() (app.Result, error) {
 				return service.SkillInstallUpload(cmd.Context(), uploadFile, sourcePaths, uploadDryRun, connectionOptions(flags))
 			})
 		},
 	}
-	upload.Flags().StringVar(&uploadFile, "file", "", "Skill ZIP 文件")
-	upload.Flags().StringSliceVar(&sourcePaths, "source-path", nil, "Skill 包中的 source_paths，可重复指定")
-	upload.Flags().BoolVar(&uploadDryRun, "dry-run", false, "使用服务端预览，不安装")
+	upload.Flags().StringVar(&uploadFile, "file", "", i18n.T("Skill ZIP file"))
+	upload.Flags().StringSliceVar(&sourcePaths, "source-path", nil, i18n.T("Skill package source_paths; repeatable"))
+	upload.Flags().BoolVar(&uploadDryRun, "dry-run", false, i18n.T("Use server preview without installing"))
 	install.AddCommand(upload)
 	command.AddCommand(install)
 	return command
 }
 
 func newMCPServerCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
-	command := &cobra.Command{Use: "mcp-server", Short: "管理 MCP Server", Args: cobra.NoArgs}
-	command.AddCommand(&cobra.Command{Use: "list", Short: "列出 MCP Server", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+	command := &cobra.Command{Use: "mcp-server", Short: i18n.T("Manage MCP Servers"), Args: cobra.NoArgs}
+	command.AddCommand(&cobra.Command{Use: "list", Short: i18n.T("List MCP Servers"), Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		return emitCall(deps, flags, func() (app.Result, error) { return service.MCPServerList(cmd.Context(), connectionOptions(flags)) })
 	}})
-	command.AddCommand(&cobra.Command{Use: "get <server-name>", Short: "读取 MCP Server", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	command.AddCommand(&cobra.Command{Use: "get <server-name>", Short: i18n.T("Read an MCP Server"), Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		return emitCall(deps, flags, func() (app.Result, error) {
 			return service.MCPServerGet(cmd.Context(), args[0], connectionOptions(flags))
 		})
 	}})
 	var createFile string
 	var createDryRun bool
-	create := &cobra.Command{Use: "create", Short: "创建 MCP Server", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+	create := &cobra.Command{Use: "create", Short: i18n.T("Create an MCP Server"), Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		body, err := loadRequestBody(cmd.Context(), createFile, flags.apiKeyStdin, deps.In)
 		if err != nil {
 			return emitCommand(deps, flags, app.Result{}, err)
@@ -988,12 +1034,12 @@ func newMCPServerCommand(service *app.Service, deps Dependencies, flags *globalF
 			return service.MCPServerCreate(cmd.Context(), body, createDryRun, connectionOptions(flags))
 		})
 	}}
-	create.Flags().StringVar(&createFile, "file", "", "JSON/YAML 请求体文件，使用 - 从 stdin 读取")
-	create.Flags().BoolVar(&createDryRun, "dry-run", false, "只检查前置条件，不写入")
+	create.Flags().StringVar(&createFile, "file", "", i18n.T("JSON/YAML request body file; use - to read stdin"))
+	create.Flags().BoolVar(&createDryRun, "dry-run", false, i18n.T("Check prerequisites without writing"))
 	command.AddCommand(create)
 	var updateFile string
 	var updateDryRun bool
-	update := &cobra.Command{Use: "update <server-name>", Short: "更新 MCP Server", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	update := &cobra.Command{Use: "update <server-name>", Short: i18n.T("Update an MCP Server"), Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		body, err := loadRequestBody(cmd.Context(), updateFile, flags.apiKeyStdin, deps.In)
 		if err != nil {
 			return emitCommand(deps, flags, app.Result{}, err)
@@ -1002,30 +1048,30 @@ func newMCPServerCommand(service *app.Service, deps Dependencies, flags *globalF
 			return service.MCPServerUpdate(cmd.Context(), args[0], body, updateDryRun, connectionOptions(flags))
 		})
 	}}
-	update.Flags().StringVar(&updateFile, "file", "", "JSON/YAML 请求体文件，使用 - 从 stdin 读取")
-	update.Flags().BoolVar(&updateDryRun, "dry-run", false, "只检查前置条件，不写入")
+	update.Flags().StringVar(&updateFile, "file", "", i18n.T("JSON/YAML request body file; use - to read stdin"))
+	update.Flags().BoolVar(&updateDryRun, "dry-run", false, i18n.T("Check prerequisites without writing"))
 	command.AddCommand(update)
 	var deleteYes, deleteDryRun bool
-	deleteCommand := &cobra.Command{Use: "delete <server-name>", Short: "删除 MCP Server", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	deleteCommand := &cobra.Command{Use: "delete <server-name>", Short: i18n.T("Delete an MCP Server"), Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		return emitCall(deps, flags, func() (app.Result, error) {
 			return service.MCPServerDelete(cmd.Context(), args[0], deleteYes, deleteDryRun, connectionOptions(flags))
 		})
 	}}
-	deleteCommand.Flags().BoolVar(&deleteYes, "yes", false, "确认删除")
-	deleteCommand.Flags().BoolVar(&deleteDryRun, "dry-run", false, "只检查前置条件，不写入")
+	deleteCommand.Flags().BoolVar(&deleteYes, "yes", false, i18n.T("Confirm deletion"))
+	deleteCommand.Flags().BoolVar(&deleteDryRun, "dry-run", false, i18n.T("Check prerequisites without writing"))
 	command.AddCommand(deleteCommand)
-	command.AddCommand(&cobra.Command{Use: "resources <server-name>", Short: "列出 MCP 资源", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	command.AddCommand(&cobra.Command{Use: "resources <server-name>", Short: i18n.T("List MCP resources"), Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		return emitCall(deps, flags, func() (app.Result, error) {
 			return service.MCPServerResources(cmd.Context(), args[0], connectionOptions(flags))
 		})
 	}})
-	command.AddCommand(&cobra.Command{Use: "resource-templates <server-name>", Short: "列出 MCP 资源模板", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	command.AddCommand(&cobra.Command{Use: "resource-templates <server-name>", Short: i18n.T("List MCP resource templates"), Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		return emitCall(deps, flags, func() (app.Result, error) {
 			return service.MCPServerResourceTemplates(cmd.Context(), args[0], connectionOptions(flags))
 		})
 	}})
 	var readFile string
-	read := &cobra.Command{Use: "resource-read <server-name>", Short: "读取 MCP 资源", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	read := &cobra.Command{Use: "resource-read <server-name>", Short: i18n.T("Read an MCP resource"), Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		body, err := loadRequestBody(cmd.Context(), readFile, flags.apiKeyStdin, deps.In)
 		if err != nil {
 			return emitCommand(deps, flags, app.Result{}, err)
@@ -1034,22 +1080,22 @@ func newMCPServerCommand(service *app.Service, deps Dependencies, flags *globalF
 			return service.MCPServerResourceRead(cmd.Context(), args[0], body, connectionOptions(flags))
 		})
 	}}
-	read.Flags().StringVar(&readFile, "file", "", "JSON/YAML 请求体文件，使用 - 从 stdin 读取")
+	read.Flags().StringVar(&readFile, "file", "", i18n.T("JSON/YAML request body file; use - to read stdin"))
 	command.AddCommand(read)
 	var level string
 	var limit int
-	logs := &cobra.Command{Use: "logs <server-name>", Short: "读取 MCP 日志", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	logs := &cobra.Command{Use: "logs <server-name>", Short: i18n.T("Read MCP logs"), Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		return emitCall(deps, flags, func() (app.Result, error) {
 			return service.MCPServerLogs(cmd.Context(), args[0], level, limit, connectionOptions(flags))
 		})
 	}}
-	logs.Flags().StringVar(&level, "level", "", "按日志级别筛选")
-	logs.Flags().IntVar(&limit, "limit", 200, "返回日志条数，上限 500")
+	logs.Flags().StringVar(&level, "level", "", i18n.T("Filter by log level"))
+	logs.Flags().IntVar(&limit, "limit", 200, i18n.T("Number of log entries to return, maximum 500"))
 	command.AddCommand(logs)
 	var file string
 	var dryRun, wait bool
 	var pollInterval, waitTimeout time.Duration
-	testCommand := &cobra.Command{Use: "test <server-name>", Short: "测试 MCP Server 连接", Args: cobra.ExactArgs(1),
+	testCommand := &cobra.Command{Use: "test <server-name>", Short: i18n.T("Test MCP Server connection"), Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			body, err := loadOptionalRequestBody(cmd.Context(), file, flags.apiKeyStdin, deps.In)
 			if err != nil {
@@ -1063,28 +1109,28 @@ func newMCPServerCommand(service *app.Service, deps Dependencies, flags *globalF
 			})
 		},
 	}
-	testCommand.Flags().StringVar(&file, "file", "", "JSON/YAML 请求体文件，使用 - 从 stdin 读取；省略时使用空对象")
-	testCommand.Flags().BoolVar(&dryRun, "dry-run", false, "只检查前置条件，不执行测试")
-	testCommand.Flags().BoolVar(&wait, "wait", false, "等待任务进入终态")
-	testCommand.Flags().DurationVar(&pollInterval, "poll-interval", time.Second, "任务轮询间隔")
-	testCommand.Flags().DurationVar(&waitTimeout, "wait-timeout", 5*time.Minute, "本地等待超时")
+	testCommand.Flags().StringVar(&file, "file", "", i18n.T("JSON/YAML request body file; use - to read stdin; defaults to an empty object"))
+	testCommand.Flags().BoolVar(&dryRun, "dry-run", false, i18n.T("Check prerequisites without running the test"))
+	testCommand.Flags().BoolVar(&wait, "wait", false, i18n.T("Wait for the task to reach a terminal state"))
+	testCommand.Flags().DurationVar(&pollInterval, "poll-interval", time.Second, i18n.T("Task polling interval"))
+	testCommand.Flags().DurationVar(&waitTimeout, "wait-timeout", 5*time.Minute, i18n.T("Local wait timeout"))
 	command.AddCommand(testCommand)
 	return command
 }
 
 func validateWaitFlags(dryRun, wait bool, pollInterval, waitTimeout time.Duration) error {
 	if dryRun && wait {
-		return result.New("input", "--dry-run 不能与 --wait 同时使用")
+		return result.New("input", i18n.T("--dry-run cannot be combined with --wait"))
 	}
 	if wait && (pollInterval <= 0 || waitTimeout <= 0) {
-		return result.New("input", "等待间隔和等待超时必须为正数")
+		return result.New("input", i18n.T("Polling interval and wait timeout must be positive"))
 	}
 	return nil
 }
 
 func loadRequestBody(ctx context.Context, file string, apiKeyStdin bool, stdin io.Reader) (map[string]any, error) {
 	if strings.TrimSpace(file) == "" {
-		return nil, result.New("input", "缺少必需选项 --file；使用 --file <文件> 或 --file -，通过 --help 查看用法")
+		return nil, result.New("input", i18n.T("Missing required option --file; use --file <file> or --file -, see --help for usage"))
 	}
 	if err := requestbody.ValidateSources(file, apiKeyStdin); err != nil {
 		return nil, err
@@ -1109,14 +1155,14 @@ func connectionOptions(flags *globalFlags) app.CheckOptions {
 
 func newContextCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
 	contextCommand := &cobra.Command{
-		Use: "context", Short: "管理本地 context", Args: cobra.NoArgs,
+		Use: "context", Short: i18n.T("Manage local contexts"), Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
 	}
 	contextCommand.AddCommand(newContextAdd(service, deps, flags))
 	contextCommand.AddCommand(newContextUpdate(service, deps, flags))
 	var discover bool
 	list := &cobra.Command{
-		Use: "list", Short: "列出本地 context", Args: cobra.NoArgs,
+		Use: "list", Short: i18n.T("List local contexts"), Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := rejectCredentialInput(flags); err != nil {
 				return emitCommand(deps, flags, app.Result{}, err)
@@ -1124,7 +1170,7 @@ func newContextCommand(service *app.Service, deps Dependencies, flags *globalFla
 			return emitCall(deps, flags, func() (app.Result, error) { return service.WithContext(cmd.Context()).ContextList(discover) })
 		},
 	}
-	list.Flags().BoolVar(&discover, "discover", false, "同时只读发现本机 LangBot Compose 项目")
+	list.Flags().BoolVar(&discover, "discover", false, i18n.T("Also discover local LangBot Compose projects read-only"))
 	contextCommand.AddCommand(list)
 	contextCommand.AddCommand(newContextShow(service, deps, flags))
 	contextCommand.AddCommand(newContextUse(service, deps, flags))
@@ -1137,27 +1183,27 @@ func newContextAdd(service *app.Service, deps Dependencies, flags *globalFlags) 
 	var endpoint, apiKeyEnv, expected, timeout string
 	cmd := &cobra.Command{
 		Use:   "add <name>",
-		Short: "新增本地 context",
+		Short: i18n.T("Add a local context"),
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := rejectCredentialInput(flags); err != nil {
 				return emitCommand(deps, flags, app.Result{}, err)
 			}
 			if cmd.Flags().Changed("api-key-env") && strings.TrimSpace(apiKeyEnv) == "" {
-				return emitCommand(deps, flags, app.Result{}, result.New("input", "api-key-env 不能为空"))
+				return emitCommand(deps, flags, app.Result{}, result.New("input", i18n.T("api-key-env must not be empty")))
 			}
 			if cmd.Flags().Changed("timeout") && strings.TrimSpace(timeout) == "" {
-				return emitCommand(deps, flags, app.Result{}, result.New("input", "timeout 不能为空"))
+				return emitCommand(deps, flags, app.Result{}, result.New("input", i18n.T("timeout must not be empty")))
 			}
 			return emitCall(deps, flags, func() (app.Result, error) {
 				return service.WithContext(cmd.Context()).ContextAdd(args[0], endpoint, apiKeyEnv, expected, timeout)
 			})
 		},
 	}
-	cmd.Flags().StringVar(&endpoint, "endpoint", "", "服务地址")
-	cmd.Flags().StringVar(&apiKeyEnv, "api-key-env", "", "API Key 环境变量名")
-	cmd.Flags().StringVar(&expected, "expect-workspace", "", "预期 Workspace UUID")
-	cmd.Flags().StringVar(&timeout, "timeout", "", "该 context 的默认请求超时时间")
+	cmd.Flags().StringVar(&endpoint, "endpoint", "", i18n.T("Service URL"))
+	cmd.Flags().StringVar(&apiKeyEnv, "api-key-env", "", i18n.T("API Key environment variable name"))
+	cmd.Flags().StringVar(&expected, "expect-workspace", "", i18n.T("Expected Workspace UUID"))
+	cmd.Flags().StringVar(&timeout, "timeout", "", i18n.T("Default request timeout for this context"))
 	return cmd
 }
 
@@ -1166,17 +1212,17 @@ func newContextUpdate(service *app.Service, deps Dependencies, flags *globalFlag
 	var clearCredential, clearBinding bool
 	cmd := &cobra.Command{
 		Use:   "update <name>",
-		Short: "更新本地 context",
+		Short: i18n.T("Update a local context"),
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := rejectCredentialInput(flags); err != nil {
 				return emitCommand(deps, flags, app.Result{}, err)
 			}
 			if cmd.Flags().Changed("api-key-env") && strings.TrimSpace(apiKeyEnv) == "" {
-				return emitCommand(deps, flags, app.Result{}, result.New("input", "api-key-env 不能为空"))
+				return emitCommand(deps, flags, app.Result{}, result.New("input", i18n.T("api-key-env must not be empty")))
 			}
 			if cmd.Flags().Changed("timeout") && strings.TrimSpace(timeout) == "" {
-				return emitCommand(deps, flags, app.Result{}, result.New("input", "timeout 不能为空"))
+				return emitCommand(deps, flags, app.Result{}, result.New("input", i18n.T("timeout must not be empty")))
 			}
 			return emitCall(deps, flags, func() (app.Result, error) {
 				return service.WithContext(cmd.Context()).ContextUpdate(args[0], endpoint, apiKeyEnv, expected, timeout,
@@ -1185,18 +1231,18 @@ func newContextUpdate(service *app.Service, deps Dependencies, flags *globalFlag
 			})
 		},
 	}
-	cmd.Flags().StringVar(&endpoint, "endpoint", "", "服务地址")
-	cmd.Flags().StringVar(&apiKeyEnv, "api-key-env", "", "API Key 环境变量名")
-	cmd.Flags().StringVar(&expected, "expect-workspace", "", "预期 Workspace UUID")
-	cmd.Flags().StringVar(&timeout, "timeout", "", "该 context 的默认请求超时时间")
-	cmd.Flags().BoolVar(&clearCredential, "clear-credential", false, "清除已保存的凭据来源")
-	cmd.Flags().BoolVar(&clearBinding, "clear-binding", false, "清除预期 Workspace 绑定")
+	cmd.Flags().StringVar(&endpoint, "endpoint", "", i18n.T("Service URL"))
+	cmd.Flags().StringVar(&apiKeyEnv, "api-key-env", "", i18n.T("API Key environment variable name"))
+	cmd.Flags().StringVar(&expected, "expect-workspace", "", i18n.T("Expected Workspace UUID"))
+	cmd.Flags().StringVar(&timeout, "timeout", "", i18n.T("Default request timeout for this context"))
+	cmd.Flags().BoolVar(&clearCredential, "clear-credential", false, i18n.T("Clear the saved credential source"))
+	cmd.Flags().BoolVar(&clearBinding, "clear-binding", false, i18n.T("Clear expected Workspace binding"))
 	return cmd
 }
 
 func newContextShow(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
 	return &cobra.Command{
-		Use: "show [name]", Short: "查看 context 配置；默认查看当前环境", Args: cobra.MaximumNArgs(1),
+		Use: "show [name]", Short: i18n.T("Show context configuration; defaults to current environment"), Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := ""
 			if len(args) > 0 {
@@ -1215,7 +1261,7 @@ func newContextShow(service *app.Service, deps Dependencies, flags *globalFlags)
 
 func newContextUse(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
 	return &cobra.Command{
-		Use: "use <name>", Short: "设置后续命令的默认 context", Args: cobra.ExactArgs(1),
+		Use: "use <name>", Short: i18n.T("Set the default context for subsequent commands"), Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := rejectCredentialInput(flags); err != nil {
 				return emitCommand(deps, flags, app.Result{}, err)
@@ -1228,7 +1274,7 @@ func newContextUse(service *app.Service, deps Dependencies, flags *globalFlags) 
 func newContextRemove(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
 	var yes bool
 	cmd := &cobra.Command{
-		Use: "remove <name>", Short: "删除本地 context", Args: cobra.ExactArgs(1),
+		Use: "remove <name>", Short: i18n.T("Delete a local context"), Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := rejectCredentialInput(flags); err != nil {
 				return emitCommand(deps, flags, app.Result{}, err)
@@ -1236,14 +1282,14 @@ func newContextRemove(service *app.Service, deps Dependencies, flags *globalFlag
 			return emitCall(deps, flags, func() (app.Result, error) { return service.WithContext(cmd.Context()).ContextRemove(args[0], yes) })
 		},
 	}
-	cmd.Flags().BoolVar(&yes, "yes", false, "确认删除")
+	cmd.Flags().BoolVar(&yes, "yes", false, i18n.T("Confirm deletion"))
 	return cmd
 }
 
 func newContextCheck(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
 	var all bool
 	cmd := &cobra.Command{
-		Use: "check [name]", Short: "检查服务连接", Args: cobra.MaximumNArgs(1),
+		Use: "check [name]", Short: i18n.T("Check service connectivity"), Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := ""
 			if len(args) == 1 {
@@ -1258,16 +1304,17 @@ func newContextCheck(service *app.Service, deps Dependencies, flags *globalFlags
 			})
 		},
 	}
-	cmd.Flags().BoolVar(&all, "all", false, "检查所有 context")
+	cmd.Flags().BoolVar(&all, "all", false, i18n.T("Check all contexts"))
 	return cmd
 }
 
 func newStatusCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
 	return &cobra.Command{
-		Use: "status", Short: "查看当前环境状态", Args: cobra.NoArgs,
+		Use: "status", Short: i18n.T("Show current environment status"), Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return emitCall(deps, flags, func() (app.Result, error) {
 				return service.Status(cmd.Context(), app.CheckOptions{
+					Human:   !flags.outputSet,
 					Context: flags.context, Endpoint: flags.endpoint, Timeout: flags.timeout,
 					ContextSet: flags.contextSet, EndpointSet: flags.endpointSet, TimeoutSet: flags.timeoutSet,
 					APIKeyStdin: flags.apiKeyStdin,
@@ -1279,7 +1326,7 @@ func newStatusCommand(service *app.Service, deps Dependencies, flags *globalFlag
 
 func newDoctorCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
 	return &cobra.Command{
-		Use: "doctor", Short: "诊断当前环境", Args: cobra.NoArgs,
+		Use: "doctor", Short: i18n.T("Diagnose the current environment"), Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return emitCall(deps, flags, func() (app.Result, error) {
 				return service.Doctor(cmd.Context(), app.CheckOptions{
@@ -1301,10 +1348,10 @@ func newInstallCommand(service *app.Service, deps Dependencies, flags *globalFla
 	var adapterPorts []string
 	var dryRun bool
 	cmd := &cobra.Command{
-		Use: "install", Short: "安装本机 LangBot", Args: cobra.NoArgs,
+		Use: "install", Short: i18n.T("Install LangBot locally"), Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if flags.contextSet || flags.endpointSet || flags.apiKeyStdin {
-				return emitCommand(deps, flags, app.Result{}, result.New("input", "install 不接受 context、endpoint 或 API Key"))
+				return emitCommand(deps, flags, app.Result{}, result.New("input", i18n.T("install does not accept context, endpoint or API Key")))
 			}
 			selected, selectedPort, err := installSelection(cmd.Context(), deps, driver, port, yes)
 			if err != nil {
@@ -1329,35 +1376,35 @@ func newInstallCommand(service *app.Service, deps Dependencies, flags *globalFla
 			})
 		},
 	}
-	cmd.Flags().StringVar(&dir, "dir", "", "本机部署目录")
-	cmd.Flags().StringVar(&driver, "driver", "", "部署方式：native（推荐）或 docker")
-	cmd.Flags().StringVar(&name, "name", "default", "实例名称")
-	cmd.Flags().StringVar(&region, "region", "auto", "网络区域：auto、cn 或 global")
-	cmd.Flags().StringVar(&pypiIndex, "pypi-index", "", "Python 包索引地址")
-	cmd.Flags().StringVar(&pythonMirror, "python-mirror", "", "受管 Python 下载镜像")
-	cmd.Flags().StringVar(&imageRepository, "image-repository", "", "Docker 镜像仓库")
-	cmd.Flags().StringSliceVar(&extras, "extra", nil, "可选依赖：seekdb,milvus,valkey")
-	cmd.Flags().BoolVar(&yes, "yes", false, "跳过交互提示")
-	cmd.Flags().StringVar(&version, "version", "", "LangBot 稳定 Release tag，默认最新版")
-	cmd.Flags().StringVar(&profile, "profile", "basic", "部署 profile：basic 或 all")
-	cmd.Flags().IntVar(&port, "port", 5300, "LangBot HTTP 宿主机端口")
-	cmd.Flags().StringVar(&project, "project", deploy.DefaultComposeProject, "独立的 Compose project 名称；安装多个实例时使用不同名称")
-	cmd.Flags().IntVar(&pluginDebugPort, "plugin-debug-port", 5401, "Plugin Runtime 调试宿主机端口，0 表示不发布")
-	cmd.Flags().StringSliceVar(&adapterPorts, "adapter-ports", []string{"2280-2285:2280-2285"}, "适配器 HOST:CONTAINER 映射，支持等长范围及逗号分隔；none 表示不发布")
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "只执行前置检查并输出安装计划")
+	cmd.Flags().StringVar(&dir, "dir", "", i18n.T("Local deployment directory"))
+	cmd.Flags().StringVar(&driver, "driver", "", i18n.T("Deployment driver: native (recommended) or docker"))
+	cmd.Flags().StringVar(&name, "name", "default", i18n.T("Instance name"))
+	cmd.Flags().StringVar(&region, "region", "auto", i18n.T("Network region: auto, cn or global"))
+	cmd.Flags().StringVar(&pypiIndex, "pypi-index", "", i18n.T("Python package index URL"))
+	cmd.Flags().StringVar(&pythonMirror, "python-mirror", "", i18n.T("Managed Python download mirror"))
+	cmd.Flags().StringVar(&imageRepository, "image-repository", "", i18n.T("Docker image registry"))
+	cmd.Flags().StringSliceVar(&extras, "extra", nil, i18n.T("Optional dependencies: seekdb,milvus,valkey"))
+	cmd.Flags().BoolVar(&yes, "yes", false, i18n.T("Skip interactive prompts"))
+	cmd.Flags().StringVar(&version, "version", "", i18n.T("LangBot stable Release tag; defaults to the latest release"))
+	cmd.Flags().StringVar(&profile, "profile", "basic", i18n.T("Deployment profile: basic or all"))
+	cmd.Flags().IntVar(&port, "port", 5300, i18n.T("LangBot HTTP host port"))
+	cmd.Flags().StringVar(&project, "project", deploy.DefaultComposeProject, i18n.T("Unique Compose project name; use different names for multiple instances"))
+	cmd.Flags().IntVar(&pluginDebugPort, "plugin-debug-port", 5401, i18n.T("Plugin Runtime debug host port; 0 disables publishing"))
+	cmd.Flags().StringSliceVar(&adapterPorts, "adapter-ports", []string{"2280-2285:2280-2285"}, i18n.T("Adapter HOST:CONTAINER mappings, equal-length ranges and comma-separated values supported; none disables publishing"))
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, i18n.T("Check prerequisites and print the installation plan only"))
 	return cmd
 }
 
 func newAdoptCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
 	var dir, file, project, profile string
 	cmd := &cobra.Command{
-		Use: "adopt", Short: "接管已有本机 Compose 部署", Args: cobra.NoArgs,
+		Use: "adopt", Short: i18n.T("Adopt an existing local Compose deployment"), Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if flags.contextSet {
-				return emitCommand(deps, flags, app.Result{}, result.New("input", "adopt 使用显式 endpoint，不接受 context"))
+				return emitCommand(deps, flags, app.Result{}, result.New("input", i18n.T("adopt uses an explicit endpoint and does not accept context")))
 			}
 			if !flags.endpointSet || strings.TrimSpace(file) == "" || strings.TrimSpace(project) == "" {
-				return emitCommand(deps, flags, app.Result{}, result.New("input", "adopt 需要 --endpoint、--file 和 --project"))
+				return emitCommand(deps, flags, app.Result{}, result.New("input", i18n.T("adopt requires --endpoint, --file and --project")))
 			}
 			return emitCall(deps, flags, func() (app.Result, error) {
 				return service.Adopt(cmd.Context(), app.AdoptOptions{
@@ -1367,16 +1414,16 @@ func newAdoptCommand(service *app.Service, deps Dependencies, flags *globalFlags
 			})
 		},
 	}
-	cmd.Flags().StringVar(&dir, "dir", "", "lbctl 部署记录目录")
-	cmd.Flags().StringVar(&file, "file", "", "Compose 文件路径")
-	cmd.Flags().StringVar(&project, "project", "", "Compose project 名称")
-	cmd.Flags().StringVar(&profile, "profile", "basic", "部署 profile：basic 或 all")
+	cmd.Flags().StringVar(&dir, "dir", "", i18n.T("lbctl deployment record directory"))
+	cmd.Flags().StringVar(&file, "file", "", i18n.T("Compose file path"))
+	cmd.Flags().StringVar(&project, "project", "", i18n.T("Compose project name"))
+	cmd.Flags().StringVar(&profile, "profile", "basic", i18n.T("Deployment profile: basic or all"))
 	return cmd
 }
 
 func newLifecycleCommand(service *app.Service, deps Dependencies, flags *globalFlags, action string) *cobra.Command {
 	var name, dir string
-	short := map[string]string{"start": "启动本机受管部署", "stop": "停止本机受管部署", "restart": "重启本机受管部署"}[action]
+	short := map[string]string{"start": i18n.T("Start a managed local deployment"), "stop": i18n.T("Stop a managed local deployment"), "restart": i18n.T("Restart a managed local deployment")}[action]
 	command := &cobra.Command{
 		Use: action, Short: short, Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -1394,8 +1441,8 @@ func newLifecycleCommand(service *app.Service, deps Dependencies, flags *globalF
 			})
 		},
 	}
-	command.Flags().StringVar(&name, "name", "", "本机实例名称")
-	command.Flags().StringVar(&dir, "dir", "", "本机部署目录")
+	command.Flags().StringVar(&name, "name", "", i18n.T("Local instance name"))
+	command.Flags().StringVar(&dir, "dir", "", i18n.T("Local deployment directory"))
 	return command
 }
 
@@ -1403,10 +1450,10 @@ func newUpgradeCommand(service *app.Service, deps Dependencies, flags *globalFla
 	var version string
 	var dryRun, yes bool
 	cmd := &cobra.Command{
-		Use: "upgrade", Short: "安全升级本机受管部署", Args: cobra.NoArgs,
+		Use: "upgrade", Short: i18n.T("Safely upgrade a managed local deployment"), Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if !dryRun && !yes {
-				return emitCommand(deps, flags, app.Result{}, result.New("precondition", "升级会停止并修改本机部署，请显式传入 --yes"))
+				return emitCommand(deps, flags, app.Result{}, result.New("precondition", i18n.T("Upgrade stops and modifies the local deployment; explicitly pass --yes")))
 			}
 			return emitCall(deps, flags, func() (app.Result, error) {
 				return service.Upgrade(cmd.Context(), app.UpgradeOptions{
@@ -1415,9 +1462,9 @@ func newUpgradeCommand(service *app.Service, deps Dependencies, flags *globalFla
 			})
 		},
 	}
-	cmd.Flags().StringVar(&version, "version", "", "目标 LangBot 稳定 Release tag")
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "只验证前置条件并输出升级计划")
-	cmd.Flags().BoolVar(&yes, "yes", false, "确认停服、备份和升级")
+	cmd.Flags().StringVar(&version, "version", "", i18n.T("Target LangBot stable Release tag"))
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, i18n.T("Check prerequisites and print the upgrade plan only"))
+	cmd.Flags().BoolVar(&yes, "yes", false, i18n.T("Confirm shutdown, backup and upgrade"))
 	return cmd
 }
 
@@ -1425,10 +1472,10 @@ func newUninstallCommand(service *app.Service, deps Dependencies, flags *globalF
 	var purgeData, yes bool
 	var name, dir string
 	cmd := &cobra.Command{
-		Use: "uninstall", Short: "卸载本机受管部署", Args: cobra.NoArgs,
+		Use: "uninstall", Short: i18n.T("Uninstall a managed local deployment"), Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if !yes {
-				return emitCommand(deps, flags, app.Result{}, result.New("precondition", "卸载会删除受管容器和网络，请显式传入 --yes"))
+				return emitCommand(deps, flags, app.Result{}, result.New("precondition", i18n.T("Uninstall deletes managed containers and networks; explicitly pass --yes")))
 			}
 			return emitCall(deps, flags, func() (app.Result, error) {
 				options := connectionOptions(flags)
@@ -1439,10 +1486,10 @@ func newUninstallCommand(service *app.Service, deps Dependencies, flags *globalF
 			})
 		},
 	}
-	cmd.Flags().BoolVar(&purgeData, "purge-data", false, "同时清理 lbctl 受管数据目录")
-	cmd.Flags().BoolVar(&yes, "yes", false, "确认卸载")
-	cmd.Flags().StringVar(&name, "name", "", "本机实例名称")
-	cmd.Flags().StringVar(&dir, "dir", "", "本机部署目录")
+	cmd.Flags().BoolVar(&purgeData, "purge-data", false, i18n.T("Also remove lbctl-managed data directories"))
+	cmd.Flags().BoolVar(&yes, "yes", false, i18n.T("Confirm uninstall"))
+	cmd.Flags().StringVar(&name, "name", "", i18n.T("Local instance name"))
+	cmd.Flags().StringVar(&dir, "dir", "", i18n.T("Local deployment directory"))
 	return cmd
 }
 
@@ -1451,7 +1498,7 @@ func newLocalLogsCommand(service *app.Service, deps Dependencies, flags *globalF
 	var tail int
 	var follow bool
 	cmd := &cobra.Command{
-		Use: "logs", Short: "读取本机受管部署日志", Args: cobra.NoArgs,
+		Use: "logs", Short: i18n.T("Read managed local deployment logs"), Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			format := output.FormatDefault
 			if flags.outputSet {
@@ -1464,7 +1511,7 @@ func newLocalLogsCommand(service *app.Service, deps Dependencies, flags *globalF
 				return emitCall(deps, flags, func() (app.Result, error) { return service.LocalLogs(cmd.Context(), options) })
 			}
 			if format == output.FormatYAML {
-				return emitCommand(deps, flags, app.Result{}, result.New("input", "logs --follow 不支持 YAML 输出"))
+				return emitCommand(deps, flags, app.Result{}, result.New("input", i18n.T("logs --follow does not support YAML output")))
 			}
 			err := service.FollowLocalLogs(cmd.Context(), options)
 			flags.exitCode = result.ExitCode(err)
@@ -1474,7 +1521,7 @@ func newLocalLogsCommand(service *app.Service, deps Dependencies, flags *globalF
 			if format == output.FormatJSON {
 				envelope := result.Envelope{OK: false, Error: result.AsError(err)}
 				if encodeErr := json.NewEncoder(deps.Out).Encode(envelope); encodeErr != nil {
-					fmt.Fprintln(deps.Err, "输出失败")
+					fmt.Fprintln(deps.Err, i18n.T("Output failed"))
 					flags.exitCode = 10
 				}
 				return nil
@@ -1482,20 +1529,20 @@ func newLocalLogsCommand(service *app.Service, deps Dependencies, flags *globalF
 			return emitCommand(deps, flags, app.Result{}, err)
 		},
 	}
-	cmd.Flags().StringVar(&serviceName, "service", "", "服务名：langbot、langbot_plugin_runtime 或 langbot_box")
-	cmd.Flags().IntVar(&tail, "tail", 200, "返回最后日志行数，上限 5000")
-	cmd.Flags().StringVar(&since, "since", "", "只读取指定时间之后的日志")
-	cmd.Flags().BoolVarP(&follow, "follow", "f", false, "持续跟踪日志")
+	cmd.Flags().StringVar(&serviceName, "service", "", i18n.T("Service name: langbot, langbot_plugin_runtime or langbot_box"))
+	cmd.Flags().IntVar(&tail, "tail", 200, i18n.T("Number of trailing log lines, maximum 5000"))
+	cmd.Flags().StringVar(&since, "since", "", i18n.T("Read logs only after the specified time"))
+	cmd.Flags().BoolVarP(&follow, "follow", "f", false, i18n.T("Follow logs"))
 	return cmd
 }
 
 func newVersionCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
 	var server bool
 	cmd := &cobra.Command{
-		Use: "version", Short: "查看 CLI 版本", Args: cobra.NoArgs,
+		Use: "version", Short: i18n.T("Show CLI version"), Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if !server && hasConnectionOverride(flags) {
-				return emitCommand(deps, flags, app.Result{}, result.New("input", "离线 version 不接受连接覆盖参数"))
+				return emitCommand(deps, flags, app.Result{}, result.New("input", i18n.T("Offline version does not accept connection overrides")))
 			}
 			return emitCall(deps, flags, func() (app.Result, error) {
 				return service.Version(cmd.Context(), server, app.CheckOptions{
@@ -1506,23 +1553,23 @@ func newVersionCommand(service *app.Service, deps Dependencies, flags *globalFla
 			})
 		},
 	}
-	cmd.Flags().BoolVar(&server, "server", false, "同时查询服务端版本")
+	cmd.Flags().BoolVar(&server, "server", false, i18n.T("Also query the server version"))
 	return cmd
 }
 
 func newRawCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
 	var file string
 	cmd := &cobra.Command{
-		Use: "raw [method path]", Short: "读取受控的基础服务信息", Args: cobra.MaximumNArgs(2),
+		Use: "raw [method path]", Short: i18n.T("Read controlled basic service information"), Args: cobra.MaximumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 1 {
-				return emitCommand(deps, flags, app.Result{}, result.New("input", "raw 需要同时提供 method 和 path"))
+				return emitCommand(deps, flags, app.Result{}, result.New("input", i18n.T("raw requires both method and path")))
 			}
 			if file == "-" && flags.apiKeyStdin {
-				return emitCommand(deps, flags, app.Result{}, result.New("input", "--file - 不能与 --api-key-stdin 同时使用"))
+				return emitCommand(deps, flags, app.Result{}, result.New("input", i18n.T("--file - cannot be combined with --api-key-stdin")))
 			}
 			if cmd.Flags().Changed("file") {
-				return emitCommand(deps, flags, app.Result{}, result.New("input", "阶段 1A 的 raw 只支持无请求体的 GET"))
+				return emitCommand(deps, flags, app.Result{}, result.New("input", i18n.T("Stage 1A raw supports only GET without a request body")))
 			}
 			return emitCall(deps, flags, func() (app.Result, error) {
 				method, path := "GET", "/api/v1/system/info"
@@ -1537,18 +1584,18 @@ func newRawCommand(service *app.Service, deps Dependencies, flags *globalFlags) 
 			})
 		},
 	}
-	cmd.Flags().StringVar(&file, "file", "", "请求体输入；阶段 1A 不允许请求体")
+	cmd.Flags().StringVar(&file, "file", "", i18n.T("Request body input; stage 1A does not allow request bodies"))
 	return cmd
 }
 
 func newAPICommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
-	command := &cobra.Command{Use: "api", Short: "调用已登记的 HTTP 操作", Args: cobra.NoArgs}
+	command := &cobra.Command{Use: "api", Short: i18n.T("Call a registered HTTP operation"), Args: cobra.NoArgs}
 	get := &cobra.Command{
-		Use: "get <path>", Short: "调用受控 GET 接口", Args: cobra.ExactArgs(1),
+		Use: "get <path>", Short: i18n.T("Call a controlled GET endpoint"), Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			operation, ok := api.ResolveOperation("GET", args[0])
 			if !ok || operation.Method != http.MethodGet {
-				return emitCommand(deps, flags, app.Result{}, result.New("incompatible", "GET 路径未登记"))
+				return emitCommand(deps, flags, app.Result{}, result.New("incompatible", i18n.T("GET path is not registered")))
 			}
 			return emitCall(deps, flags, func() (app.Result, error) {
 				return service.APIRequest(cmd.Context(), http.MethodGet, args[0], nil, connectionOptions(flags))
@@ -1558,11 +1605,11 @@ func newAPICommand(service *app.Service, deps Dependencies, flags *globalFlags) 
 	command.AddCommand(get)
 	var file string
 	post := &cobra.Command{
-		Use: "post <path>", Short: "调用受控 POST 接口", Args: cobra.ExactArgs(1),
+		Use: "post <path>", Short: i18n.T("Call a controlled POST endpoint"), Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			operation, ok := api.ResolveOperation("POST", args[0])
 			if !ok || !operation.ReadOnly {
-				return emitCommand(deps, flags, app.Result{}, result.New("incompatible", "POST 路径未登记"))
+				return emitCommand(deps, flags, app.Result{}, result.New("incompatible", i18n.T("POST path is not registered")))
 			}
 			body, err := loadOptionalRequestBody(cmd.Context(), file, flags.apiKeyStdin, deps.In)
 			if err != nil {
@@ -1573,14 +1620,14 @@ func newAPICommand(service *app.Service, deps Dependencies, flags *globalFlags) 
 			})
 		},
 	}
-	post.Flags().StringVar(&file, "file", "", "JSON/YAML 请求体文件，使用 - 从 stdin 读取")
+	post.Flags().StringVar(&file, "file", "", i18n.T("JSON/YAML request body file; use - to read stdin"))
 	command.AddCommand(post)
 	return command
 }
 
 func newIdentityCommand(service *app.Service, deps Dependencies, flags *globalFlags, name string) *cobra.Command {
 	return &cobra.Command{
-		Use: name, Short: name + "（服务端发现）", Args: cobra.NoArgs,
+		Use: name, Short: name + i18n.T(" (server-discovered)"), Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return emitCall(deps, flags, func() (app.Result, error) {
 				return service.WithContext(cmd.Context()).Identity(cmd.Context(), name, app.CheckOptions{
@@ -1594,17 +1641,40 @@ func newIdentityCommand(service *app.Service, deps Dependencies, flags *globalFl
 }
 
 func emitCommand(deps Dependencies, flags *globalFlags, value app.Result, err error) error {
+	showNotice(deps, flags)
 	flags.operationError = err
 	flags.exitCode = emit(deps, flags, value, err)
 	return nil
 }
 
 func emitCall(deps Dependencies, flags *globalFlags, call func() (app.Result, error)) error {
-	stop := startProgress(deps, flags)
-	defer stop()
+	if flags.output != "json" && flags.output != "yaml" && (flags.commandPath == "install" || flags.commandPath == "upgrade") {
+		progress.Brand(deps.Err)
+	}
+	showNotice(deps, flags)
+	if flags.display != nil {
+		flags.display.Step("Working")
+	}
 	value, err := call()
-	stop()
+	if flags.display != nil {
+		flags.display.Finish(err == nil)
+	}
 	return emitCommand(deps, flags, value, err)
+}
+
+func showNotice(deps Dependencies, flags *globalFlags) {
+	if flags.notice == "" {
+		return
+	}
+	if flags.noticeMachine {
+		fmt.Fprint(deps.Err, flags.notice)
+	} else {
+		for _, line := range strings.Split(strings.TrimSpace(flags.notice), "\n") {
+			progress.Dim(deps.Err, "ℹ "+line)
+		}
+		fmt.Fprintln(deps.Err)
+	}
+	flags.notice = ""
 }
 
 func emit(deps Dependencies, flags *globalFlags, value app.Result, callErr error) int {
@@ -1625,7 +1695,7 @@ func emit(deps Dependencies, flags *globalFlags, value app.Result, callErr error
 		envelope.Error = result.AsError(callErr)
 	}
 	if err := output.RenderCommand(deps.Out, envelope, format, flags.commandPath); err != nil {
-		fmt.Fprintln(deps.Err, "输出失败")
+		fmt.Fprintln(deps.Err, i18n.T("Output failed"))
 		return 10
 	}
 	return result.ExitCode(callErr)
@@ -1647,10 +1717,10 @@ func selectOutput(cmd *cobra.Command, flags *globalFlags) {
 
 func rejectCredentialInput(flags *globalFlags) error {
 	if flags.apiKeyStdin {
-		return result.New("input", "该本地 context 命令不接受 --api-key-stdin")
+		return result.New("input", i18n.T("This local context command does not accept --api-key-stdin"))
 	}
 	if flags.endpointSet || flags.contextSet || flags.timeoutSet {
-		return result.New("input", "该本地 context 命令不接受连接覆盖参数")
+		return result.New("input", i18n.T("This local context command does not accept connection overrides"))
 	}
 	return nil
 }
@@ -1671,7 +1741,7 @@ func configureListFilter(cmd *cobra.Command, flags *globalFlags) {
 		return
 	}
 	var filter string
-	cmd.Flags().StringVar(&filter, "filter", "", "按名称或 ID 包含文本筛选（客户端筛选，不减少服务端传输）")
+	cmd.Flags().StringVar(&filter, "filter", "", i18n.T("Filter by name or ID substring (client-side; does not reduce server transfer)"))
 	original := cmd.RunE
 	cmd.RunE = func(c *cobra.Command, args []string) error {
 		flags.listView = listViewOptions{key: key, filter: filter}
@@ -1685,13 +1755,13 @@ func applyListView(value app.Result, options listViewOptions) (app.Result, error
 	}
 	encoded, err := json.Marshal(value.Data)
 	if err != nil {
-		return value, result.New("internal", "无法整理资源列表")
+		return value, result.New("internal", i18n.T("Unable to organize resource list"))
 	}
 	var data map[string]any
 	decoder := json.NewDecoder(bytes.NewReader(encoded))
 	decoder.UseNumber()
 	if err = decoder.Decode(&data); err != nil {
-		return value, result.New("internal", "资源列表格式无效")
+		return value, result.New("internal", i18n.T("Invalid resource list format"))
 	}
 	total, matched, shown := 0, 0, 0
 	selectRows := func(items []any) []any {
@@ -1778,65 +1848,69 @@ func enrichResult(deps Dependencies, flags *globalFlags, value app.Result, err e
 		switch e.Kind {
 		case "auth":
 			if e.Type == "requires_member_session" || e.Type == "password_login_disabled" {
-				add("导入有效成员会话", connect, "auth", "set-token", "--stdin")
+				add(i18n.T("Import a valid member session"), connect, "auth", "set-token", "--stdin")
 			} else {
-				add("验证当前目标的凭据", connect, "whoami")
+				add(i18n.T("Verify credentials for the current target"), connect, "whoami")
 			}
 		case "permission", "incompatible":
-			add("查看当前目标支持的能力与权限", connect, "capabilities")
+			add(i18n.T("Show capabilities and permissions supported by current target"), connect, "capabilities")
 		case "precondition":
 			if flags.commandPath == "install" {
-				label := "检查安装前置条件与参数"
+				label := i18n.T("Check installation prerequisites and arguments")
 				if data["step"] == "check_ports" {
-					label = "先释放冲突端口，或用 --port 更换 HTTP 端口"
+					label = i18n.T("Free conflicting ports, or change the HTTP port with --port")
 					if port := data["conflict_port"]; port == 5401 || port == 5410 {
-						label = "先释放 5401/5410 冲突端口，或改用 --driver docker"
+						label = i18n.T("Free ports 5401/5410, or use --driver docker")
 					}
 				}
 				add(label, base, "install", "--help")
-			} else if e.Message == "服务端未明确支持该操作" || e.Message == "服务端明确不支持该操作" {
-				add("查看当前目标支持的能力", connect, "capabilities")
+			} else if e.Message == i18n.T("Server has not explicitly confirmed support for this operation") || e.Message == i18n.T("Server explicitly does not support this operation") {
+				add(i18n.T("Show capabilities supported by current target"), connect, "capabilities")
 			} else {
-				add("检查目标和 Workspace 绑定", connect, "context", "show")
+				add(i18n.T("Check target and Workspace binding"), connect, "context", "show")
 			}
 		case "network", "result_unknown":
 			if id, ok := data["task_id"].(string); ok && id != "" {
-				add("查询已提交的任务，不重新提交", connect, "task", "get", id)
+				add(i18n.T("Query a submitted task without resubmitting"), connect, "task", "get", id)
 			} else if id, ok := data["uuid"].(string); ok && id != "" && strings.HasPrefix(flags.commandPath, "bot.") {
-				add("回读资源确认结果", connect, "bot", "get", id)
+				add(i18n.T("Read back resource to confirm the result"), connect, "bot", "get", id)
 			} else {
-				add("诊断当前目标", connect, "doctor")
+				add(i18n.T("Diagnose the current target"), connect, "doctor")
 			}
 		case "input":
-			add("查看参数与请求体示例", base, append(strings.Split(flags.commandPath, "."), "--help")...)
+			path := flags.commandPath
+			if path == "lbctl" {
+				path = ""
+			}
+			add(i18n.T("Show argument and request body examples"), base, append(strings.Fields(strings.ReplaceAll(path, ".", " ")), "--help")...)
 		case "not_found":
 			family := strings.Split(flags.commandPath, ".")[0]
 			if resourceListKey(family+".list") != "" {
-				add("列出当前目标中的资源", connect, family, "list")
+				add(i18n.T("List resources on the current target"), connect, family, "list")
 			}
 		}
 		if flags.commandPath == "install" {
 			if retry, ok := data["retry_argv"].([]string); ok {
-				add("修正失败步骤后重试安装", base, retry...)
+				add(i18n.T("Fix the failed step and retry installation"), base, retry...)
 			}
 			if rollback, ok := data["rollback_argv"].([]string); ok {
-				add("卸载服务并保留数据", base, rollback...)
+				add(i18n.T("Uninstall services and preserve data"), base, rollback...)
 			}
 		}
 	} else {
 		switch flags.commandPath {
 		case "context.add", "context.update":
 			if name, ok := data["name"].(string); ok {
-				add("选择这个环境", base, "context", "use", name)
+				add(i18n.T("Select this environment"), base, "context", "use", name)
 			}
 		case "context.use":
-			add("检查所选实例", base, "status")
+			add(i18n.T("Check the selected instance"), base, "status")
 		case "context.remove":
-			add("查看剩余环境", base, "context", "list")
+			add(i18n.T("Show remaining environments"), base, "context", "list")
 		}
 		if data["submitted"] == true && data["step"] != "completed" {
 			if id, ok := data["task_id"].(string); ok && id != "" {
-				add("跟踪任务进度", connect, "task", "get", id, "--wait")
+				add(i18n.T("Track task progress"), connect, "task", "get", id, "--wait")
 			}
 		}
 	}
@@ -1852,33 +1926,4 @@ func enrichResult(deps Dependencies, flags *globalFlags, value app.Result, err e
 func hasEnvironmentConfig(deps Dependencies) bool {
 	_, ok := deps.LookupEnv("LANGBOT_CONFIG")
 	return ok
-}
-
-// Human waiting feedback is terminal-only; redirected and machine output stay quiet.
-func startProgress(deps Dependencies, flags *globalFlags) func() {
-	file, ok := deps.Err.(*os.File)
-	if !ok || flags.outputSet || flags.commandPath == "schema" {
-		return func() {}
-	}
-	info, err := file.Stat()
-	if err != nil || info.Mode()&os.ModeCharDevice == 0 {
-		return func() {}
-	}
-	done, exited := make(chan struct{}), make(chan struct{})
-	start := time.Now()
-	go func() {
-		defer close(exited)
-		ticker := time.NewTicker(2 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-done:
-				return
-			case <-ticker.C:
-				fmt.Fprintf(deps.Err, "正在执行 %s（已等待 %s）\n", strings.ReplaceAll(flags.commandPath, ".", " "), time.Since(start).Round(time.Second))
-			}
-		}
-	}()
-	var once sync.Once
-	return func() { once.Do(func() { close(done); <-exited }) }
 }

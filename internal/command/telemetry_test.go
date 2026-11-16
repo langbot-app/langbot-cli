@@ -34,7 +34,7 @@ func TestLifecycleFailureTelemetry(t *testing.T) {
 			reporter := telemetry.New(telemetry.Options{Home: t.TempDir(), Version: "test", LookupEnv: func(key string) (string, bool) {
 				return server.URL, key == "LBCTL_TELEMETRY_ENDPOINT"
 			}})
-			code := Execute(t.Context(), append(strings.Fields(name), "--not-a-valid-flag"), Dependencies{Telemetry: reporter, Out: io.Discard, Err: io.Discard})
+			code := executeChinese(t.Context(), append(strings.Fields(name), "--not-a-valid-flag"), Dependencies{Telemetry: reporter, Out: io.Discard, Err: io.Discard})
 			reporter.Close()
 			mutex.Lock()
 			defer mutex.Unlock()
@@ -105,7 +105,7 @@ func TestInstallOccupiedPortReportsFailure(t *testing.T) {
 		return "", false
 	}})
 	args := []string{"install", "--driver", "native", "--yes", "--region", "global", "--version", "v4.10.0", "--port", strconv.Itoa(listener.Addr().(*net.TCPAddr).Port)}
-	code := Execute(t.Context(), args, Dependencies{Telemetry: reporter, Out: io.Discard, Err: io.Discard, LocalDir: filepath.Join(home, "instance"), LocalLocatorPath: filepath.Join(home, "locator.json")})
+	code := executeChinese(t.Context(), args, Dependencies{Telemetry: reporter, Out: io.Discard, Err: io.Discard, LocalDir: filepath.Join(home, "instance"), LocalLocatorPath: filepath.Join(home, "locator.json")})
 	reporter.Close()
 	mutex.Lock()
 	defer mutex.Unlock()

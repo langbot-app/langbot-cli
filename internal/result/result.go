@@ -1,5 +1,7 @@
 package result
 
+import "github.com/langbot-app/langbot-cli/internal/i18n"
+
 import "errors"
 
 type Error struct {
@@ -16,7 +18,7 @@ type Error struct {
 func (e *Error) Error() string { return e.Message }
 
 func RequiresMemberSession() *Error {
-	return &Error{Kind: "auth", Type: "requires_member_session", Message: "此操作需要有效成员会话；请运行 lbctl auth login 或 lbctl auth set-token --stdin"}
+	return &Error{Kind: "auth", Type: "requires_member_session", Message: i18n.T("This operation requires a valid member session; run lbctl auth login or lbctl auth set-token --stdin")}
 }
 
 func New(kind, message string) *Error {
@@ -32,7 +34,7 @@ func AsError(err error) *Error {
 		return typed
 	}
 	// 未分类错误可能包含请求或凭据，不直接呈现底层文本。
-	return New("server", "操作失败，发生未分类的内部错误")
+	return New("server", i18n.T("Operation failed with an unclassified internal error"))
 }
 
 func ExitCode(err error) int {

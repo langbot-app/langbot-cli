@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/langbot-app/langbot-cli/internal/config"
+	"github.com/langbot-app/langbot-cli/internal/i18n"
 	"github.com/langbot-app/langbot-cli/internal/result"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -17,13 +18,31 @@ func helpHint(cmd *cobra.Command) string {
 	if cmd != nil {
 		path = cmd.CommandPath()
 	}
-	return "请运行 " + path + " --help 查看用法"
+	return i18n.T("Run ") + path + i18n.T(" --help for usage")
+}
+
+func humanHelpRequest(root, selected *cobra.Command, parseErr error) bool {
+	if selected == nil || parseErr != nil {
+		return false
+	}
+	if help, _ := selected.Flags().GetBool("help"); help {
+		return true
+	}
+	args := selected.Flags().Args()
+	if selected == root {
+		return len(args) == 0
+	}
+	if selected.Name() != "help" {
+		return false
+	}
+	_, remaining, err := root.Find(args)
+	return err == nil && len(remaining) == 0
 }
 
 // Use static metadata, never raw parser errors, which can include secret values.
 func commandInputError(cmd *cobra.Command) error {
 	if cmd == nil {
-		return result.New("input", "参数无效；"+helpHint(cmd))
+		return result.New("input", i18n.T("Invalid arguments; ")+helpHint(cmd))
 	}
 	missing := []string{}
 	cmd.Flags().VisitAll(func(flag *pflag.Flag) {
@@ -33,41 +52,41 @@ func commandInputError(cmd *cobra.Command) error {
 	})
 	if len(missing) > 0 {
 		sort.Strings(missing)
-		return result.New("input", "缺少必需选项 "+strings.Join(missing, "、")+"；"+helpHint(cmd))
+		return result.New("input", i18n.T("Missing required option ")+strings.Join(missing, i18n.Punct("、"))+i18n.Punct("；")+helpHint(cmd))
 	}
-	return result.New("input", "参数无效；"+helpHint(cmd))
+	return result.New("input", i18n.T("Invalid arguments; ")+helpHint(cmd))
 }
 
 func commandFlagError(cmd *cobra.Command, cause error) error {
-	message := "未知选项或选项格式错误"
+	message := i18n.T("Unknown option or invalid option format")
 	cmd.Flags().VisitAll(func(flag *pflag.Flag) {
 		name := "--" + flag.Name
 		if cause.Error() == "flag needs an argument: "+name || (flag.Shorthand != "" && cause.Error() == "flag needs an argument: -"+flag.Shorthand) {
-			message = name + " 需要提供值"
+			message = name + i18n.T(" requires a value")
 		} else if strings.Contains(cause.Error(), `for "`+name+`" flag:`) {
-			message = name + " 的值无效（类型：" + flag.Value.Type() + "）"
+			message = name + i18n.T(" has an invalid value (type:") + flag.Value.Type() + i18n.Punct("）")
 		}
 	})
-	return result.New("input", message+"；"+helpHint(cmd))
+	return result.New("input", message+i18n.Punct("；")+helpHint(cmd))
 }
 
 func configureHumanHelp(root *cobra.Command) {
 	root.SetUsageTemplate(strings.NewReplacer(
 		".LocalFlags.FlagUsages", "humanFlags . false", ".InheritedFlags.FlagUsages", "humanFlags . true",
-		"Usage:", "用法：", "Aliases:", "别名：", "Examples:", "示例：",
-		"Available Commands:", "可用命令：", "Additional Commands:", "其他命令：",
-		"Global Flags:", "全局选项：", "Flags:", "选项：",
-		"Additional help topics:", "其他帮助主题：",
+		"Usage:", i18n.T("Usage:"), "Aliases:", i18n.T("Aliases:"), "Examples:", i18n.T("Examples:"),
+		"Available Commands:", i18n.T("Available commands:"), "Additional Commands:", i18n.T("Other commands:"),
+		"Global Flags:", i18n.T("Global options:"), "Flags:", i18n.T("Options:"),
+		"Additional help topics:", i18n.T("Additional help topics:"),
 		`Use "{{.CommandPath}} [command] --help" for more information about a command.`,
-		`运行 "{{.CommandPath}} <命令> --help" 查看该命令的帮助。`,
-		"[command]", "<命令>",
+		i18n.T("Run \"{{.CommandPath}} <command> --help\" for command help."),
+		"[command]", i18n.T("<command>"),
 	).Replace(root.UsageTemplate()))
 	root.SetHelpCommand(&cobra.Command{
-		Use: "help [command]", Short: "查看命令帮助", Args: cobra.ArbitraryArgs,
+		Use: "help [command]", Short: i18n.T("Show command help"), Args: cobra.ArbitraryArgs,
 		RunE: func(_ *cobra.Command, args []string) error {
 			target, remaining, err := root.Find(args)
 			if err != nil || len(remaining) != 0 {
-				return result.New("input", "未知帮助主题；"+helpHint(root))
+				return result.New("input", i18n.T("Unknown help topic; ")+helpHint(root))
 			}
 			return target.Help()
 		},
@@ -78,23 +97,23 @@ func configureHumanHelp(root *cobra.Command) {
 	visit = func(cmd *cobra.Command) {
 		cmd.InitDefaultHelpFlag()
 		if flag := cmd.Flags().Lookup("help"); flag != nil {
-			flag.Usage = "查看此命令的帮助"
+			flag.Usage = i18n.T("Show help for this command")
 		}
 		switch cmd.Name() {
 		case "help":
-			cmd.Short = "查看命令帮助"
-			cmd.Long = "查看任意命令的帮助，例如 lbctl help bot update。"
+			cmd.Short = i18n.T("Show command help")
+			cmd.Long = i18n.T("Show help for any command, e.g. lbctl help bot update.")
 		case "completion":
-			cmd.Short = "生成 shell 自动补全脚本"
-			cmd.Long = "生成指定 shell 的自动补全脚本。"
+			cmd.Short = i18n.T("Generate shell completion scripts")
+			cmd.Long = i18n.T("Generate a completion script for the specified shell.")
 		case "whoami":
-			cmd.Short = "查看当前实例、Workspace 和权限"
+			cmd.Short = i18n.T("Show current instance, Workspace and permissions")
 		case "capabilities":
-			cmd.Short = "查看 Core 声明的操作能力"
+			cmd.Short = i18n.T("Show operation capabilities declared by Core")
 		}
 		if cmd.Parent() != nil && cmd.Parent().Name() == "completion" {
-			cmd.Short = "生成 " + cmd.Name() + " 自动补全脚本"
-			cmd.Long = cmd.Short + "。将输出保存并加载到对应 shell 中。"
+			cmd.Short = i18n.T("Generate ") + cmd.Name() + i18n.T(" completion script")
+			cmd.Long = cmd.Short + i18n.T(". Save the output and load it in the corresponding shell.")
 		}
 		if original := cmd.Args; original != nil {
 			cmd.Args = func(command *cobra.Command, args []string) error {
@@ -103,7 +122,7 @@ func configureHumanHelp(root *cobra.Command) {
 					if errors.As(err, &typed) {
 						return err
 					}
-					message := "位置参数数量不正确"
+					message := i18n.T("Incorrect number of positional arguments")
 					required := []string{}
 					for _, field := range strings.Fields(command.Use)[1:] {
 						if strings.HasPrefix(field, "<") && strings.HasSuffix(field, ">") {
@@ -111,9 +130,9 @@ func configureHumanHelp(root *cobra.Command) {
 						}
 					}
 					if len(args) < len(required) {
-						message = "缺少位置参数 " + strings.Join(required[len(args):], " ")
+						message = i18n.T("Missing positional argument ") + strings.Join(required[len(args):], " ")
 					}
-					return result.New("input", message+"；用法："+command.UseLine()+"；"+helpHint(command))
+					return result.New("input", message+i18n.T("; usage: ")+command.UseLine()+i18n.Punct("；")+helpHint(command))
 				}
 				return nil
 			}
@@ -131,7 +150,7 @@ func selectedConfigPath(deps Dependencies, flags *globalFlags) (string, error) {
 	}
 	if path, exists := deps.LookupEnv("LANGBOT_CONFIG"); exists {
 		if strings.TrimSpace(path) == "" {
-			return "", result.New("input", "LANGBOT_CONFIG 不能为空")
+			return "", result.New("input", i18n.T("LANGBOT_CONFIG must not be empty"))
 		}
 		return path, nil
 	}
@@ -142,11 +161,11 @@ var helpGroups = []struct {
 	title string
 	names []string
 }{
-	{"连接与诊断", []string{"context", "status", "doctor", "whoami", "capabilities"}},
-	{"资源与内容", []string{"bot", "pipeline", "provider", "model", "knowledge-base", "knowledge-engine", "knowledge-parser", "plugin", "skill", "mcp-server"}},
-	{"运行与排查", []string{"monitoring", "sandbox", "task", "logs"}},
-	{"本机部署", []string{"install", "adopt", "start", "stop", "restart", "upgrade", "uninstall", "update"}},
-	{"工具与自动化", []string{"schema", "api", "raw", "completion", "version", "help"}},
+	{i18n.Source("Connection and diagnostics"), []string{"context", "status", "doctor", "whoami", "capabilities"}},
+	{i18n.Source("Resources and content"), []string{"bot", "pipeline", "provider", "model", "knowledge-base", "knowledge-engine", "knowledge-parser", "plugin", "skill", "mcp-server"}},
+	{i18n.Source("Operations and troubleshooting"), []string{"monitoring", "sandbox", "task", "logs"}},
+	{i18n.Source("Local deployment"), []string{"list", "install", "adopt", "start", "stop", "restart", "upgrade", "uninstall", "update"}},
+	{i18n.Source("Tools and automation"), []string{"schema", "api", "raw", "completion", "version", "help"}},
 }
 
 func configureExperience(root *cobra.Command, deps Dependencies, flags *globalFlags) {
@@ -176,11 +195,11 @@ func configureExperience(root *cobra.Command, deps Dependencies, flags *globalFl
 			if cmd.Long == "" {
 				cmd.Long = cmd.Short
 			}
-			cmd.Long += "\n--dry-run 只执行该操作声明的检查，不写入；预检通过不代表业务校验或实际执行成功。"
+			cmd.Long += i18n.T("\n--dry-run performs only the declared checks without writing; passing preflight does not guarantee business validation or execution success.")
 		}
 		configureListFilter(cmd, flags)
 		if example, exists := commandExamples[name]; exists {
-			cmd.Example = example
+			cmd.Example = i18n.T(example)
 		}
 		if strings.HasPrefix(name, "context.") && name != "context.add" && name != "context.list" {
 			cmd.ValidArgsFunction = contextNames
@@ -206,7 +225,7 @@ func configureExperience(root *cobra.Command, deps Dependencies, flags *globalFl
 					return err
 				}
 				if _, err := strconv.ParseUint(args[0], 10, 64); err != nil {
-					return result.New("input", "task ID 必须为非负整数；请运行 lbctl task list 查看任务 ID")
+					return result.New("input", i18n.T("task ID must be a non-negative integer; run lbctl task list to find task IDs"))
 				}
 				return nil
 			}
@@ -218,7 +237,7 @@ func configureExperience(root *cobra.Command, deps Dependencies, flags *globalFl
 	visit(root)
 	for index, group := range helpGroups {
 		id := strconv.Itoa(index)
-		root.AddGroup(&cobra.Group{ID: id, Title: group.title + "："})
+		root.AddGroup(&cobra.Group{ID: id, Title: i18n.T(group.title) + i18n.Human(":")})
 		for _, cmd := range root.Commands() {
 			for _, name := range group.names {
 				if cmd.Name() == name {
@@ -227,7 +246,7 @@ func configureExperience(root *cobra.Command, deps Dependencies, flags *globalFl
 			}
 		}
 	}
-	root.Long = "LangBot 服务管理 CLI。默认输出便于人工阅读；agent/脚本使用 -o json 或 -o yaml。\n连接已有实例先看 context list 和 status；本机部署的启停操作需要先 adopt。"
+	root.Long = i18n.T("LangBot service management CLI. Default output is human-readable; use -o json or -o yaml for agents/scripts.\nFor existing instances, start with context list and status; adopt local deployments before managing their lifecycle.")
 }
 
 func init() { cobra.AddTemplateFunc("humanFlags", humanFlags) }
@@ -244,10 +263,10 @@ func humanFlags(cmd *cobra.Command, inherited bool) string {
 		}
 		copy := *flag
 		if meta.RequiredFlags[flag.Name] {
-			copy.Usage += "（必填）"
+			copy.Usage += i18n.T(" (required)")
 		}
 		if condition := meta.FlagApplicability[flag.Name]; condition.Status == "conditional" {
-			copy.Usage += "（" + condition.Reason + "）"
+			copy.Usage += " (" + i18n.T(condition.Reason) + ")"
 		}
 		view.AddFlag(&copy)
 	})
@@ -286,9 +305,9 @@ var commandExamples = map[string]string{
 	"context.use":    "  lbctl context use local\n  lbctl status\n  lbctl bot list",
 	"schema":         "  lbctl schema --summary\n  lbctl schema --command bot\n  lbctl schema --command 'bot update'",
 	"bot.list":       "  lbctl bot list\n  lbctl bot list --filter LangBot\n  lbctl bot list -o json",
-	"bot.get":        "  lbctl bot get <bot-id>\n  # 根据 use_pipeline_uuid 查看关联 Pipeline\n  lbctl pipeline get <pipeline-id>",
-	"bot.update":     "  # request.yaml 的最小示例：{\"name\":\"my-bot\"}\n  lbctl bot update <bot-id> --file request.yaml --dry-run\n  lbctl bot update <bot-id> --file request.yaml\n  # 修改 adapter_config 前先 get，保留仍需使用的配置；*** 为脱敏值。",
-	"pipeline.apply": "  # 更新示例：{\"uuid\":\"<pipeline-id>\",\"name\":\"my-pipeline\"}\n  # 无 uuid 时创建；config 字段以目标 Core 版本为准。\n  lbctl pipeline apply --file pipeline.yaml --dry-run\n  lbctl pipeline apply --file pipeline.yaml",
+	"bot.get":        i18n.Source("  lbctl bot get <bot-id>\n  # Inspect the pipeline referenced by use_pipeline_uuid\n  lbctl pipeline get <pipeline-id>"),
+	"bot.update":     i18n.Source("  # Minimal request.yaml: {\"name\":\"my-bot\"}\n  lbctl bot update <bot-id> --file request.yaml --dry-run\n  lbctl bot update <bot-id> --file request.yaml\n  # Get adapter_config before editing to preserve needed values; *** is redacted."),
+	"pipeline.apply": i18n.Source("  # Update example: {\"uuid\":\"<pipeline-id>\",\"name\":\"my-pipeline\"}\n  # Without uuid, creates a pipeline; config depends on the target Core version.\n  lbctl pipeline apply --file pipeline.yaml --dry-run\n  lbctl pipeline apply --file pipeline.yaml"),
 	"model.list":     "  lbctl model list --filter deepseek\n  lbctl model list --type llm --provider <provider-id>\n  lbctl model list -o json",
 	"task.get":       "  lbctl task get 42\n  lbctl task get 42 --wait --wait-timeout 5m",
 }

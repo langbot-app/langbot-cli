@@ -38,7 +38,7 @@ func TestNativePortConflictRecovery(t *testing.T) {
 		if format != "" {
 			commandArgs = append(commandArgs, "--output", format)
 		}
-		code := Execute(context.Background(), commandArgs, Dependencies{Out: &output, Err: io.Discard, LocalDir: filepath.Join(root, "instance")})
+		code := executeChinese(context.Background(), commandArgs, Dependencies{Out: &output, Err: io.Discard, LocalDir: filepath.Join(root, "instance")})
 		if code != 6 || strings.Contains(output.String(), "context show") || !strings.Contains(output.String(), "释放冲突端口") {
 			t.Fatalf("%d: %s", code, output.String())
 		}
@@ -178,12 +178,12 @@ func TestNativeRegistrationConflictRecovery(t *testing.T) {
 		if dryRun {
 			args = append(args, "--dry-run")
 		}
-		code := Execute(t.Context(), args, Dependencies{Telemetry: reporter, Out: &output, Err: io.Discard, LocalLocatorPath: locator.Path})
+		code := executeChinese(t.Context(), args, Dependencies{Telemetry: reporter, Out: &output, Err: io.Discard, LocalLocatorPath: locator.Path})
 		reporter.Close()
 		if code != 6 {
 			t.Fatalf("%d: %s", code, output.String())
 		}
-		for _, want := range []string{"失败步骤：register", "default", record.Endpoint, "lbctl install --driver native --dir", "--name 'default'", "lbctl uninstall --dir '" + dir + "' --yes"} {
+		for _, want := range []string{"(register)", "default", record.Endpoint, "lbctl install --driver native --dir", "--name 'default'", "lbctl uninstall --dir '" + dir + "' --yes"} {
 			if !strings.Contains(output.String(), want) {
 				t.Fatalf("missing %s: %s", want, output.String())
 			}

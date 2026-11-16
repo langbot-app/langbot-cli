@@ -22,7 +22,7 @@ func TestNativeDefaultDryRunIsMachineReadableAndDoesNotInstall(t *testing.T) {
 	port := listener.Addr().(*net.TCPAddr).Port
 	listener.Close()
 	var output, diagnostic bytes.Buffer
-	code := Execute(context.Background(), []string{"install", "--version", "v4.11.8", "--region", "global", "--port", strconv.Itoa(port), "--dry-run", "--output", "json"}, Dependencies{Out: &output, Err: &diagnostic})
+	code := executeChinese(context.Background(), []string{"install", "--version", "v4.11.8", "--region", "global", "--port", strconv.Itoa(port), "--dry-run", "--output", "json"}, Dependencies{Out: &output, Err: &diagnostic})
 	var envelope struct {
 		Data map[string]any `json:"data"`
 	}
@@ -52,7 +52,7 @@ func TestNativeRejectsInvalidExtraAndOccupiedPortBeforeInstall(t *testing.T) {
 	defer listener.Close()
 	for _, args := range [][]string{{"--extra", "unknown"}, {"--port", strconv.Itoa(listener.Addr().(*net.TCPAddr).Port)}} {
 		var output bytes.Buffer
-		code := Execute(context.Background(), append([]string{"install", "--driver", "native", "--region", "global", "--version", "v4.11.8", "--yes", "--output", "json"}, args...), Dependencies{Out: &output})
+		code := executeChinese(context.Background(), append([]string{"install", "--driver", "native", "--region", "global", "--version", "v4.11.8", "--yes", "--output", "json"}, args...), Dependencies{Out: &output})
 		if code == 0 {
 			t.Fatalf("accepted invalid install %v: %s", args, output.String())
 		}

@@ -66,7 +66,7 @@ func TestAuthenticationSetupGuidance(t *testing.T) {
 					return &http.Response{StatusCode: test.status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"code":-1,"msg":"` + secret + `"}`))}, nil
 				})
 				var out, diagnostic bytes.Buffer
-				code := command.Execute(context.Background(), args, command.Dependencies{
+				code := command.Execute(context.Background(), append([]string{"--lang", "zh-Hans"}, args...), command.Dependencies{
 					In: strings.NewReader(test.input), Out: &out, Err: &diagnostic, Transport: transport,
 					DefaultConfigPath: func() (string, error) { return configPath, nil },
 					LookupEnv:         func(name string) (string, bool) { value, ok := test.env[name]; return value, ok },

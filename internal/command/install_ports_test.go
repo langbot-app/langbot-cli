@@ -45,7 +45,7 @@ func TestInstallDryRunExposesSelectedPortsAndProject(t *testing.T) {
 	dir := filepath.Join(root, "deployment")
 	runner := &installPortRunner{}
 	var out bytes.Buffer
-	code := Execute(context.Background(), []string{
+	code := executeChinese(context.Background(), []string{
 		"install", "--driver", "docker", "--region", "global", "--version", "v4.10.10", "--dir", dir, "--project", "regression",
 		"--port", "invalid-port",
 	}, Dependencies{Out: &out, LocalRunner: runner, LookupEnv: environmentLookup})
@@ -53,7 +53,7 @@ func TestInstallDryRunExposesSelectedPortsAndProject(t *testing.T) {
 		t.Fatalf("invalid flag reached Docker: code=%d calls=%v output=%s", code, runner.calls, out.String())
 	}
 	out.Reset()
-	code = Execute(context.Background(), []string{
+	code = executeChinese(context.Background(), []string{
 		"install", "--driver", "docker", "--region", "global", "--version", "v4.10.10", "--dir", dir, "--project", "regression",
 		"--port", strconv.Itoa(port),
 		"--plugin-debug-port", "0", "--adapter-ports", "none", "--profile", "all", "--dry-run", "-o", "json",
