@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"strings"
 
 	"github.com/langbot-app/langbot-cli/internal/api"
 	"github.com/langbot-app/langbot-cli/internal/result"
@@ -138,8 +139,8 @@ func (s *Service) ProviderScanModels(ctx context.Context, uuid, modelType string
 		return Result{}, err
 	}
 	if modelType != "" {
-		if err := api.ValidateModelType(modelType); err != nil {
-			return Result{}, err
+		if modelType != api.ModelTypeLLM && modelType != api.ModelTypeEmbedding && modelType != api.ModelTypeRerank {
+			return Result{}, result.New("input", "provider scan-models type 必须是 llm、embedding 或 rerank")
 		}
 	}
 	preflight, err := s.writePreflight(ctx, "provider.scan_models", "provider_secret.manage", options)
@@ -172,6 +173,24 @@ func (s *Service) ProviderScanModels(ctx context.Context, uuid, modelType string
 	data["executed"] = true
 	data["result"] = scanned
 	return Result{Data: data, Meta: preflight.Meta()}, nil
+}
+
+func (s *Service) probeAudioModel(ctx context.Context, preflight *WritePreflight, operation string) error {
+	parts := strings.Split(operation, ".")
+	if len(parts) != 3 || parts[0] != "model" || parts[1] != "asr" && parts[1] != "tts" {
+		return nil
+	}
+	_, err := (api.Client{Transport: s.deps.Transport}).Models(ctx, readTarget(*preflight), parts[1], "")
+	if err != nil {
+		if result.AsError(err).HTTPStatus == 404 || result.AsError(err).HTTPStatus == 405 {
+			return result.New("incompatible", "当前 Core 未提供 "+parts[1]+" 模型路由")
+		}
+		return err
+	}
+	for _, action := range []string{"list", "get", "create", "update", "delete", "test"} {
+		preflight.Capabilities.Operations["model."+parts[1]+"."+action] = true
+	}
+	return nil
 }
 
 func (s *Service) ModelList(ctx context.Context, modelType, providerUUID string, options CheckOptions) (Result, error) {

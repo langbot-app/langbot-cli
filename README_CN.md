@@ -538,3 +538,90 @@ lbctl sandbox errors
 Sandbox 查询只读当前 Workspace：状态要求 `resource.view`，会话和错误要求 `audit.view`。托管 sandbox 使用服务端准入检查；状态保留 `enabled`、`available` 和服务端状态说明。
 
 需要 Core 声明对应 capability；支持 `-o json` 和 `-o yaml`。`enabled: false` 表示未启用，`enabled: true` 且 `available: false` 表示不可用。
+
+## 通用操作命令
+
+新增命令统一调用 `POST /api/v1/operations/<id>`，流式调用使用 `/<id>/stream`。执行前检查 `operation.invoke`（流式还检查 `operation.stream`）；旧版 Core 返回 `incompatible`（退出码 8），提示需要支持该能力的 Cloud/新版 Core，不猜测旧路由。已有命令继续使用兼容 v4.11.8 的原路由，包括 `monitoring embedding-calls`、`mcp-server resource-templates` 和使用 `--file` 的市场安装。
+
+```sh
+lbctl op list --domain agent --search run
+lbctl op describe agent.create
+lbctl op call agent.list -o json
+printf '%s' '{"agent_data":{"name":"demo","config":{}}}' | lbctl agent create --file - --yes
+lbctl agent runs list <agent-uuid>
+lbctl monitoring executions --file filters.json
+lbctl op stream <streaming-operation-id> --file input.json --yes
+lbctl agent debug <agent-uuid> --file debug.json --yes
+```
+
+`op call` 的 `--file path|-` 可选，接受 JSON/YAML 对象，默认 `{}`；`op stream` 必须提供 `--file`。通用调用从 `op describe` 获取风险与执行模式；目录隐藏但 CLI 已登记的 ID 使用内置契约，未知隐藏 ID 仍不可调用。write/high/dangerous 操作交互时确认，非交互时必须 `--yes`。友好命令使用登记的操作契约并遵循相同确认规则。写操作要求保存且绑定 Workspace 的 context；请求体、API Key 和确认答案不能同时读取 stdin。SSE 每收到事件即按选定格式输出，最后输出完成结果；错误或未收到 `done` 就断开连接会失败，不自动重试。
+
+位置参数自动填入同名 Core 字段，其余字段通过 `--file` 提供。请求体是**操作输入对象**，不是旧 HTTP 接口的请求体：创建 Agent 使用 `{"agent_data":{...}}`，调试使用 `{"payload":{...}}`，`monitoring execution <id>` 需要 `{"source":"agent"}` 或相应执行来源。位置参数与文件内 ID 冲突时本地拒绝。`--help` 列出输入字段名，目录可见的操作可用 `op describe` 查看完整 schema。所有命令支持简洁输出和 `-o json|yaml`，全部 Core 请求携带规范命令路径的 `X-LangBot-Client-Command`。
+
+### 命令总表
+
+`lbctl schema --summary` 提供完整离线索引；`lbctl schema --command "agent create"` 查看参数和安全要求，各命令组的 `--help` 显示位置参数。
+
+| 命令组 | 子命令 |
+| --- | --- |
+| 连接和部署 | `context`、`whoami`、`capabilities`、`status`、`doctor`、`version`、`install`、`adopt`、`start`、`stop`、`restart`、`upgrade`、`uninstall`、`logs` |
+| 通用操作 | `op list/describe/call/stream` |
+| Agent | `list/get/create/update/delete/metadata`、`runs list/events`、`debug`（流式） |
+| Plugin | 原有 list/get/config/logs/delete/upgrade；`permissions get/confirm`、`search`、`readme`、`debug-info`、`config-file upload/delete`、`github releases/assets`、`page-action`、`install local/github/marketplace` |
+| Bot | 原有 CRUD；`routes preview/status`、`message send/test`、`logs`、`runtime`、`admins list/add/delete`、`group-filter preview/apply`、`setup <platform> start/status/cancel` |
+| Monitoring | 原有 messages/llm-calls/tool-calls/embedding-calls/sessions/errors/message/session；`overview`、`executions`、`execution`、`tokens`、`inflight`、`feedback list/stats`、`export <kind>`、`session analysis/reset` |
+| Pipeline | 原有 CRUD/copy/apply/extensions/run；`metadata`、`defaults`、`chat history/reset/connections/broadcast`、`migration preview/execute` |
+| Model | `list/get/create/update/delete/test --type llm\|embedding\|rerank\|asr\|tts`、`default get`、`starred get/set` |
+| Provider | 原有 CRUD/scan-models；`models count`、`codex start/poll/status/cancel/disconnect` |
+| Skill | 原有 CRUD/files/preview/install；`directory scan/import`、`reload`、`package get`、`github preview`、`zip preview` |
+| MCP server | 原有 CRUD/resources/resource-templates/logs/test；`runtime` |
+| Knowledge | 原有 knowledge-base/engine/parser 命令；`knowledge-base migration preview/execute` |
+| 能力发现 | `adapter list/get`、`requester list/get`、`tool list/get`、`extension list`、`stats` |
+| API key/Webhook | `api-key list/get/create/update/delete`、`webhook list/get/create/update/delete` |
+| Settings | `governance get/update`、`operation-logs list/filters/export` |
+| Workspace | `current/get`、`language get/update`、`member list/update/remove`、`invitation create/list/revoke` |
+| Assistant | `list/get/create/turn/run/stream/stop` |
+| File | `file image upload/get` |
+| System | `storage-analysis`、`model-availability`、`model-recommended`、`plugin-status` |
+| 其他原有命令 | `task`、`sandbox`、`api`、`raw`、`schema`、`completion` |
+
+Bot setup 平台：`dingtalk`、`lark`、`qqofficial`、`slack`、`wecombot`、`weixin`，二维码/授权信息以文本输出。导出类型：`messages`、`sessions`、`errors`、`llm-calls`、`embedding-calls`、`feedback`。`assistant run` 调用 `assistant.run.start`，`assistant stream` 使用 SSE。ASR/TTS 不走操作目录，而是在 CRUD/test 前探测 `/api/v1/provider/models/asr|tts` 路由；不指定类型的 `model list` 保持原有三类聚合。
+
+### 插件安装与权限确认
+
+```sh
+lbctl plugin install marketplace <author> <name> --version 1.2.3 --wait
+lbctl plugin install local --file plugin.lbpkg --confirm-permissions
+lbctl plugin install github --file github.json --confirm-permissions
+lbctl plugin permissions get <author> <name>
+lbctl plugin permissions confirm <author> <name> --yes
+lbctl plugin permissions confirm <author> <name> --capability storage.plugin --operation agent.list --yes
+```
+
+默认确认全部声明权限，也可逐项指定；compat 模式始终提交完整权限集合。Core 按 API Key 自身权限逐项校验，不能提权。`--confirm-permissions` 隐含等待安装成功、确认权限并核验启用状态，需要 `plugin.permissions.confirm_api_key` 和 `operation.invoke`；安装失败不继续确认。本地和 GitHub 安装从包内 manifest 确定插件身份，不把文件名或仓库名当作插件名；GitHub 确认会下载选定的公开 release asset 检查 manifest，不向 GitHub 发送 Workspace Key。
+
+### Core 权限边界
+
+操作目录按权限、principal 和 exposure 过滤，不等于全部友好命令。目录隐藏但 CLI 已登记的操作可使用固定契约调用，最终权限仍由 Core 校验。Workspace 成员/邀请、provider codex、Assistant、Pipeline 迁移、知识库迁移自动使用成员会话，等价的 `op call/describe/stream` ID 同样适用。其他命令即使已配置成员 token 也默认使用 API Key；显式传入 `--as-member` 才改用成员会话。知识库迁移 `preview` 对应 `/api/v1/knowledge/migration/status`。
+
+### 成员会话
+
+```bash
+lbctl auth login --email you@example.com
+lbctl auth login --email you@example.com --password-stdin < password-file
+lbctl auth login --email you@example.com --totp
+lbctl auth set-token --stdin < token-file
+lbctl workspace member list
+lbctl op list --as-member
+lbctl auth logout
+```
+
+登录要求已保存的 context。密码、TOTP/恢复码均隐藏输入；`--totp` 完成 Core 返回的 challenge，密码来自 stdin 时仍需可用的控制终端输入验证码。成员 token 保存到当前 context 配置文件的可选 `user_token` 字段，凭据配置原子写入且权限为 `0600`；API Key 仍只保存环境变量引用。`LANGBOT_USER_TOKEN` 优先于保存的 token。输出会打码；不要将密码或 token 放入命令行参数。
+
+Cloud 禁用密码登录，返回 `password_login_disabled`。先登录目标 Workspace 的 WebUI，在浏览器开发者工具 → Application/Storage → 对应域名的 Local Storage 中复制 `token`，粘贴到 `lbctl auth set-token --stdin` 并以 EOF 结束，或通过受保护的 stdin 管道传入。token 等同密码，不要放进日志或截图。CLI 不自动续期：过期或成员请求被 Core 返回 401/403 时统一报 `requires_member_session`（退出码 3），需重新登录或导入新的 WebUI token；缺少 token 时发请求之前即报错。`auth logout` 清除保存的 token；若使用环境变量还需 `unset LANGBOT_USER_TOKEN`，它不会撤销其他浏览器会话。成员操作通过 `/api/v1/workspaces/current` 核验权限和 Workspace 绑定，不使用仅允许 API Key 的 system 身份探测接口。
+
+### 二进制文件
+
+上传继续使用已有 multipart 路由。`file image get <key> -O image.png` 从 `/api/v1/files/image/<key>` 下载原始字节，不依赖 `operation.invoke`，Core v4.11.8 也可使用。不传 `-O` 时仅允许向非终端 stdout 写入二进制；成功时不输出 JSON envelope。
+
+Core 支持 `operation.binary_base64` 后，`op call file.image.get --file request.json` 原样保留 JSON 中的 base64 字段（`output_schema` 标注 `contentEncoding: base64`）。加上 `--decode-binary content -O image.png` 可将指定顶层字段解码到文件，两项参数必须同时提供。system wizard 属于 WebUI 引导进度，不是无界面资源管理操作，因此不提供对应命令。

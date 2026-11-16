@@ -9,6 +9,7 @@ type Credential struct {
 }
 
 type Context struct {
+	UserToken             string      `yaml:"user_token,omitempty" json:"user_token,omitempty"`
 	Endpoint              string      `yaml:"endpoint" json:"endpoint"`
 	Credential            *Credential `yaml:"credential,omitempty" json:"credential,omitempty"`
 	Timeout               string      `yaml:"timeout,omitempty" json:"timeout,omitempty"`
@@ -36,6 +37,7 @@ type Options struct {
 }
 
 type Connection struct {
+	UserToken             string        `json:"-" yaml:"-"`
 	Context               string        `json:"context" yaml:"context"`
 	Endpoint              string        `json:"endpoint" yaml:"endpoint"`
 	CredentialSource      string        `json:"credential_source" yaml:"credential_source"`

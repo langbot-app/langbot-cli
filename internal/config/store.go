@@ -179,6 +179,9 @@ func validateFile(file File) error {
 		}
 	}
 	for name, item := range file.Contexts {
+		if item.UserToken != "" && (len(item.UserToken) > maxSecretBytes || validateSecret(item.UserToken) != nil) {
+			return inputError("context user_token 无效")
+		}
 		if !namePattern.MatchString(name) {
 			return inputError("context 名称无效")
 		}

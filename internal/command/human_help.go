@@ -267,7 +267,10 @@ func flagEnum(command, flag string) []string {
 			return []string{"langbot", "langbot_plugin_runtime", "langbot_box"}
 		}
 	case "type":
-		if strings.HasPrefix(command, "model.") || command == "provider.scan-models" {
+		if strings.HasPrefix(command, "model.") {
+			return []string{"llm", "embedding", "rerank", "asr", "tts"}
+		}
+		if command == "provider.scan-models" {
 			return []string{"llm", "embedding", "rerank"}
 		}
 	case "active":
