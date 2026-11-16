@@ -81,12 +81,14 @@ func (s *Service) checkDeploymentRegistration(dir string, candidate deploy.Recor
 			(record.ComposeProject != "" && record.ComposeProject == candidate.ComposeProject) ||
 			(record.InstanceUUID != "" && record.InstanceUUID == candidate.InstanceUUID) {
 			command := "lbctl start --endpoint " + nativeShellQuote(record.Endpoint)
+			cleanup := ""
 			if record.Driver == deploy.DriverNative {
 				recovery := map[string]any{}
-				nativeInstallRecovery(recovery, existing, record, false)
+				nativeInstallRecovery(recovery, existing, record, true)
 				command = recovery["retry_command"].(string)
+				cleanup = "；或清理旧实例后重装（数据保留）：" + recovery["rollback_command"].(string)
 			}
-			return result.New("precondition", fmt.Sprintf("登记冲突：实例 %q（目录 %s，endpoint %s，Compose project %q，instance UUID %q）已登记；继续使用原实例：%s", record.Name, existing, record.Endpoint, record.ComposeProject, record.InstanceUUID, command))
+			return result.New("precondition", fmt.Sprintf("登记冲突：实例 %q（目录 %s，endpoint %s，Compose project %q，instance UUID %q）已登记；继续使用原实例：%s%s", record.Name, existing, record.Endpoint, record.ComposeProject, record.InstanceUUID, command, cleanup))
 		}
 	}
 	return nil

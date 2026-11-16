@@ -183,7 +183,7 @@ func TestNativeRegistrationConflictRecovery(t *testing.T) {
 		if code != 6 {
 			t.Fatalf("%d: %s", code, output.String())
 		}
-		for _, want := range []string{"失败步骤：register", "default", record.Endpoint, "lbctl install --driver native --dir", "--name 'default'"} {
+		for _, want := range []string{"失败步骤：register", "default", record.Endpoint, "lbctl install --driver native --dir", "--name 'default'", "lbctl uninstall --dir '" + dir + "' --yes"} {
 			if !strings.Contains(output.String(), want) {
 				t.Fatalf("missing %s: %s", want, output.String())
 			}
