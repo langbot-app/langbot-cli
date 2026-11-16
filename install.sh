@@ -1,5 +1,6 @@
 #!/bin/sh
 set -eu
+export LBCTL_INSTALL_SOURCE=install.sh
 
 repository="langbot-app/langbot-cli"
 version="${LBCTL_VERSION:-latest}"

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/gofrs/flock"
+	"github.com/langbot-app/langbot-cli/internal/telemetry"
 )
 
 const DownloadURL = "https://download.langbot.app"
@@ -66,6 +67,7 @@ func (updater Updater) Latest(ctx context.Context) (string, error) {
 }
 
 func (updater Updater) Update(ctx context.Context, current string, check bool) (UpdateResult, error) {
+	telemetry.SetStep(ctx, "resolve_version")
 	latest, err := updater.Latest(ctx)
 	if err != nil {
 		return UpdateResult{}, err
@@ -98,6 +100,7 @@ func (updater Updater) Update(ctx context.Context, current string, check bool) (
 		return result, fmt.Errorf("unsupported update platform")
 	}
 	asset := "lbctl_" + strings.ReplaceAll(platform, "/", "_")
+	telemetry.SetStep(ctx, "download_update")
 	if strings.HasPrefix(platform, "windows/") {
 		asset += ".exe"
 	}
@@ -125,6 +128,7 @@ func (updater Updater) Update(ctx context.Context, current string, check bool) (
 	if hex.EncodeToString(sum[:]) != expected {
 		return result, fmt.Errorf("lbctl checksum mismatch")
 	}
+	telemetry.SetStep(ctx, "replace_binary")
 	info, err := os.Stat(binary)
 	if err != nil {
 		return result, err

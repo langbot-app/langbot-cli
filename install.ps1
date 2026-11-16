@@ -1,5 +1,6 @@
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
+$env:LBCTL_INSTALL_SOURCE = "install.ps1"
 
 $repository = "langbot-app/langbot-cli"
 $version = if ($env:LBCTL_VERSION) { $env:LBCTL_VERSION } else { "latest" }

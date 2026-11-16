@@ -11,6 +11,7 @@ import (
 
 	"github.com/langbot-app/langbot-cli/internal/deploy"
 	"github.com/langbot-app/langbot-cli/internal/result"
+	"github.com/langbot-app/langbot-cli/internal/telemetry"
 )
 
 func (s *Service) nativeOutput() io.Writer {
@@ -21,6 +22,7 @@ func (s *Service) nativeOutput() io.Writer {
 }
 
 func (s *Service) installNative(ctx context.Context, options InstallOptions) (Result, error) {
+	telemetry.SetEnvironment(ctx, "native", "", options.Region, options.Version)
 	timeout, err := operationTimeout(options.Timeout, options.TimeoutSet, 20*time.Minute)
 	if err != nil {
 		return Result{}, err
@@ -32,6 +34,7 @@ func (s *Service) installNative(ctx context.Context, options InstallOptions) (Re
 		return Result{}, err
 	}
 	version := options.Version
+	telemetry.SetStep(ctx, "resolve_version")
 	if version == "" {
 		version, err = s.latestRelease(ctx)
 		if err != nil {
@@ -60,6 +63,8 @@ func (s *Service) installNative(ctx context.Context, options InstallOptions) (Re
 		DataDir: filepath.Join(dir, "data"), Endpoint: fmt.Sprintf("http://127.0.0.1:%d", options.Port), ToolsDir: filepath.Join(home, "tools"),
 		Region: region, PyPIIndex: options.PyPIIndex, PythonMirror: options.PythonMirror, Extras: options.Extras, ServiceManager: deploy.SelectNativeManager(ctx)}
 	deploy.ApplyRegion(&record)
+	telemetry.SetEnvironment(ctx, record.Driver, record.ServiceManager, record.Region, record.CoreVersion)
+	telemetry.SetStep(ctx, "validate_target")
 	for _, extra := range record.Extras {
 		if extra != "seekdb" && extra != "milvus" && extra != "valkey" {
 			return Result{}, result.New("input", "unsupported --extra: "+extra)
@@ -74,6 +79,7 @@ func (s *Service) installNative(ctx context.Context, options InstallOptions) (Re
 		return Result{}, result.New("precondition", err.Error())
 	}
 	if !deploy.NativeRunning(dir) {
+		telemetry.SetStep(ctx, "check_ports")
 		if err := deploy.CheckNativePorts(record); err != nil {
 			return Result{}, result.New("precondition", err.Error())
 		}
@@ -100,6 +106,7 @@ func (s *Service) installNative(ctx context.Context, options InstallOptions) (Re
 			} else if err := deploy.ValidateInstallTarget(dir, true); err != nil {
 				return err
 			}
+			telemetry.SetStep(ctx, "write_record")
 			if err := (deploy.Store{Dir: dir}).Write(ctx, record); err != nil {
 				return err
 			}
@@ -113,12 +120,15 @@ func (s *Service) installNative(ctx context.Context, options InstallOptions) (Re
 			if err := deploy.PrepareNative(ctx, dir, record, s.nativeOutput()); err != nil {
 				return err
 			}
+			telemetry.SetStep(ctx, "install_service")
 			if err := deploy.InstallNativeService(ctx, dir, record); err != nil {
 				return err
 			}
+			telemetry.SetStep(ctx, "start_service")
 			if err := deploy.NativeStart(ctx, dir, record); err != nil {
 				return err
 			}
+			telemetry.SetStep(ctx, "health_check")
 			if err := deploy.WaitNativeHealth(ctx, record, s.deps.LocalHTTP); err != nil {
 				return err
 			}
@@ -155,14 +165,17 @@ func (s *Service) nativeLifecycle(ctx context.Context, diagnostics deploy.Diagno
 			return fmt.Errorf("deployment changed")
 		}
 		if action != "start" {
+			telemetry.SetStep(ctx, "stop_service")
 			if err := deploy.NativeStop(ctx, diagnostics.Dir, current); err != nil {
 				return err
 			}
 		}
 		if action != "stop" {
+			telemetry.SetStep(ctx, "start_service")
 			if err := deploy.NativeStart(ctx, diagnostics.Dir, current); err != nil {
 				return err
 			}
+			telemetry.SetStep(ctx, "health_check")
 			return deploy.WaitNativeHealth(ctx, current, s.deps.LocalHTTP)
 		}
 		return nil

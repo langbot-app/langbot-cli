@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/gofrs/flock"
+	"github.com/langbot-app/langbot-cli/internal/telemetry"
 )
 
 const UVVersion = "0.9.11"
@@ -212,6 +213,7 @@ func PrepareNative(ctx context.Context, dir string, record Record, out io.Writer
 			return fmt.Errorf("unsupported extra %s", extra)
 		}
 	}
+	telemetry.SetStep(ctx, "download_uv")
 	uv, err := EnsureUV(ctx, record.ToolsDir, record.Region, out)
 	if err != nil {
 		return err
@@ -226,10 +228,12 @@ func PrepareNative(ctx context.Context, dir string, record Record, out io.Writer
 		lastOutput = captured.String()
 		return err
 	}
+	telemetry.SetStep(ctx, "install_python")
 	if err := run("python", "install", "3.12"); err != nil {
 		return err
 	}
 	venv := filepath.Join(dir, "venvs", record.CoreVersion)
+	telemetry.SetStep(ctx, "create_venv")
 	if err := run("venv", "--allow-existing", "--python", "3.12", venv); err != nil {
 		return err
 	}
@@ -243,6 +247,7 @@ func PrepareNative(ctx context.Context, dir string, record Record, out io.Writer
 		indexes = append(indexes, "https://pypi.tuna.tsinghua.edu.cn/simple")
 	}
 	for _, index := range indexes {
+		telemetry.SetStep(ctx, "install_package")
 		fmt.Fprintln(out, "Installing", packageName, "from", index)
 		err = run("pip", "install", "--python", NativePython(dir, record.CoreVersion), "--index-url", index, packageName)
 		if err == nil {
