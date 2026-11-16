@@ -159,6 +159,7 @@ func NewInstallAssets(dir, version, profile string, port int, network InstallNet
 	}
 	image := DefaultImageRepository + ":" + version
 	compose := []byte(renderCompose(image, port, filepath.Join(resolved, "data", "box"), ports))
+	compose = composeAutostart(compose, new(true))
 	sum := sha256.Sum256(compose)
 	pluginToken, err := randomToken()
 	if err != nil {
@@ -184,6 +185,7 @@ func (a InstallAssets) Record(deploymentID, imageDigest string) Record {
 	ports := a.Ports
 	ports.AdapterPorts = append([]string{}, ports.AdapterPorts...)
 	return Record{
+		Autostart:    new(true),
 		DeploymentID: deploymentID, Driver: DriverDockerCompose, CoreVersion: a.Version, Profile: a.Profile,
 		ComposeProject: a.Project, ComposeFile: a.ComposeFile, EnvFile: a.EnvFile, DataDir: a.DataDir,
 		Endpoint: fmt.Sprintf("http://127.0.0.1:%d", a.Port), Port: a.Port,
@@ -198,6 +200,7 @@ func (a *InstallAssets) SetImageRepository(repository string) error {
 	}
 	a.Image = repository + ":" + a.Version
 	a.Compose = []byte(renderCompose(a.Image, a.Port, filepath.Join(a.Dir, "data", "box"), a.Ports))
+	a.Compose = composeAutostart(a.Compose, new(true))
 	a.Digest = fileDigest(a.Compose)
 	return nil
 }

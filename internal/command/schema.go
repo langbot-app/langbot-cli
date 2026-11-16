@@ -188,12 +188,15 @@ var schemaMetaByName = map[string]schemaCommandMeta{
 			"context": {Status: "rejected", Reason: "adopt 使用显式 endpoint"},
 		},
 	},
-	"start":     {Mutating: true},
-	"stop":      {Mutating: true},
-	"restart":   {Mutating: true},
-	"upgrade":   {Mutating: true, Destructive: true, RequiresYes: true, SupportsDryRun: true},
-	"update":    {Mutating: true},
-	"uninstall": {Mutating: true, Destructive: true, RequiresYes: true},
+	"start":             {Mutating: true},
+	"autostart.status":  {FlagApplicability: autostartFlags()},
+	"autostart.enable":  {Mutating: true, FlagApplicability: autostartFlags()},
+	"autostart.disable": {Mutating: true, FlagApplicability: autostartFlags()},
+	"stop":              {Mutating: true},
+	"restart":           {Mutating: true},
+	"upgrade":           {Mutating: true, Destructive: true, RequiresYes: true, SupportsDryRun: true},
+	"update":            {Mutating: true},
+	"uninstall":         {Mutating: true, Destructive: true, RequiresYes: true},
 	"logs": {ConditionalOutputs: []schemaConditionalOutput{
 		{When: flagEquals("follow", true), Format: "default", Encoding: "text-lines"},
 		{When: flagEquals("follow", true), Format: "json", Encoding: "json-lines"},
@@ -323,6 +326,14 @@ func localContextFlags() map[string]schemaFlagApplicability {
 	flags := map[string]schemaFlagApplicability{}
 	for _, name := range []string{"api-key-stdin", "context", "endpoint", "timeout"} {
 		flags[name] = schemaFlagApplicability{Status: "rejected", Reason: "本地 context 命令不接受连接覆盖参数"}
+	}
+	return flags
+}
+
+func autostartFlags() map[string]schemaFlagApplicability {
+	flags := map[string]schemaFlagApplicability{}
+	for _, name := range []string{"api-key-stdin", "context", "endpoint"} {
+		flags[name] = schemaFlagApplicability{Status: "rejected", Reason: "autostart 使用本机实例名称或目录"}
 	}
 	return flags
 }

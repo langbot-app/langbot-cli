@@ -1,0 +1,79 @@
+package deploy
+
+import (
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"sync"
+	"unicode/utf16"
+)
+
+type commandTail struct{ data []byte }
+
+type commandWriter struct {
+	mu  sync.Mutex
+	out io.Writer
+}
+
+func (writer *commandWriter) Write(data []byte) (int, error) {
+	writer.mu.Lock()
+	defer writer.mu.Unlock()
+	return writer.out.Write(data)
+}
+
+func (tail *commandTail) Write(data []byte) (int, error) {
+	count := len(data)
+	if len(data) >= 2048 {
+		tail.data = append(tail.data[:0], data[len(data)-2048:]...)
+		return count, nil
+	}
+	tail.data = append(tail.data, data...)
+	if len(tail.data) > 2048 {
+		tail.data = tail.data[len(tail.data)-2048:]
+	}
+	return count, nil
+}
+
+func runNativeCommand(command *exec.Cmd, out io.Writer) (string, error) {
+	var stdout, stderr commandTail
+	if out == nil {
+		out = io.Discard
+	}
+	writer := &commandWriter{out: out}
+	command.Stdout = io.MultiWriter(writer, &stdout)
+	command.Stderr = io.MultiWriter(writer, &stderr)
+	configureCommandCancellation(command)
+	err := command.Run()
+	output := string(stderr.data)
+	if strings.TrimSpace(output) == "" {
+		output = string(stdout.data)
+	}
+	if err != nil {
+		return output, fmt.Errorf("%s: %w: %s", filepath.Base(command.Path), err, strings.TrimSpace(output))
+	}
+	return output, nil
+}
+
+type nativeRunKey interface {
+	SetStringValue(string, string) error
+	DeleteValue(string) error
+}
+
+func writeNativeRun(key nativeRunKey, record Record, binary, dir string) error {
+	command := `"` + binary + `" _native-run "` + dir + strings.Repeat(`\`, len(dir)-len(strings.TrimRight(dir, `\`))) + `"`
+	if len(utf16.Encode([]rune(command))) > 260 {
+		return fmt.Errorf("HKCU Run command exceeds 260 characters; use shorter lbctl and deployment paths")
+	}
+	return key.SetStringValue(nativeServiceName(record), command)
+}
+
+func deleteNativeRun(key nativeRunKey, record Record) error {
+	err := key.DeleteValue(nativeServiceName(record))
+	if os.IsNotExist(err) {
+		return nil
+	}
+	return err
+}

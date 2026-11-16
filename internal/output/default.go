@@ -269,6 +269,8 @@ func renderDefaultData(w io.Writer, value any, command string) error {
 		}
 	case "install", "adopt", "start", "stop", "restart", "upgrade", "uninstall":
 		return renderLocalAction(w, data)
+	case "autostart.status", "autostart.enable", "autostart.disable":
+		return renderFields(w, data, []string{"autostart", "supported", "mechanism", "location", "instance_dir"})
 	case "whoami":
 		return renderValue(w, data, "")
 	case "capabilities":
@@ -378,6 +380,8 @@ func renderLocalAction(w io.Writer, data map[string]any) error {
 	case "install":
 		if data["dry_run"] == true {
 			line = "安装计划：LangBot " + version + " → " + endpoint
+		} else if data["log_path"] != nil && data["step"] != nil {
+			line = fmt.Sprintf("安装失败（%v）\n日志：%v\n运行日志：%v\n重试：%v\n回滚：%v", data["step"], data["log_path"], data["runtime_log_path"], data["retry_command"], data["rollback_command"])
 		} else if data["changed"] != true {
 			line = "安装未执行：前置检查未通过"
 		} else if state != "running" || data["step"] != nil {
@@ -431,6 +435,20 @@ func renderLocalAction(w io.Writer, data map[string]any) error {
 		}
 	}
 	if action == "install" && data["dry_run"] != true && data["changed"] == true && state == "running" && data["step"] == nil {
+		if enabled, ok := data["autostart"].(bool); ok {
+			message := "自启未开启 / Autostart disabled"
+			if enabled {
+				message = "已开启开机/登录自启 / Autostart enabled"
+			}
+			if _, err := fmt.Fprintf(w, "%s (%v)\n", message, data["autostart_mechanism"]); err != nil {
+				return err
+			}
+			if enabled {
+				if _, err := fmt.Fprintf(w, "关闭 / Disable: %v\n", data["autostart_disable_command"]); err != nil {
+					return err
+				}
+			}
+		}
 		_, err := fmt.Fprintln(w, "下一步：lbctl status · lbctl logs · lbctl upgrade --yes")
 		return err
 	}

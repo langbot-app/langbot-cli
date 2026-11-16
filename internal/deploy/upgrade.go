@@ -89,6 +89,7 @@ func ComposeForUpgrade(record Record, dir, version string) ([]byte, string, erro
 		}
 		updated := []byte(renderCompose(ImageRepository(record)+":"+version, record.Port, filepath.Join(dir, "data", "box"), ports))
 		updated = composePackageIndex(updated, record.PyPIIndex)
+		updated = composeAutostart(updated, record.Autostart)
 		return updated, fileDigest(updated), nil
 	}
 	content, err := os.ReadFile(record.ComposeFile)
@@ -146,6 +147,7 @@ func ValidateOwnedLayout(record Record, dir string) error {
 	}
 	current := []byte(renderCompose(record.Asset.Name, record.Port, filepath.Join(dir, "data", "box"), ports))
 	current = composePackageIndex(current, record.PyPIIndex)
+	current = composeAutostart(current, record.Autostart)
 	actual, err := os.ReadFile(record.ComposeFile)
 	legacy := []byte(strings.Replace(string(current), deployComposeEnvironment, "", 1))
 	if err != nil || (!equalDigest(actual, current) && !equalDigest(actual, legacy)) {

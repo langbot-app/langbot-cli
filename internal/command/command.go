@@ -195,6 +195,7 @@ func newRoot(deps Dependencies, flags *globalFlags, service *app.Service) *cobra
 	root.AddCommand(newStatusCommand(service, deps, flags))
 	root.AddCommand(newDoctorCommand(service, deps, flags))
 	root.AddCommand(newInstallCommand(service, deps, flags))
+	root.AddCommand(newAutostartCommand(service, deps, flags))
 	root.AddCommand(newAdoptCommand(service, deps, flags))
 	root.AddCommand(newLifecycleCommand(service, deps, flags, "start"))
 	root.AddCommand(newLifecycleCommand(service, deps, flags, "stop"))
