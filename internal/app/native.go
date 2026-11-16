@@ -72,6 +72,7 @@ func (s *Service) installNative(ctx context.Context, options InstallOptions) (Re
 		DataDir: filepath.Join(dir, "data"), Endpoint: fmt.Sprintf("http://127.0.0.1:%d", options.Port), ToolsDir: filepath.Join(home, "tools"),
 		Region: region, PyPIIndex: options.PyPIIndex, PythonMirror: options.PythonMirror, Extras: options.Extras, ServiceManager: deploy.SelectNativeManager(ctx)}
 	deploy.ApplyRegion(&record)
+	s.deploymentContext(ctx, record, dir, options.Region)
 	telemetry.SetEnvironment(ctx, record.Driver, record.ServiceManager, record.Region, record.CoreVersion)
 	telemetry.SetStep(ctx, "validate_target")
 	record.Autostart = new(record.ServiceManager != "process")

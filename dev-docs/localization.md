@@ -32,6 +32,21 @@ shows full subprocess output; otherwise failures show the captured tail.
 Installation logs retain full subprocess output. Downloads show byte counts
 and percentages when the server supplies a content length.
 
+TTY output redraws a two-line region (step/time and the last subprocess line),
+truncating to terminal cell width. Completed steps remain above it. Windows
+without VT uses carriage-return-only refresh. Plain output has no heartbeat.
+The CLI never hides the cursor and clears the active region on completion or
+cancellation. Summary and status panels use thin borders at 60 columns or more;
+narrow terminals and plain output use unboxed lines.
+
+Install/upgrade show the product, resolved target version, deployment method,
+region selection source, instance directory and port. The success panel links
+to account, model and bot setup. Bare `lbctl` shows grouped common commands;
+`lbctl --help` retains complete help. Status adds directory, startup and uptime
+without changing machine output. Native uptime starts when the supervisor
+writes its PID after launching Python; Docker uses the LangBot container's
+start timestamp. Remote or unavailable runtime timing is shown as not reported.
+
 ## Validation
 
 `go test ./internal/i18n ./internal/progress ./internal/command` covers locale
@@ -55,6 +70,7 @@ also launch deployment; preserve those additional steps when synchronizing:
 
 - Copy locale precedence and propagation through `LBCTL_LANG`.
 - Copy bilingual numbered download/verification/install messages.
+- Copy the bilingual product heading and website/docs/plugin links.
 - Copy the PowerShell outer exception handler for clean stderr failures.
   It sets `$LASTEXITCODE = 1` and returns without terminating an interactive
   `irm ... | iex` shell; wrappers should propagate that code when needed.

@@ -30,12 +30,15 @@ func TestStatusSummaryIsCompactAndDoesNotClaimAllCapabilitiesSupported(t *testin
 			t.Fatalf("summary missing %q: %s", want, out.String())
 		}
 	}
-	for _, unwanted := range []string{"full-instance-id", "full-workspace-id", "/private/deployment", "Capabilities: Verified", "Directory:"} {
+	for _, unwanted := range []string{"full-instance-id", "full-workspace-id", "Capabilities: Verified"} {
 		if strings.Contains(out.String(), unwanted) {
 			t.Fatalf("summary exposed verbose or misleading detail %q: %s", unwanted, out.String())
 		}
 	}
-	if len(strings.Split(strings.TrimSpace(out.String()), "\n")) > 8 {
+	if !strings.Contains(out.String(), "/private/deployment") {
+		t.Fatal("missing instance directory")
+	}
+	if len(strings.Split(strings.TrimSpace(out.String()), "\n")) > 12 {
 		t.Fatalf("summary too long: %s", out.String())
 	}
 }

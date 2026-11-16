@@ -112,6 +112,8 @@ func (s *Service) Install(ctx context.Context, options InstallOptions) (Result, 
 		}
 	}
 	deploy.ApplyRegion(&settings)
+	settings.CoreVersion, settings.Driver, settings.Port = version, deploy.DriverDockerCompose, options.Port
+	s.deploymentContext(ctx, settings, dir, options.Region)
 	telemetry.SetEnvironment(ctx, "docker", settings.ServiceManager, settings.Region, version)
 	if err := assets.SetImageRepository(settings.ImageRepository); err != nil {
 		return Result{}, result.New("input", err.Error())

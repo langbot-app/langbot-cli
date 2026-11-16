@@ -52,3 +52,22 @@ func TestNoticeDoesNotPolluteJSON(t *testing.T) {
 		}
 	}
 }
+
+func TestRootOverviewAndMachineOutput(t *testing.T) {
+	for _, lang := range []string{"en", "zh-Hans"} {
+		for _, machine := range []bool{false, true} {
+			var out, diagnostic bytes.Buffer
+			args := []string{"--lang", lang}
+			if machine {
+				args = append(args, "-o", "json")
+			}
+			code := Execute(context.Background(), args, Dependencies{Out: &out, Err: &diagnostic})
+			if code != 0 || json.Valid(out.Bytes()) != machine {
+				t.Fatalf("%d: %s", code, &out)
+			}
+			if !machine && (!strings.Contains(out.String(), "LangBot") || !strings.Contains(out.String(), "lbctl --help") || strings.Contains(out.String(), "--api-key-stdin")) {
+				t.Fatal(out.String())
+			}
+		}
+	}
+}

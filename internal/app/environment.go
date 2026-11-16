@@ -81,6 +81,12 @@ func (s *Service) Status(ctx context.Context, options CheckOptions) (Result, err
 		core = resolved.Record.CoreVersion
 	}
 	resolved.Environment.Versions = map[string]deploy.UpdateResult{"lbctl": {Current: s.deps.Version, Latest: cache.LBCTL}, "core": {Current: core, Latest: cache.Core}}
+	if options.Human {
+		return Result{Data: struct {
+			ActiveEnvironment
+			Uptime string `json:"human_uptime"`
+		}{resolved.Environment, s.humanUptime(ctx, resolved)}, Meta: connectionMeta(resolved.Connection)}, err
+	}
 	if err != nil {
 		return Result{Data: resolved.Environment, Meta: connectionMeta(resolved.Connection)}, err
 	}

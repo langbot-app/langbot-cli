@@ -20,6 +20,8 @@ type Display struct {
 	mu                sync.Mutex
 	out               io.Writer
 	animated, verbose bool
+	machine, carriage bool
+	painted           bool
 	title, tail       string
 	number            int
 	start             time.Time
@@ -28,11 +30,12 @@ type Display struct {
 }
 
 func New(out io.Writer, lookup func(string) (string, bool), machine, verbose bool) *Display {
-	display := &Display{out: out, verbose: verbose, done: make(chan struct{}), exited: make(chan struct{})}
+	display := &Display{out: out, verbose: verbose, machine: machine, done: make(chan struct{}), exited: make(chan struct{})}
 	file, ok := out.(*os.File)
 	_, noColor := lookup("NO_COLOR")
 	terminal, _ := lookup("TERM")
-	display.animated = ok && !machine && !noColor && terminal != "dumb" && term.IsTerminal(int(file.Fd())) && enableVT(file)
+	display.carriage = ok && !machine && !noColor && terminal != "dumb" && term.IsTerminal(int(file.Fd()))
+	display.animated = display.carriage && enableVT(file)
 	go display.animate()
 	return display
 }
@@ -64,19 +67,37 @@ func (display *Display) Step(title string) {
 	display.complete(true)
 	display.number++
 	display.title, display.tail, display.start = title, "", time.Now()
-	fmt.Fprintf(display.out, "[%d] %s ...\n", display.number, title)
+	if !display.carriage {
+		fmt.Fprintf(display.out, "[%d] %s ...\n", display.number, title)
+	}
+}
+
+func (display *Display) clear() {
+	if !display.painted {
+		return
+	}
+	if display.animated {
+		fmt.Fprint(display.out, "\r\x1b[2K\x1b[1A\r\x1b[2K")
+	} else {
+		fmt.Fprint(display.out, "\r"+strings.Repeat(" ", terminalWidth(display.out)-1)+"\r")
+	}
+	display.painted = false
 }
 
 func (display *Display) complete(success bool) {
 	if display.title == "" {
 		return
 	}
-	if display.animated {
-		fmt.Fprint(display.out, "\r\x1b[2K")
-	}
+	display.clear()
 	marker := "OK"
 	if !success {
 		marker = i18n.Human("Failed")
+	}
+	if display.animated {
+		marker = "\x1b[32m✓\x1b[0m"
+		if !success {
+			marker = "\x1b[31m✗\x1b[0m"
+		}
 	}
 	fmt.Fprintf(display.out, "[%d] %s ... %s %.1fs\n", display.number, display.title, marker, time.Since(display.start).Seconds())
 }
@@ -90,9 +111,7 @@ func (display *Display) Write(data []byte) (int, error) {
 		display.tail = display.tail[len(display.tail)-8192:]
 	}
 	if display.verbose {
-		if display.animated {
-			fmt.Fprint(display.out, "\r\x1b[2K")
-		}
+		display.clear()
 		_, err := io.WriteString(display.out, text)
 		return len(data), err
 	}
@@ -134,13 +153,17 @@ func (display *Display) animate() {
 			return
 		case <-ticker.C:
 			display.mu.Lock()
-			if display.animated && display.title != "" {
+			if display.carriage && display.title != "" {
 				lines := strings.Split(strings.TrimSpace(display.tail), "\n")
-				last := []rune(lines[len(lines)-1])
-				if len(last) > 100 {
-					last = last[:100]
+				display.clear()
+				width := terminalWidth(display.out) - 1
+				title := fit(fmt.Sprintf("%c [%d] %s  %.1fs", "|/-\\"[frame%4], display.number, display.title, time.Since(display.start).Seconds()), width)
+				if display.animated {
+					fmt.Fprintf(display.out, "\x1b[36m%s\x1b[0m\n\x1b[2m%s\x1b[0m", title, fit(lines[len(lines)-1], width))
+				} else {
+					fmt.Fprint(display.out, title)
 				}
-				fmt.Fprintf(display.out, "\r\x1b[2K%c %s %.1fs  %s", "|/-\\"[frame%4], display.title, time.Since(display.start).Seconds(), string(last))
+				display.painted = true
 				frame++
 			}
 			display.mu.Unlock()
@@ -155,7 +178,7 @@ func (display *Display) Finish(success bool) {
 		display.mu.Lock()
 		defer display.mu.Unlock()
 		display.complete(success)
-		if !display.verbose && display.tail != "" {
+		if !success && !display.verbose && display.tail != "" {
 			lines := strings.Split(strings.TrimSpace(display.tail), "\n")
 			count := 1
 			if !success {
@@ -192,7 +215,7 @@ func (reader *downloadReader) Read(data []byte) (int, error) {
 				text += fmt.Sprintf(" / %d bytes (%d%%)", reader.total, reader.read*100/reader.total)
 			}
 			display.tail = text
-			if !display.animated {
+			if display.verbose && !display.carriage {
 				fmt.Fprintln(display.out, text)
 			}
 			display.mu.Unlock()

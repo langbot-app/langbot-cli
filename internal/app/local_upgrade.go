@@ -54,6 +54,9 @@ func (s *Service) Upgrade(ctx context.Context, options UpgradeOptions) (Result, 
 		return Result{}, err
 	}
 	var response Result
+	preview := record
+	preview.CoreVersion = targetVersion
+	s.deploymentContext(ctx, preview, diagnostics.Dir, "stored")
 	if record.Driver == deploy.DriverNative {
 		data := map[string]any{"action": "upgrade", "version": targetVersion, "driver": record.Driver, "dry_run": options.DryRun,
 			"source_version": record.CoreVersion, "target_version": targetVersion}

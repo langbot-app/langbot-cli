@@ -11,6 +11,13 @@ function Get-Message([string]$English, [string]$Chinese) {
     if ($isChinese) { $Chinese } else { $English }
 }
 
+$heading = Get-Message "LangBot · Production-grade platform for building agentic IM bots (open source)" "LangBot · 生产级 AI 即时通信机器人开发平台（开源）"
+if (-not [Console]::IsOutputRedirected -and $null -eq $env:NO_COLOR -and $env:TERM -ne "dumb") {
+    Write-Host $heading -ForegroundColor Cyan
+} else { Write-Output $heading }
+Write-Output (Get-Message "Connect LLMs, agents, knowledge bases and plugins to QQ, WeChat/WeCom, Feishu, DingTalk, Telegram, Discord, Slack and more" "把大模型、Agent、知识库与插件接入 QQ、微信/企业微信、飞书、钉钉、Telegram、Discord、Slack 等平台")
+Write-Output (Get-Message "Website https://langbot.app · Docs https://docs.langbot.app · Plugins https://space.langbot.app" "官网 https://langbot.app · 文档 https://docs.langbot.app · 插件市场 https://space.langbot.app")
+
 try {
 
 $repository = "langbot-app/langbot-cli"

@@ -181,7 +181,11 @@ func newRoot(deps Dependencies, flags *globalFlags, service *app.Service) *cobra
 			if len(args) != 0 {
 				return result.New("input", i18n.T("Unknown command or argument; run lbctl --help for available commands"))
 			}
-			return cmd.Help()
+			if flags.outputSet {
+				return emitCommand(deps, flags, app.Result{Data: map[string]any{"command": "lbctl"}}, nil)
+			}
+			_, err := fmt.Fprintln(deps.Out, i18n.Human("LangBot · Production-grade platform for building agentic IM bots (open source)")+"\n\n"+i18n.Human("Deploy:    lbctl install · upgrade · uninstall")+"\n"+i18n.Human("Manage:    lbctl status · start · stop · restart · logs")+"\n"+i18n.Human("Configure: lbctl context · model · bot · pipeline")+"\n\n"+i18n.Human("All commands: lbctl --help"))
+			return err
 		},
 	}
 	root.SetOut(deps.Out)
@@ -1304,6 +1308,7 @@ func newStatusCommand(service *app.Service, deps Dependencies, flags *globalFlag
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return emitCall(deps, flags, func() (app.Result, error) {
 				return service.Status(cmd.Context(), app.CheckOptions{
+					Human:   !flags.outputSet,
 					Context: flags.context, Endpoint: flags.endpoint, Timeout: flags.timeout,
 					ContextSet: flags.contextSet, EndpointSet: flags.endpointSet, TimeoutSet: flags.timeoutSet,
 					APIKeyStdin: flags.apiKeyStdin,
@@ -1637,6 +1642,9 @@ func emitCommand(deps Dependencies, flags *globalFlags, value app.Result, err er
 
 func emitCall(deps Dependencies, flags *globalFlags, call func() (app.Result, error)) error {
 	if flags.display != nil {
+		if flags.commandPath == "install" || flags.commandPath == "upgrade" {
+			flags.display.Info(progress.BrandLines())
+		}
 		flags.display.Step(strings.ReplaceAll(flags.commandPath, ".", " "))
 	}
 	value, err := call()

@@ -1,9 +1,11 @@
 package output
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"reflect"
 	"runtime"
 	"sort"
@@ -12,6 +14,7 @@ import (
 	"unicode"
 
 	"github.com/langbot-app/langbot-cli/internal/i18n"
+	"github.com/langbot-app/langbot-cli/internal/progress"
 )
 
 func renderDefault(w io.Writer, value any, command string) error {
@@ -214,7 +217,11 @@ func renderDefaultData(w io.Writer, value any, command string) error {
 		}
 		return nil
 	case "status":
-		if err := renderActiveEnvironment(w, data); err != nil {
+		var panel bytes.Buffer
+		if err := renderActiveEnvironment(&panel, data); err != nil {
+			return err
+		}
+		if err := progress.Panel(w, strings.Split(strings.TrimSuffix(panel.String(), "\n"), "\n")); err != nil {
 			return err
 		}
 		_, err := fmt.Fprintln(w, i18n.T("Full details: append -o json or -o yaml to this command"))
@@ -457,17 +464,21 @@ func renderLocalAction(w io.Writer, data map[string]any) error {
 		}
 	}
 	if action == "install" && data["dry_run"] != true && data["changed"] == true && state == "running" && data["step"] == nil {
-		if _, err := fmt.Fprintln(w, "+----------------------------------------+"); err != nil {
-			return err
+		lines := []string{"WebUI: " + displayCell(endpoint)}
+		if data["dir"] == nil {
+			data["dir"] = data["instance_dir"]
 		}
-		if _, err := fmt.Fprintln(w, "URL: "+displayCell(endpoint)); err != nil {
-			return err
+		if dir, ok := data["dir"].(string); ok && dir != "" && record["driver"] == "native" {
+			if data["log_path"] == nil {
+				data["log_path"] = filepath.Join(dir, "logs", "install.log")
+			}
+			if data["runtime_log_path"] == nil {
+				data["runtime_log_path"] = filepath.Join(dir, "logs", "langbot.log")
+			}
 		}
 		for _, field := range []string{"dir", "log_path", "runtime_log_path"} {
 			if value, ok := data[field]; ok && value != "" {
-				if _, err := fmt.Fprintf(w, "%s: %s\n", fieldLabel(field), displayCell(value)); err != nil {
-					return err
-				}
+				lines = append(lines, fieldLabel(field)+": "+displayCell(value))
 			}
 		}
 		if enabled, ok := data["autostart"].(bool); ok {
@@ -475,17 +486,18 @@ func renderLocalAction(w io.Writer, data map[string]any) error {
 			if enabled {
 				message = i18n.T("Autostart enabled")
 			}
-			if _, err := fmt.Fprintf(w, "%s (%v)\n", message, data["autostart_mechanism"]); err != nil {
-				return err
-			}
+			lines = append(lines, fmt.Sprintf("%s (%v)", message, data["autostart_mechanism"]))
 			if enabled {
-				if _, err := fmt.Fprintf(w, i18n.T("Disable: %v\n"), data["autostart_disable_command"]); err != nil {
-					return err
-				}
+				lines = append(lines, strings.TrimSpace(fmt.Sprintf(i18n.T("Disable: %v\n"), data["autostart_disable_command"])))
 			}
 		}
-		_, err := fmt.Fprintln(w, i18n.T("Next steps: lbctl status · lbctl logs · lbctl upgrade --yes")+"\n+----------------------------------------+")
-		return err
+		language := "en"
+		if i18n.Current() == i18n.Chinese {
+			language = "zh"
+		}
+		base := "https://docs.langbot.app/" + language
+		lines = append(lines, i18n.T("1. Open WebUI and create an administrator account"), base+"/deploy/settings", i18n.T("2. Add a model (LangBot Space includes free credits)"), base+"/usage/models/readme", i18n.T("3. Connect a bot platform"), base+"/usage/platforms/readme", "lbctl status · lbctl logs · lbctl stop · lbctl start", "lbctl upgrade --yes · lbctl autostart disable", i18n.T("Prefer not to self-host? https://cloud.langbot.app"))
+		return progress.Panel(w, lines)
 	}
 	if data["dry_run"] == true || (action == "install" && data["changed"] != true) {
 		if action == "install" {
@@ -598,10 +610,31 @@ func renderActiveEnvironment(w io.Writer, environment map[string]any) error {
 		return err
 	}
 	runtimeInfo, _ := environment["runtime"].(map[string]any)
+	if err := line(i18n.T("Directory"), runtimeInfo["dir"]); err != nil {
+		return err
+	}
+	if err := line(i18n.T("Uptime"), environment["human_uptime"]); err != nil {
+		return err
+	}
 	if err := line(i18n.T("Deployment"), lifecycleLabel(runtimeInfo)); err != nil {
 		return err
 	}
 	if details, ok := runtimeInfo["details"].(map[string]any); ok {
+		if record, ok := details["record"].(map[string]any); ok {
+			if err := line(i18n.T("Instance"), record["name"]); err != nil {
+				return err
+			}
+			startup := i18n.T("Not reported")
+			if enabled, ok := record["autostart"].(bool); ok {
+				startup = i18n.T("Disabled")
+				if enabled {
+					startup = i18n.T("Enabled")
+				}
+			}
+			if err := line(i18n.T("Startup"), startup); err != nil {
+				return err
+			}
+		}
 		if upgrade, ok := details["upgrade"].(map[string]any); ok && upgrade["phase"] != "completed" {
 			label := i18n.T("Interrupted (") + formatCell(upgrade["phase"]) + i18n.Punct("）")
 			if upgrade["phase"] == "recovery_required" {
