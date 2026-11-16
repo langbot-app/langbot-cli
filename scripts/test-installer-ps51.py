@@ -3,9 +3,12 @@ import http.server
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import threading
 
+sys.stdout.reconfigure(encoding="utf-8")
+sys.stderr.reconfigure(encoding="utf-8")
 installer = (Path(__file__).resolve().parent.parent / "install.ps1").read_bytes()
 assert installer.isascii(), "installer must survive a response without charset"
 
@@ -54,7 +57,8 @@ try {
 }
 exit $result
 ''', encoding="ascii")
-                env = dict(os.environ, FIXTURE_ROOT=directory, FIXTURE_FAIL="1" if fail else "0", FIXTURE_URL=f"http://127.0.0.1:{server.server_port}/install.ps1", LBCTL_LANG=language, LBCTL_INSTALL_DIR=str(root / "installed"), PROCESSOR_ARCHITECTURE="AMD64", PROCESSOR_ARCHITEW6432="AMD64", NO_COLOR="1")
+                env = {key: value for key, value in os.environ.items() if key.upper() != "PSMODULEPATH"}
+                env.update(FIXTURE_ROOT=directory, FIXTURE_FAIL="1" if fail else "0", FIXTURE_URL=f"http://127.0.0.1:{server.server_port}/install.ps1", LBCTL_LANG=language, LBCTL_INSTALL_DIR=str(root / "installed"), PROCESSOR_ARCHITECTURE="AMD64", PROCESSOR_ARCHITEW6432="AMD64", NO_COLOR="1")
                 result = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", str(harness)], env=env, capture_output=True, timeout=30)
                 text = (result.stdout + result.stderr).decode("utf-8")
                 assert result.returncode == (1 if fail else 0), text
