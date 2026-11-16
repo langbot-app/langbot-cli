@@ -2,6 +2,10 @@ package i18n
 
 func init() {
 	for key, value := range map[string]string{
+		"Health check is taking over 3 minutes. Inspect Core with lbctl logs, or retry with lbctl restart.": "健康检查已等待超过 3 分钟。可执行 lbctl logs 查看 Core 日志，或用 lbctl restart 重试。",
+		"List all local LangBot instances":                                   "列出本机所有 LangBot 实例",
+		"list reads local instances; connection overrides are not supported": "list 只读取本机实例，不支持连接覆盖参数",
+		"Local instances": "本机实例", "Port": "端口",
 		"LangBot · Production-grade platform for building agentic IM bots (open source)":                                             "LangBot · 生产级 AI 即时通信机器人开发平台（开源）",
 		"Connect LLMs, agents, knowledge bases and plugins to QQ, WeChat/WeCom, Feishu, DingTalk, Telegram, Discord, Slack and more": "把大模型、Agent、知识库与插件接入 QQ、微信/企业微信、飞书、钉钉、Telegram、Discord、Slack 等平台",
 		"Website https://langbot.app · Docs https://docs.langbot.app · Plugins https://space.langbot.app":                            "官网 https://langbot.app · 文档 https://docs.langbot.app · 插件市场 https://space.langbot.app",

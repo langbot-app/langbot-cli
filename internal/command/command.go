@@ -230,6 +230,7 @@ func newRoot(deps Dependencies, flags *globalFlags, service *app.Service) *cobra
 	root.AddCommand(newAuthCommand(service, deps, flags))
 	addImageDownload(root, service, deps, flags)
 	root.AddCommand(newStatusCommand(service, deps, flags))
+	root.AddCommand(newInstanceListCommand(service, deps, flags))
 	root.AddCommand(newDoctorCommand(service, deps, flags))
 	root.AddCommand(newInstallCommand(service, deps, flags))
 	root.AddCommand(newAutostartCommand(service, deps, flags))
@@ -1855,7 +1856,11 @@ func enrichResult(deps Dependencies, flags *globalFlags, value app.Result, err e
 				add(i18n.T("Diagnose the current target"), connect, "doctor")
 			}
 		case "input":
-			add(i18n.T("Show argument and request body examples"), base, append(strings.Split(flags.commandPath, "."), "--help")...)
+			path := flags.commandPath
+			if path == "lbctl" {
+				path = ""
+			}
+			add(i18n.T("Show argument and request body examples"), base, append(strings.Fields(strings.ReplaceAll(path, ".", " ")), "--help")...)
 		case "not_found":
 			family := strings.Split(flags.commandPath, ".")[0]
 			if resourceListKey(family+".list") != "" {

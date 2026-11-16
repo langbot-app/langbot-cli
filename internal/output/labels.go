@@ -4,6 +4,7 @@ import "github.com/langbot-app/langbot-cli/internal/i18n"
 
 // Labels apply only to human rendering. Protocol keys and resource names stay unchanged.
 var humanFieldLabels = map[string]string{
+	"instances": "Local instances", "autostart": "Startup", "port": "Port",
 	"log_path": "log_path", "runtime_log_path": "runtime_log_path",
 	"latest": i18n.Source("Latest version"), "updated": i18n.Source("Updated"), "available": i18n.Source("Available"), "command": i18n.Source("Execute command"),
 	"backend": i18n.Source("Saved backend"), "effective_backend": i18n.Source("Effective backend"), "backends": i18n.Source("Backend availability"),

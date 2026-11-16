@@ -164,6 +164,9 @@ func renderDefaultData(w io.Writer, value any, command string) error {
 		return renderValue(w, value, "")
 	}
 	switch command {
+	case "list":
+		items, _ := data["instances"].([]any)
+		return renderResourceList(w, "instances", items)
 	case "context.add", "context.update", "context.use":
 		verb := map[string]string{"context.add": i18n.T("Environment added"), "context.update": i18n.T("Environment updated"), "context.use": i18n.T("Switched to environment")}[command]
 		if _, err := fmt.Fprintf(w, i18n.Punct("%s %s（%s）\n"), verb, displayCell(data["name"]), displayCell(data["endpoint"])); err != nil {
@@ -848,6 +851,8 @@ func commandListKey(command string) string {
 
 func resourceFields(key string) []string {
 	switch key {
+	case "instances":
+		return []string{"name", "dir", "port", "status", "autostart"}
 	case "deployments":
 		return []string{"deployment_id", "endpoint", "project", "binding", "dir"}
 	case "unconfigured_deployments":
@@ -916,7 +921,7 @@ func renderResourceList(w io.Writer, key string, items []any) error {
 		line := make([]string, len(fields))
 		for i, field := range fields {
 			line[i] = displayCell(row[field])
-			if field == "enable" || field == "enabled" {
+			if field == "enable" || field == "enabled" || field == "autostart" {
 				if value, ok := row[field].(bool); ok {
 					if value {
 						line[i] = i18n.T("Enabled")
@@ -936,6 +941,9 @@ func renderResourceList(w io.Writer, key string, items []any) error {
 			}
 			if field == "binding" {
 				line[i] = bindingLabel(line[i])
+			}
+			if key == "instances" && field == "status" {
+				line[i] = localStatusLabel(line[i])
 			}
 			if field == "credential_state" {
 				line[i] = credentialLabel(line[i])

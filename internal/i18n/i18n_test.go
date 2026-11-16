@@ -23,10 +23,13 @@ func TestLanguagePriority(t *testing.T) {
 		{"zh-Hans", map[string]string{"LBCTL_LANG": "en"}, "en", Chinese},
 		{"", map[string]string{"LBCTL_LANG": "zh_CN.UTF-8", "LANGBOT_LANG": "en"}, "en", Chinese},
 		{"", map[string]string{"LANGBOT_LANG": "zh", "LC_ALL": "C"}, "en", Chinese},
-		{"", map[string]string{"LC_ALL": "C", "LC_MESSAGES": "zh_CN"}, "zh", English},
+		{"", map[string]string{"LC_ALL": "C", "LC_MESSAGES": "zh_CN"}, "zh", Chinese},
 		{"", map[string]string{"LC_MESSAGES": "zh_CN.UTF-8", "LANG": "en_US"}, "en", Chinese},
 		{"", map[string]string{"LANG": "zh-Hans-CN"}, "en", Chinese},
-		{"", map[string]string{"LANG": "POSIX"}, "zh", English},
+		{"", map[string]string{"LANG": "POSIX"}, "zh", Chinese},
+		{"", map[string]string{"LANG": "C.UTF-8"}, "zh-CN", Chinese},
+		{"", map[string]string{"LC_ALL": "C.UTF-8", "LANG": "zh_CN.UTF-8"}, "en", Chinese},
+		{"", map[string]string{"LANG": "C"}, "", English},
 		{"", nil, "zh-CN", Chinese}, {"", nil, "en-US", English}, {"", nil, "", English},
 		{"fr", map[string]string{"LANG": "zh"}, "zh", English},
 	} {
@@ -35,7 +38,11 @@ func TestLanguagePriority(t *testing.T) {
 		if got != test.want {
 			t.Fatalf("%+v: %s", test, got)
 		}
-		if (test.explicit != "" || len(test.env) > 0) && calls != 0 {
+		hasLocale := meaningfulLocale(test.explicit)
+		for _, value := range test.env {
+			hasLocale = hasLocale || meaningfulLocale(value)
+		}
+		if hasLocale && calls != 0 {
 			t.Fatal("unnecessary system language lookup")
 		}
 	}

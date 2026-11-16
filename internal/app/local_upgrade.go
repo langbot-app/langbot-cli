@@ -248,7 +248,7 @@ func (s *Service) Upgrade(ctx context.Context, options UpgradeOptions) (Result, 
 		if err := update("verifying"); err != nil {
 			return err
 		}
-		if err := s.waitForLocalVersion(operationCtx, current.Endpoint, targetVersion); err != nil {
+		if err := s.waitForLocalVersion(operationCtx, current, targetVersion); err != nil {
 			return fail("http_version", i18n.T("Target HTTP health or version verification failed"))
 		}
 		finalStatus, finalErr := diagnostics.Status(operationCtx)
@@ -284,11 +284,12 @@ func composeDigest(content []byte) string {
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
-func (s *Service) waitForLocalVersion(ctx context.Context, endpoint, version string) error {
+func (s *Service) waitForLocalVersion(ctx context.Context, record deploy.Record, version string) error {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
-		info, err := (api.Client{Transport: s.deps.Transport}).Info(ctx, api.Target{Endpoint: endpoint, Timeout: 5 * time.Second})
+		s.coreHealthProgress(ctx, record)
+		info, err := (api.Client{Transport: s.deps.Transport}).Info(ctx, api.Target{Endpoint: record.Endpoint, Timeout: 5 * time.Second})
 		if err == nil && info.Version == version {
 			return nil
 		}

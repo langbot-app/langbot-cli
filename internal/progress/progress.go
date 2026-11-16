@@ -22,6 +22,7 @@ type Display struct {
 	animated, verbose bool
 	machine, carriage bool
 	painted           bool
+	healthHint        bool
 	title, tail       string
 	number            int
 	start             time.Time
@@ -67,6 +68,7 @@ func (display *Display) Step(title string) {
 	display.complete(true)
 	display.number++
 	display.title, display.tail, display.start = title, "", time.Now()
+	display.healthHint = false
 	if !display.carriage {
 		fmt.Fprintf(display.out, "[%d] %s ...\n", display.number, title)
 	}

@@ -69,6 +69,7 @@ func WaitNativeHealth(ctx context.Context, record Record, client *http.Client) e
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
+		progress.HealthFile(ctx, filepath.Join(filepath.Dir(record.DataDir), "logs", "langbot.log"))
 		if err := NativeHealth(ctx, record, client); err == nil {
 			return nil
 		}

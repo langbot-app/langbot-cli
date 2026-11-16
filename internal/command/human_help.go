@@ -164,7 +164,7 @@ var helpGroups = []struct {
 	{i18n.Source("Connection and diagnostics"), []string{"context", "status", "doctor", "whoami", "capabilities"}},
 	{i18n.Source("Resources and content"), []string{"bot", "pipeline", "provider", "model", "knowledge-base", "knowledge-engine", "knowledge-parser", "plugin", "skill", "mcp-server"}},
 	{i18n.Source("Operations and troubleshooting"), []string{"monitoring", "sandbox", "task", "logs"}},
-	{i18n.Source("Local deployment"), []string{"install", "adopt", "start", "stop", "restart", "upgrade", "uninstall", "update"}},
+	{i18n.Source("Local deployment"), []string{"list", "install", "adopt", "start", "stop", "restart", "upgrade", "uninstall", "update"}},
 	{i18n.Source("Tools and automation"), []string{"schema", "api", "raw", "completion", "version", "help"}},
 }
 

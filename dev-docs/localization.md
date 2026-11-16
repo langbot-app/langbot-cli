@@ -7,7 +7,9 @@ lbctl supports English (`en`) and Simplified Chinese (`zh-Hans`). Selection orde
 3. `LC_ALL`, `LC_MESSAGES`, then `LANG`.
 4. Windows preferred UI languages, falling back to the default UI language;
    macOS `AppleLanguages` when no environment override exists.
-5. English. Unsupported languages and `C`/`POSIX` select English.
+5. English. Unsupported languages select English. `C`, `POSIX` and their
+   encoding variants carry no language information and are skipped, allowing
+   Windows/macOS UI preferences or a lower-priority locale to take effect.
 
 Network region selection is independent of display language.
 

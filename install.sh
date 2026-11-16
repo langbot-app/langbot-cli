@@ -2,7 +2,12 @@
 set -eu
 export LBCTL_INSTALL_SOURCE=install.sh
 
-language=${LBCTL_LANG:-${LANGBOT_LANG:-${LC_ALL:-${LC_MESSAGES:-${LANG:-}}}}}
+language=""
+for candidate in "${LBCTL_LANG:-}" "${LANGBOT_LANG:-}" "${LC_ALL:-}" "${LC_MESSAGES:-}" "${LANG:-}"; do
+  case "$candidate" in ""|C|C.*|POSIX|POSIX.*|c|c.*|posix|posix.*) continue ;; esac
+  language=$candidate
+  break
+done
 if [ -z "$language" ] && [ "$(uname -s)" = Darwin ]; then
   language=$(defaults read -g AppleLanguages 2>/dev/null | sed -n '2s/[", ()]//gp')
 fi

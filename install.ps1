@@ -3,7 +3,7 @@ $ProgressPreference = "SilentlyContinue"
 $env:LBCTL_INSTALL_SOURCE = "install.ps1"
 
 $language = @($env:LBCTL_LANG, $env:LANGBOT_LANG, $env:LC_ALL, $env:LC_MESSAGES, $env:LANG) |
-    Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -First 1
+    Where-Object { -not [string]::IsNullOrWhiteSpace($_) -and $_ -notmatch '^(C|POSIX)([.@]|$)' } | Select-Object -First 1
 if (-not $language) { $language = (Get-UICulture).Name }
 $isChinese = $language -match '^zh([_-]|$)'
 $env:LBCTL_LANG = if ($isChinese) { "zh-Hans" } else { "en" }

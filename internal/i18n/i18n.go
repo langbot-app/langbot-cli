@@ -30,14 +30,14 @@ func Normalize(value string) string {
 }
 
 func Detect(explicit string, lookup func(string) (string, bool), system func() string) string {
-	if explicit != "" {
+	if meaningfulLocale(explicit) {
 		return Normalize(explicit)
 	}
 	if lookup == nil {
 		lookup = os.LookupEnv
 	}
 	for _, key := range []string{"LBCTL_LANG", "LANGBOT_LANG", "LC_ALL", "LC_MESSAGES", "LANG"} {
-		if value, _ := lookup(key); strings.TrimSpace(value) != "" {
+		if value, _ := lookup(key); meaningfulLocale(value) {
 			return Normalize(value)
 		}
 	}
@@ -45,6 +45,13 @@ func Detect(explicit string, lookup func(string) (string, bool), system func() s
 		return Normalize(system())
 	}
 	return English
+}
+
+func meaningfulLocale(value string) bool {
+	value = strings.ToLower(strings.TrimSpace(value))
+	value, _, _ = strings.Cut(value, ".")
+	value, _, _ = strings.Cut(value, "@")
+	return value != "" && value != "c" && value != "posix"
 }
 
 func SystemLanguage() string { return systemLanguage() }

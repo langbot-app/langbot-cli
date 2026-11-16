@@ -24,6 +24,7 @@ import (
 	"github.com/langbot-app/langbot-cli/internal/deploy"
 	endpointutil "github.com/langbot-app/langbot-cli/internal/endpoint"
 	"github.com/langbot-app/langbot-cli/internal/i18n"
+	"github.com/langbot-app/langbot-cli/internal/progress"
 	"github.com/langbot-app/langbot-cli/internal/result"
 	"github.com/langbot-app/langbot-cli/internal/telemetry"
 )
@@ -192,7 +193,7 @@ func (s *Service) Install(ctx context.Context, options InstallOptions) (Result, 
 				return uncertainDockerError(command, commandErr, i18n.T("Unable to confirm installation result"))
 			}
 			telemetry.SetStep(ctx, "health_check")
-			if err := s.waitForLocalHTTP(operationCtx, record.Endpoint); err != nil {
+			if err := s.waitForLocalHTTP(operationCtx, record); err != nil {
 				response = Result{Data: lifecycleFailureData("install", record, "health_check_failed")}
 				return result.New("result_unknown", i18n.T("Containers started but LangBot HTTP health is unconfirmed"))
 			}
@@ -505,7 +506,7 @@ func (s *Service) runLifecycle(ctx context.Context, action string, options Lifec
 		telemetry.SetStep(ctx, "compose_"+action)
 		command, commandErr := diagnostics.Runner.Compose(operationCtx, current, args...)
 		if commandErr == nil && (action == "start" || action == "restart") {
-			_ = s.waitForLocalHTTP(operationCtx, current.Endpoint)
+			_ = s.waitForLocalHTTP(operationCtx, current)
 		}
 		readbackCtx, readbackCancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		defer readbackCancel()
@@ -605,11 +606,12 @@ func (s *Service) latestRelease(ctx context.Context) (string, error) {
 	return version, nil
 }
 
-func (s *Service) waitForLocalHTTP(ctx context.Context, endpoint string) error {
+func (s *Service) waitForLocalHTTP(ctx context.Context, record deploy.Record) error {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
-		_, err := (api.Client{Transport: s.deps.Transport}).Info(ctx, api.Target{Endpoint: endpoint, Timeout: 5 * time.Second})
+		s.coreHealthProgress(ctx, record)
+		_, err := (api.Client{Transport: s.deps.Transport}).Info(ctx, api.Target{Endpoint: record.Endpoint, Timeout: 5 * time.Second})
 		if err == nil {
 			return nil
 		}
@@ -619,6 +621,16 @@ func (s *Service) waitForLocalHTTP(ctx context.Context, endpoint string) error {
 		case <-ticker.C:
 		}
 	}
+}
+
+func (s *Service) coreHealthProgress(ctx context.Context, record deploy.Record) {
+	if !progress.HumanDisplay(ctx) {
+		return
+	}
+	logCtx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	logs, _ := s.localRunner().Compose(logCtx, record, "logs", "--no-color", "--tail", "1", "langbot")
+	progress.Health(ctx, logs.Stdout)
 }
 
 func operationTimeout(value string, set bool, fallback time.Duration) (time.Duration, error) {

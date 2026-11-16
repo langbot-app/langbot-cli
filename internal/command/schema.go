@@ -140,6 +140,11 @@ type schemaFlag struct {
 var placeholderPattern = regexp.MustCompile(`(<[^>]+>|\[[^]]+\])`)
 
 var schemaMetaByName = map[string]schemaCommandMeta{
+	"list": {FlagApplicability: map[string]schemaFlagApplicability{
+		"context":       {Status: "rejected", Reason: "list reads local instances"},
+		"endpoint":      {Status: "rejected", Reason: "list reads local instances"},
+		"api-key-stdin": {Status: "rejected", Reason: "list reads local instances"},
+	}},
 	"knowledge-engine.list":             readMeta(operationIDs("knowledge_engine.list")...),
 	"knowledge-engine.creation-schema":  readMeta(operationIDs("knowledge_engine.creation_schema")...),
 	"knowledge-engine.retrieval-schema": readMeta(operationIDs("knowledge_engine.retrieval_schema")...),
