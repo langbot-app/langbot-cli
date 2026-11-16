@@ -66,7 +66,7 @@ try {
     $failureOutput = & lbctl install --driver native --dir $instanceDir --region global --version v4.11.7 --port 15300 --yes --output json
     if ($LASTEXITCODE -eq 0) { throw 'Expected runtime preparation failure' }
     $failure = ($failureOutput -join "`n") | ConvertFrom-Json
-    if ($failure.data.step -ne 'prepare_runtime') { throw "Unexpected failure: $failureOutput" }
+    if ($failure.data.step -ne 'download_uv') { throw "Unexpected failure: $failureOutput" }
     $identity = $failure.data.record.deployment_id
     $marker = Join-Path $instanceDir 'data/resume-marker'
     Set-Content -Path $marker -Value 'resume-preserved'
