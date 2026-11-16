@@ -12,10 +12,11 @@ import (
 	"testing"
 
 	"github.com/langbot-app/langbot-cli/internal/telemetry"
+	"github.com/spf13/cobra"
 )
 
 func TestLifecycleFailureTelemetry(t *testing.T) {
-	for _, name := range []string{"install", "upgrade", "uninstall", "start", "restart", "update", "self-update"} {
+	for _, name := range []string{"install", "upgrade", "uninstall", "start", "stop", "restart", "update", "self-update"} {
 		t.Run(name, func(t *testing.T) {
 			var mutex sync.Mutex
 			var events []telemetry.Event
@@ -50,6 +51,29 @@ func TestLifecycleFailureTelemetry(t *testing.T) {
 				t.Fatal(outcomes)
 			}
 		})
+	}
+}
+
+func TestAutostartTelemetryCommandSelection(t *testing.T) {
+	root := &cobra.Command{Use: "lbctl"}
+	group := &cobra.Command{Use: "autostart"}
+	root.AddCommand(group)
+	for _, action := range []string{"status", "enable", "disable"} {
+		group.AddCommand(&cobra.Command{Use: action})
+	}
+	root.AddCommand(&cobra.Command{Use: "status"})
+	for _, action := range []string{"status", "enable", "disable"} {
+		selected, _, err := root.Find([]string{"autostart", action, "--invalid-flag"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := lifecycleTelemetryCommand(root, selected); got != "autostart."+action {
+			t.Fatalf("%s: %s", action, got)
+		}
+	}
+	selected, _, _ := root.Find([]string{"status"})
+	if lifecycleTelemetryCommand(root, selected) != "" || lifecycleTelemetryCommand(root, group) != "" {
+		t.Fatal("unrelated command or group was reported")
 	}
 }
 

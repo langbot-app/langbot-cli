@@ -81,12 +81,9 @@ func Execute(ctx context.Context, args []string, deps Dependencies) int {
 	root.AddCommand(newUpdateCommand(deps, flags))
 	root.SetArgs(args)
 	var operation *telemetry.Operation
-	if selected, _, _ := root.Find(args); selected != nil && selected.Parent() == root {
-		switch selected.Name() {
-		case "install", "upgrade", "uninstall", "start", "restart", "update":
-			if !hasHelpFlag(args) {
-				ctx, operation = deps.Telemetry.Begin(ctx, selected.Name())
-			}
+	if selected, _, _ := root.Find(args); selected != nil && !hasHelpFlag(args) {
+		if name := lifecycleTelemetryCommand(root, selected); name != "" {
+			ctx, operation = deps.Telemetry.Begin(ctx, name)
 		}
 	}
 	executed, err := root.ExecuteContextC(ctx)
@@ -1778,7 +1775,13 @@ func enrichResult(deps Dependencies, flags *globalFlags, value app.Result, err e
 		case "permission", "incompatible":
 			add("查看当前目标支持的能力与权限", connect, "capabilities")
 		case "precondition":
-			if e.Message == "服务端未明确支持该操作" || e.Message == "服务端明确不支持该操作" {
+			if flags.commandPath == "install" {
+				label := "检查安装前置条件与参数"
+				if data["step"] == "check_ports" {
+					label = "先释放冲突端口；HTTP 端口可用 --port 更换，5401/5410 冲突可改用 --driver docker"
+				}
+				add(label, base, "install", "--help")
+			} else if e.Message == "服务端未明确支持该操作" || e.Message == "服务端明确不支持该操作" {
 				add("查看当前目标支持的能力", connect, "capabilities")
 			} else {
 				add("检查目标和 Workspace 绑定", connect, "context", "show")
@@ -1797,6 +1800,14 @@ func enrichResult(deps Dependencies, flags *globalFlags, value app.Result, err e
 			family := strings.Split(flags.commandPath, ".")[0]
 			if resourceListKey(family+".list") != "" {
 				add("列出当前目标中的资源", connect, family, "list")
+			}
+		}
+		if flags.commandPath == "install" {
+			if retry, ok := data["retry_argv"].([]string); ok {
+				add("修正失败步骤后重试安装", base, retry...)
+			}
+			if rollback, ok := data["rollback_argv"].([]string); ok {
+				add("卸载服务并保留数据", base, rollback...)
 			}
 		}
 	} else {

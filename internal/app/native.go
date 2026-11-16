@@ -87,14 +87,16 @@ func (s *Service) installNative(ctx context.Context, options InstallOptions) (Re
 	} else if err := deploy.ValidateInstallTarget(dir, true); err != nil {
 		return Result{}, result.New("precondition", err.Error())
 	}
+	data := map[string]any{"action": "install", "url": record.Endpoint, "driver": record.Driver, "instance_dir": dir, "version": version,
+		"name": record.Name, "region": record.Region, "service_manager": record.ServiceManager, "checks": deploy.NativeCapabilities(), "record": record}
 	if !deploy.NativeRunning(dir) {
 		telemetry.SetStep(ctx, "check_ports")
 		if err := deploy.CheckNativePorts(record); err != nil {
-			return Result{}, result.New("precondition", err.Error())
+			data["step"] = "check_ports"
+			nativeInstallRecovery(data, dir, record, false)
+			return Result{Data: data}, result.New("precondition", err.Error())
 		}
 	}
-	data := map[string]any{"action": "install", "url": record.Endpoint, "driver": record.Driver, "instance_dir": dir, "version": version,
-		"name": record.Name, "region": record.Region, "service_manager": record.ServiceManager, "checks": deploy.NativeCapabilities(), "record": record}
 	if options.DryRun {
 		data["dry_run"] = true
 		return Result{Data: data}, nil
@@ -181,13 +183,28 @@ func (s *Service) installNative(ctx context.Context, options InstallOptions) (Re
 		data["step"] = step
 		data["log_path"] = logPath
 		data["runtime_log_path"] = filepath.Join(dir, "logs", "langbot.log")
-		data["retry_command"] = fmt.Sprintf("lbctl install --driver native --dir %s --version %s --port %d --yes", nativeShellQuote(dir), record.CoreVersion, record.Port)
-		data["rollback_command"] = "lbctl uninstall --endpoint " + nativeShellQuote(record.Endpoint) + " --yes"
+		nativeInstallRecovery(data, dir, record, data["changed"] == true)
 		if installLog != nil {
 			fmt.Fprintf(installLog, "%s: %v\n", step, err)
 		}
 	}
 	return Result{Data: data}, nativeMutationError(err)
+}
+
+func nativeInstallRecovery(data map[string]any, dir string, record deploy.Record, rollback bool) {
+	command := fmt.Sprintf("lbctl install --driver native --dir %s --version %s --port %d --yes", nativeShellQuote(dir), record.CoreVersion, record.Port)
+	args := []string{"install", "--driver", "native", "--dir", dir, "--version", record.CoreVersion, "--port", fmt.Sprint(record.Port), "--yes"}
+	for _, option := range [][2]string{{"--name", record.Name}, {"--region", record.Region}, {"--pypi-index", record.PyPIIndex}, {"--python-mirror", record.PythonMirror}, {"--extra", strings.Join(record.Extras, ",")}} {
+		if option[1] != "" {
+			args = append(args, option[0], option[1])
+			command += " " + option[0] + " " + nativeShellQuote(option[1])
+		}
+	}
+	data["retry_command"], data["retry_argv"] = command, args
+	if rollback {
+		data["rollback_command"] = "lbctl uninstall --endpoint " + nativeShellQuote(record.Endpoint) + " --yes"
+		data["rollback_argv"] = []string{"uninstall", "--endpoint", record.Endpoint, "--yes"}
+	}
 }
 
 func nativeShellQuote(value string) string {
