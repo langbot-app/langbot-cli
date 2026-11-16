@@ -27,6 +27,7 @@ func (s *Service) nativeOutput() io.Writer {
 
 func (s *Service) installNative(ctx context.Context, options InstallOptions) (Result, error) {
 	ctx = telemetry.TrackSteps(ctx)
+	progress.Plan(ctx, 12)
 	telemetry.SetEnvironment(ctx, "native", "", options.Region, options.Version)
 	timeout, err := operationTimeout(options.Timeout, options.TimeoutSet, 20*time.Minute)
 	if err != nil {
@@ -242,6 +243,7 @@ func nativeShellQuote(value string) string {
 }
 
 func (s *Service) nativeLifecycle(ctx context.Context, diagnostics deploy.Diagnostics, record deploy.Record, action string) (Result, error) {
+	progress.Plan(ctx, map[string]int{"start": 4, "stop": 3, "restart": 5}[action])
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	err := deploy.WithMutationLock(ctx, diagnostics.Dir, func() error {

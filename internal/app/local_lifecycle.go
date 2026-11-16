@@ -80,6 +80,7 @@ func (s *Service) Install(ctx context.Context, options InstallOptions) (Result, 
 	if options.Driver == deploy.DriverNative {
 		return s.installNative(ctx, options)
 	}
+	progress.Plan(ctx, 6)
 	timeout, err := operationTimeout(options.Timeout, options.TimeoutSet, 10*time.Minute)
 	if err != nil {
 		return Result{}, err
@@ -469,6 +470,7 @@ func (s *Service) FollowLocalLogs(ctx context.Context, options LocalLogsOptions)
 }
 
 func (s *Service) runLifecycle(ctx context.Context, action string, options LifecycleOptions) (Result, error) {
+	progress.Plan(ctx, 3)
 	record, diagnostics, err := s.lifecycleTarget(ctx, options.CheckOptions)
 	if err != nil {
 		return Result{}, err

@@ -14,7 +14,7 @@ func TestNativeLifecycleRendering(t *testing.T) {
 	for _, test := range []struct {
 		action, state, want string
 	}{
-		{"install", "running", "已安装 LangBot v4.11.8 → http://127.0.0.1:15300"},
+		{"install", "running", "LangBot 已就绪"},
 		{"start", "running", "已启动本机部署"},
 		{"stop", "stopped", "已停止本机部署"},
 		{"restart", "running", "已重启本机部署"},
@@ -34,7 +34,7 @@ func TestNativeLifecycleRendering(t *testing.T) {
 				t.Fatal(out.String())
 			}
 			if test.action == "install" {
-				for _, next := range []string{"lbctl status", "lbctl logs", "lbctl upgrade --yes", "/example/default", "install.log", "langbot.log", "https://cloud.langbot.app"} {
+				for _, next := range []string{"status · logs", "lbctl logs", "start · upgrade", "/example/default", "https://cloud.langbot.app"} {
 					if !strings.Contains(out.String(), next) {
 						t.Fatalf("missing %s: %s", next, out.String())
 					}
@@ -81,7 +81,7 @@ func TestInstallAutostartHint(t *testing.T) {
 	defer i18n.Use(i18n.Chinese)()
 	var out bytes.Buffer
 	err := renderLocalAction(&out, map[string]any{"action": "install", "changed": true, "status": map[string]any{"status": "running"}, "autostart": true, "autostart_mechanism": "HKCU Run", "autostart_disable_command": "lbctl autostart disable --name 'mybot'"})
-	if err != nil || !strings.Contains(out.String(), "已开启开机/登录自启 (HKCU Run)") || strings.Contains(out.String(), "Autostart enabled") || !strings.Contains(out.String(), "lbctl autostart disable --name 'mybot'") {
+	if err != nil || !strings.Contains(out.String(), "已开启开机/登录自启") || strings.Contains(out.String(), "Autostart enabled") || !strings.Contains(out.String(), "lbctl autostart disable --name 'mybot'") {
 		t.Fatalf("%s: %v", out.String(), err)
 	}
 }

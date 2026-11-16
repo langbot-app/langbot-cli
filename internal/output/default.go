@@ -421,7 +421,7 @@ func renderLocalAction(w io.Writer, data map[string]any) error {
 		} else if state != "running" || data["step"] != nil {
 			line = i18n.T("Installation ran; running state is unconfirmed: ") + endpoint
 		} else {
-			line = i18n.T("Installed LangBot ") + version + " → " + endpoint
+			line = ""
 		}
 	case "adopt":
 		line = i18n.T("Adopted local deployment: ") + endpoint
@@ -479,7 +479,7 @@ func renderLocalAction(w io.Writer, data map[string]any) error {
 		}
 	}
 	if action == "install" && data["dry_run"] != true && data["changed"] == true && state == "running" && data["step"] == nil {
-		lines := []string{"WebUI: " + displayCell(endpoint)}
+		lines := []string{i18n.T("LangBot is ready"), "WebUI   " + displayCell(endpoint)}
 		if data["dir"] == nil {
 			data["dir"] = data["instance_dir"]
 		}
@@ -491,21 +491,25 @@ func renderLocalAction(w io.Writer, data map[string]any) error {
 				data["runtime_log_path"] = filepath.Join(dir, "logs", "langbot.log")
 			}
 		}
-		for _, field := range []string{"dir", "log_path", "runtime_log_path"} {
-			if value, ok := data[field]; ok && value != "" {
-				lines = append(lines, fieldLabel(field)+": "+displayCell(value))
-			}
+		instance := formatCell(record["name"])
+		if instance == "" {
+			instance = "default"
+		}
+		driver := formatCell(record["driver"])
+		if driver == "native" {
+			driver = i18n.T("Native deployment")
+		}
+		if driver != "" {
+			instance += " · " + driver
 		}
 		if enabled, ok := data["autostart"].(bool); ok {
 			message := i18n.T("Autostart disabled")
 			if enabled {
 				message = i18n.T("Autostart enabled")
 			}
-			lines = append(lines, fmt.Sprintf("%s (%v)", message, data["autostart_mechanism"]))
-			if enabled {
-				lines = append(lines, strings.TrimSpace(fmt.Sprintf(i18n.T("Disable: %v\n"), data["autostart_disable_command"])))
-			}
+			instance += " · " + message
 		}
+		lines = append(lines, i18n.T("Instance")+"  "+instance, i18n.T("Directory")+"  "+displayCell(data["dir"]), i18n.T("Log")+"  lbctl logs", "", i18n.T("Next steps"))
 		language := "en"
 		if data["autostart_note"] == "loginctl enable-linger" {
 			lines = append(lines, i18n.T("Run loginctl enable-linger to keep LangBot running after logout."))
@@ -513,9 +517,17 @@ func renderLocalAction(w io.Writer, data map[string]any) error {
 		if i18n.Current() == i18n.Chinese {
 			language = "zh"
 		}
-		base := "https://docs.langbot.app/" + language
-		lines = append(lines, i18n.T("1. Open WebUI and create an administrator account"), base+"/deploy/settings", i18n.T("2. Add a model (LangBot Space includes free credits)"), base+"/usage/models/readme", i18n.T("3. Connect a bot platform"), base+"/usage/platforms/readme", "lbctl status · lbctl logs · lbctl stop · lbctl start", "lbctl upgrade --yes · lbctl autostart disable", i18n.T("Prefer not to self-host? https://cloud.langbot.app"))
-		return progress.Panel(w, lines)
+		base := "docs.langbot.app/" + language
+		lines = append(lines, " "+i18n.T("1. Open WebUI and create an administrator account"), " "+i18n.T("2. Add a model (LangBot Space includes free credits)"), " "+i18n.T("3. Connect a bot platform"), " "+base+"/usage/models/readme", "", i18n.T("Commands")+"  status · logs · stop · start · upgrade")
+		if data["autostart"] == true {
+			lines = append(lines, i18n.T("Disable startup")+"  "+formatCell(data["autostart_disable_command"]))
+		}
+		lines = append(lines, "")
+		if err := progress.Panel(w, lines); err != nil {
+			return err
+		}
+		progress.Dim(w, i18n.T("Prefer not to self-host? https://cloud.langbot.app"))
+		return nil
 	}
 	if data["dry_run"] == true || (action == "install" && data["changed"] != true) {
 		if action == "install" {
@@ -557,7 +569,11 @@ func renderActiveEnvironment(w io.Writer, environment map[string]any) error {
 		if value == nil || value == "" {
 			return nil
 		}
-		_, err := fmt.Fprintf(w, "%s: %s\n", label, displayCell(value))
+		separator := ": "
+		if label == "lbctl" || label == "Core" {
+			separator = " "
+		}
+		_, err := fmt.Fprintf(w, "%s%s%s\n", label, separator, displayCell(value))
 		return err
 	}
 	name := formatCell(environment["name"])
@@ -587,10 +603,7 @@ func renderActiveEnvironment(w io.Writer, environment map[string]any) error {
 	core := formatCell(service["version"])
 	if versions, ok := environment["versions"].(map[string]any); ok {
 		if version, ok := versions["lbctl"].(map[string]any); ok {
-			value := formatCell(version["current"])
-			if latest := formatCell(version["latest"]); latest != "" {
-				value += " → " + latest
-			}
+			value := versionSummary(formatCell(version["current"]), formatCell(version["latest"]), "lbctl update")
 			if err := line("lbctl", value); err != nil {
 				return err
 			}
@@ -599,9 +612,7 @@ func renderActiveEnvironment(w io.Writer, environment map[string]any) error {
 			if core == "" {
 				core = formatCell(version["current"])
 			}
-			if latest := formatCell(version["latest"]); latest != "" {
-				core += " → " + latest
-			}
+			core = versionSummary(core, formatCell(version["latest"]), "lbctl upgrade")
 		}
 	}
 	if edition := formatCell(service["edition"]); core != "" && edition != "" && environment["type"] == "unknown" {

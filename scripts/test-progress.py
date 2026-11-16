@@ -36,12 +36,16 @@ try:
         ("dumb", True, {"TERM": "dumb"}, False),
         ("json", True, {}, True),
         ("pipe", False, {}, False),
+        ("instant", True, {}, False),
+        ("instant-pipe", False, {}, False),
     ]:
         with tempfile.TemporaryDirectory() as home:
             env = dict(os.environ, HOME=home, TERM="xterm", LANGBOT_TELEMETRY="0", LBCTL_NO_UPDATE_CHECK="1")
             env.pop("NO_COLOR", None)
             env.update(overrides)
             args = [binary, "version", "--server", "--endpoint", f"http://127.0.0.1:{server.server_port}"]
+            if name.startswith("instant"):
+                args = [binary, "version"]
             if machine:
                 args += ["-o", "json"]
             if terminal:
@@ -73,6 +77,8 @@ try:
                 assert result.returncode == 0, result.stdout + result.stderr
                 text = result.stdout + result.stderr
             assert ("\x1b[2K" in text) == (name == "tty"), (name, text)
+            if name.startswith("instant"):
+                assert "✓" not in text and "Working" not in text and "处理中" not in text, (name, text)
             print(name + ": PASS\n" + text)
 finally:
     server.shutdown()

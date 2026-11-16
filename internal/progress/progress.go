@@ -25,13 +25,18 @@ type Display struct {
 	healthHint        bool
 	title, tail       string
 	number            int
+	total             int
+	created           time.Time
+	visible           bool
+	pending           []string
+	seen              map[string]bool
 	start             time.Time
 	done, exited      chan struct{}
 	once              sync.Once
 }
 
 func New(out io.Writer, lookup func(string) (string, bool), machine, verbose bool) *Display {
-	display := &Display{out: out, verbose: verbose, machine: machine, done: make(chan struct{}), exited: make(chan struct{})}
+	display := &Display{out: out, verbose: verbose, machine: machine, created: time.Now(), total: 1, seen: map[string]bool{}, done: make(chan struct{}), exited: make(chan struct{})}
 	file, ok := out.(*os.File)
 	_, noColor := lookup("NO_COLOR")
 	terminal, _ := lookup("TERM")
@@ -62,16 +67,52 @@ func (display *Display) Step(title string) {
 	display.mu.Lock()
 	defer display.mu.Unlock()
 	title = i18n.Human(title)
-	if title == display.title {
+	if title == display.title || display.seen[title] {
 		return
+	}
+	display.seen[title] = true
+	if display.title == i18n.Human("Working") {
+		display.title = ""
+		display.number = 0
 	}
 	display.complete(true)
 	display.number++
 	display.title, display.tail, display.start = title, "", time.Now()
 	display.healthHint = false
-	if !display.carriage {
-		fmt.Fprintf(display.out, "[%d] %s ...\n", display.number, title)
+}
+
+func Plan(ctx context.Context, total int) {
+	if display, ok := ctx.Value(contextKey{}).(*Display); ok {
+		display.mu.Lock()
+		display.total = total
+		display.mu.Unlock()
 	}
+}
+
+func (display *Display) reveal() bool {
+	if !display.visible && time.Since(display.created) < 400*time.Millisecond {
+		return false
+	}
+	display.visible = true
+	for _, line := range display.pending {
+		fmt.Fprintln(display.out, line)
+	}
+	display.pending = nil
+	return true
+}
+
+func (display *Display) line(marker string, active bool) string {
+	left := marker + " " + display.title
+	if active {
+		left += fmt.Sprintf("  [%d/%d]", display.number, max(display.number, display.total))
+	}
+	right := fmt.Sprintf("%.1fs", time.Since(display.start).Seconds())
+	width := min(terminalWidth(display.out)-2, 76)
+	if width < 58 {
+		return fit(left+" "+right, width)
+	}
+	left = fit(left, width-len(right)-3)
+	return "  " + left + strings.Repeat(" ", width-2-Width(left)-len(right)) + right
 }
 
 func (display *Display) clear() {
@@ -91,17 +132,16 @@ func (display *Display) complete(success bool) {
 		return
 	}
 	display.clear()
-	marker := "OK"
+	marker := "✓"
 	if !success {
-		marker = i18n.Human("Failed")
+		marker = "✗"
 	}
-	if display.animated {
-		marker = "\x1b[32m✓\x1b[0m"
-		if !success {
-			marker = "\x1b[31m✗\x1b[0m"
-		}
+	line := display.line(marker, false)
+	if !display.reveal() {
+		display.pending = append(display.pending, line)
+		return
 	}
-	fmt.Fprintf(display.out, "[%d] %s ... %s %.1fs\n", display.number, display.title, marker, time.Since(display.start).Seconds())
+	fmt.Fprintln(display.out, line)
 }
 
 func (display *Display) Write(data []byte) (int, error) {
@@ -155,13 +195,17 @@ func (display *Display) animate() {
 			return
 		case <-ticker.C:
 			display.mu.Lock()
-			if display.carriage && display.title != "" {
+			if display.title != "" && display.reveal() && display.carriage {
 				lines := strings.Split(strings.TrimSpace(display.tail), "\n")
 				display.clear()
 				width := terminalWidth(display.out) - 1
-				title := fit(fmt.Sprintf("%c [%d] %s  %.1fs", "|/-\\"[frame%4], display.number, display.title, time.Since(display.start).Seconds()), width)
+				marker := string([]rune("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")[frame%10])
+				if !display.animated {
+					marker = string("|/-\\"[frame%4])
+				}
+				title := display.line(marker, true)
 				if display.animated {
-					fmt.Fprintf(display.out, "\x1b[36m%s\x1b[0m\n\x1b[2m%s\x1b[0m", title, fit(lines[len(lines)-1], width))
+					fmt.Fprintf(display.out, "\x1b[36m%s\x1b[0m\n\x1b[2m%s\x1b[0m", title, fit("    "+lines[len(lines)-1], width))
 				} else {
 					fmt.Fprint(display.out, title)
 				}

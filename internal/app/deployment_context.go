@@ -24,5 +24,9 @@ func (s *Service) deploymentContext(ctx context.Context, record deploy.Record, d
 		region = "global"
 		source = i18n.Human("Default deployment settings")
 	}
-	progress.Info(ctx, []string{fmt.Sprintf("lbctl %s · LangBot %s · %s", s.deps.Version, record.CoreVersion, record.Driver), fmt.Sprintf(i18n.Human("Region: %s (%s)"), region, source), fmt.Sprintf(i18n.Human("Instance: %s · Directory: %s · Port: %d"), record.Name, dir, record.Port)})
+	driver := record.Driver
+	if driver == "native" {
+		driver = i18n.Human("Native deployment")
+	}
+	progress.Info(ctx, []string{fmt.Sprintf("lbctl %s · LangBot %s · %s · ", s.deps.Version, record.CoreVersion, driver) + fmt.Sprintf(i18n.Human("Region: %s (%s)"), region, source), fmt.Sprintf(i18n.Human("Instance: %s · Directory: %s · Port: %d"), record.Name, dir, record.Port)})
 }

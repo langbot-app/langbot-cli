@@ -13,13 +13,21 @@ import (
 )
 
 func cellWidth(char rune) int {
-	if unicode.Is(unicode.Mn, char) {
+	if unicode.Is(unicode.Mn, char) || char == 0x200d || char < 32 || char >= 0x7f && char < 0xa0 {
 		return 0
 	}
-	if char >= 0x1100 && (char <= 0x115f || char >= 0x2e80 && char <= 0xa4cf || char >= 0xac00 && char <= 0xd7a3 || char >= 0xf900 && char <= 0xfaff || char >= 0xfe10 && char <= 0xfe6f || char >= 0xff01 && char <= 0xff60 || char >= 0x1f300) {
+	if char >= 0x1100 && (char <= 0x115f || char >= 0x2e80 && char <= 0xa4cf || char >= 0xac00 && char <= 0xd7a3 || char >= 0xf900 && char <= 0xfaff || char >= 0xfe10 && char <= 0xfe6f || char >= 0xff01 && char <= 0xff60 || char >= 0xffe0 && char <= 0xffe6 || char >= 0x1f300 && char <= 0x1faff || char >= 0x20000 && char <= 0x3ffff) {
 		return 2
 	}
 	return 1
+}
+
+func Width(text string) int {
+	width := 0
+	for _, char := range clean(text) {
+		width += cellWidth(char)
+	}
+	return width
 }
 
 func fit(text string, width int) string {
@@ -53,34 +61,32 @@ func styled(out io.Writer) bool {
 }
 
 func Panel(out io.Writer, lines []string) error {
-	width := terminalWidth(out)
-	if !styled(out) || width < 60 {
+	return renderPanel(out, lines, terminalWidth(out), styled(out))
+}
+
+func renderPanel(out io.Writer, lines []string, width int, color bool) error {
+	if !color || width < 60 || len(lines) == 0 {
 		_, err := fmt.Fprintln(out, strings.Join(lines, "\n"))
 		return err
 	}
-	width = min(width-1, 110)
-	if _, err := fmt.Fprintln(out, "\x1b[36m╭"+strings.Repeat("─", width-2)+"╮\x1b[0m"); err != nil {
+	width = min(width-2, 76)
+	title := fit(lines[0], width-6)
+	if _, err := fmt.Fprintln(out, "\x1b[36m╭─ \x1b[1m"+title+"\x1b[22m "+strings.Repeat("─", width-5-Width(title))+"╮\x1b[0m"); err != nil {
 		return err
 	}
-	for index, line := range lines {
+	for _, line := range append([]string{""}, lines[1:]...) {
 		for {
-			part := fit(line, width-4)
-			cells := 0
-			for _, char := range part {
-				cells += cellWidth(char)
-			}
+			part := fit(line, width-6)
+			cells := Width(part)
 			color := ""
-			if strings.HasPrefix(line, i18n.Human("Deployment")+":") {
-				if strings.Contains(line, i18n.Human("Running")) {
-					color = "\x1b[32m"
-				} else {
-					color = "\x1b[31m"
-				}
-			}
-			if index == 0 {
+			if strings.HasPrefix(line, "WebUI") {
 				color = "\x1b[1;36m"
+			} else if line == i18n.Human("Next steps") {
+				color = "\x1b[1m"
+			} else if strings.HasPrefix(strings.TrimSpace(line), "docs.langbot.app") {
+				color = "\x1b[2m"
 			}
-			if _, err := fmt.Fprintf(out, "\x1b[36m│\x1b[0m %s%s\x1b[0m%s \x1b[36m│\x1b[0m\n", color, part, strings.Repeat(" ", width-4-cells)); err != nil {
+			if _, err := fmt.Fprintf(out, "\x1b[36m│\x1b[0m  %s%s\x1b[0m%s  \x1b[36m│\x1b[0m\n", color, part, strings.Repeat(" ", width-6-cells)); err != nil {
 				return err
 			}
 			if len(part) >= len(line) || part == "" {
@@ -94,7 +100,48 @@ func Panel(out io.Writer, lines []string) error {
 }
 
 func BrandLines() []string {
-	return []string{i18n.Human("LangBot · Production-grade platform for building agentic IM bots (open source)"), i18n.Human("Connect LLMs, agents, knowledge bases and plugins to QQ, WeChat/WeCom, Feishu, DingTalk, Telegram, Discord, Slack and more"), i18n.Human("Website https://langbot.app · Docs https://docs.langbot.app · Plugins https://space.langbot.app")}
+	return []string{"LangBot  " + i18n.Human("Production-grade AI messaging bot platform · Open source"), i18n.Human("Connect LLMs, agents, knowledge bases and plugins to QQ, WeChat/WeCom, Feishu, DingTalk, Telegram, Discord, Slack and more"), i18n.Human("Website langbot.app · Docs docs.langbot.app · Plugins space.langbot.app")}
+}
+
+func Brand(out io.Writer) {
+	for index, line := range BrandLines() {
+		for _, part := range wrap(line, terminalWidth(out)-4) {
+			if index == 0 && styled(out) {
+				part = strings.Replace(part, "LangBot", "\x1b[1;36mLangBot\x1b[0m", 1)
+			} else if index > 0 && styled(out) {
+				part = "\x1b[2m" + part + "\x1b[0m"
+			}
+			fmt.Fprintln(out, "  "+part)
+		}
+	}
+	fmt.Fprintln(out)
+}
+
+func Dim(out io.Writer, text string) {
+	for _, line := range wrap(text, terminalWidth(out)-4) {
+		if styled(out) {
+			line = "\x1b[2m" + line + "\x1b[0m"
+		}
+		fmt.Fprintln(out, "  "+line)
+	}
+}
+
+func wrap(text string, width int) []string {
+	var lines []string
+	for text != "" {
+		part := fit(text, max(1, width))
+		if len(part) < len(text) {
+			if space := strings.LastIndexByte(part, ' '); space > 0 && Width(part[:space]) >= width/2 {
+				part = part[:space]
+			}
+		}
+		if part == "" {
+			break
+		}
+		lines = append(lines, part)
+		text = strings.TrimLeft(text[len(part):], " ")
+	}
+	return lines
 }
 
 func (display *Display) Info(lines []string) {
@@ -104,13 +151,12 @@ func (display *Display) Info(lines []string) {
 		return
 	}
 	display.clear()
-	for index, line := range lines {
-		if display.animated && index == 0 {
-			fmt.Fprintln(display.out, "\x1b[1;36m"+line+"\x1b[0m")
-		} else {
-			fmt.Fprintln(display.out, line)
+	for _, line := range lines {
+		for _, part := range wrap(line, terminalWidth(display.out)-4) {
+			fmt.Fprintln(display.out, "  "+part)
 		}
 	}
+	fmt.Fprintln(display.out)
 }
 
 func Info(ctx context.Context, lines []string) {

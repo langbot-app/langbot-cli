@@ -5,11 +5,14 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/langbot-app/langbot-cli/internal/i18n"
 )
+
+var coreLogPrefix = regexp.MustCompile(`^\[[^\]]+\]\s+(\S+)\s+\([0-9]+\)\s+-\s+\[[^\]]+\]\s*:\s*`)
 
 func HumanDisplay(ctx context.Context) bool {
 	display, ok := ctx.Value(contextKey{}).(*Display)
@@ -51,7 +54,7 @@ func Health(ctx context.Context, lastLine string) {
 	defer display.mu.Unlock()
 	if lastLine != "" {
 		lines := strings.Split(strings.TrimSpace(clean(lastLine)), "\n")
-		display.tail = lines[len(lines)-1]
+		display.tail = coreLogPrefix.ReplaceAllString(lines[len(lines)-1], "$1 · ")
 	}
 	if !display.healthHint && !display.start.IsZero() && time.Since(display.start) >= 3*time.Minute {
 		display.clear()

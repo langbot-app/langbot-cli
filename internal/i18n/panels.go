@@ -2,6 +2,11 @@ package i18n
 
 func init() {
 	for key, value := range map[string]string{
+		"Production-grade AI messaging bot platform · Open source":                "生产级 AI 即时通信机器人开发平台 · 开源",
+		"Website langbot.app · Docs docs.langbot.app · Plugins space.langbot.app": "官网 langbot.app · 文档 docs.langbot.app · 插件市场 space.langbot.app",
+		"Working": "处理中", "LangBot is ready": "LangBot 已就绪", "Native deployment": "原生部署",
+		"Next steps": "下一步", "Commands": "常用", "Disable startup": "关闭自启",
+		"Update available: %s (%s)": "可更新到 %s（%s）", " (up to date)": "（最新）",
 		"No installation log was created during preflight.": "预检阶段没有生成安装日志。",
 		"Register deployment":                               "登记部署",
 		"Health check is taking over 3 minutes. Inspect Core with lbctl logs, or retry with lbctl restart.": "健康检查已等待超过 3 分钟。可执行 lbctl logs 查看 Core 日志，或用 lbctl restart 重试。",

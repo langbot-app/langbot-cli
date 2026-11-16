@@ -11,6 +11,9 @@ import (
 )
 
 func TestHealthLogTailAndSlowHint(t *testing.T) {
+	if got := coreLogPrefix.ReplaceAllString("[11-16 17:44:08.164] mgr.py (177) - [INFO] : Initializing database type: sqlite...", "$1 · "); got != "mgr.py · Initializing database type: sqlite..." {
+		t.Fatal(got)
+	}
 	path := filepath.Join(t.TempDir(), "core.log")
 	if err := os.WriteFile(path, []byte(strings.Repeat("old\n", 3000)+"\x1b[31mInitializing database\x1b[0m\n"), 0600); err != nil {
 		t.Fatal(err)

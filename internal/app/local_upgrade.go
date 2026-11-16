@@ -12,6 +12,7 @@ import (
 	"github.com/langbot-app/langbot-cli/internal/api"
 	"github.com/langbot-app/langbot-cli/internal/deploy"
 	"github.com/langbot-app/langbot-cli/internal/i18n"
+	"github.com/langbot-app/langbot-cli/internal/progress"
 	"github.com/langbot-app/langbot-cli/internal/result"
 	"github.com/langbot-app/langbot-cli/internal/telemetry"
 )
@@ -58,6 +59,7 @@ func (s *Service) Upgrade(ctx context.Context, options UpgradeOptions) (Result, 
 	preview.CoreVersion = targetVersion
 	s.deploymentContext(ctx, preview, diagnostics.Dir, "stored")
 	if record.Driver == deploy.DriverNative {
+		progress.Plan(ctx, 12)
 		data := map[string]any{"action": "upgrade", "version": targetVersion, "driver": record.Driver, "dry_run": options.DryRun,
 			"source_version": record.CoreVersion, "target_version": targetVersion}
 		if options.DryRun {

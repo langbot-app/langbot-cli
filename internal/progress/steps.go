@@ -6,6 +6,9 @@ import (
 )
 
 func StepID(ctx context.Context, step string) {
+	if step == "prepare_logs" {
+		return
+	}
 	Step(ctx, StepTitle(step))
 }
 

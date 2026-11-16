@@ -27,12 +27,23 @@ stderr, including when telemetry is disabled. A `~/.langbot/terms-notice`
 marker suppresses subsequent notices. `LANGBOT_TELEMETRY=0` or `DO_NOT_TRACK=1`
 disables telemetry independently of language and notice state.
 
-Progress is on stderr. TTYs use one animated line with elapsed time and the
+Progress is on stderr and stays silent for operations shorter than 400 ms.
+Completed steps use a leading check mark and right-aligned elapsed time;
+the active step shows its position in the operation plan. Repeated registration
+checks share one visible step. TTYs use one animated line with elapsed time and the
 latest subprocess line. Redirected output, `NO_COLOR`, `TERM=dumb`, JSON/YAML
 output and consoles without Windows VT support use plain lines. `--verbose`
 shows full subprocess output; otherwise failures show the captured tail.
 Installation logs retain full subprocess output. Downloads show byte counts
 and percentages when the server supplies a content length.
+
+Panels use terminal cell widths rather than rune or byte counts. CJK, fullwidth
+punctuation and emoji occupy two cells; middle dots, arrows and checks occupy
+one. Borders occupy at most `min(columns - 2, 76)` cells. Terminals narrower
+than 60 columns use unboxed lines without right alignment. The palette uses
+cyan, bold and dim only. First-run notices follow the product heading, before
+deployment steps. Stable versions show either an available upgrade command or
+an up-to-date label; dev and prerelease versions do not suggest downgrades.
 
 TTY output redraws a two-line region (step/time and the last subprocess line),
 truncating to terminal cell width. Completed steps remain above it. Windows

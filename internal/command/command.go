@@ -46,6 +46,8 @@ type Dependencies struct {
 }
 
 type globalFlags struct {
+	notice         string
+	noticeMachine  bool
 	display        *progress.Display
 	language       string
 	verbose        bool
@@ -102,7 +104,9 @@ func Execute(ctx context.Context, args []string, deps Dependencies) int {
 	restoreLanguage := i18n.UseMode(lang, machine)
 	defer restoreLanguage()
 	if deps.NoticeHome != "" {
-		_ = i18n.FirstRun(deps.NoticeHome, deps.Err, lang)
+		var notice bytes.Buffer
+		_ = i18n.FirstRun(deps.NoticeHome, &notice, lang)
+		flags.notice, flags.noticeMachine = notice.String(), machine
 	}
 	root = newRoot(deps, flags, service)
 	root.AddCommand(newUpdateCommand(deps, flags))
@@ -118,6 +122,7 @@ func Execute(ctx context.Context, args []string, deps Dependencies) int {
 		}
 	}
 	executed, err := root.ExecuteContextC(ctx)
+	showNotice(deps, flags)
 	if flags.display != nil {
 		flags.display.Finish(err == nil && flags.exitCode == 0)
 	}
@@ -1636,23 +1641,40 @@ func newIdentityCommand(service *app.Service, deps Dependencies, flags *globalFl
 }
 
 func emitCommand(deps Dependencies, flags *globalFlags, value app.Result, err error) error {
+	showNotice(deps, flags)
 	flags.operationError = err
 	flags.exitCode = emit(deps, flags, value, err)
 	return nil
 }
 
 func emitCall(deps Dependencies, flags *globalFlags, call func() (app.Result, error)) error {
+	if flags.output != "json" && flags.output != "yaml" && (flags.commandPath == "install" || flags.commandPath == "upgrade") {
+		progress.Brand(deps.Err)
+	}
+	showNotice(deps, flags)
 	if flags.display != nil {
-		if flags.commandPath == "install" || flags.commandPath == "upgrade" {
-			flags.display.Info(progress.BrandLines())
-		}
-		flags.display.Step(strings.ReplaceAll(flags.commandPath, ".", " "))
+		flags.display.Step("Working")
 	}
 	value, err := call()
 	if flags.display != nil {
 		flags.display.Finish(err == nil)
 	}
 	return emitCommand(deps, flags, value, err)
+}
+
+func showNotice(deps Dependencies, flags *globalFlags) {
+	if flags.notice == "" {
+		return
+	}
+	if flags.noticeMachine {
+		fmt.Fprint(deps.Err, flags.notice)
+	} else {
+		for _, line := range strings.Split(strings.TrimSpace(flags.notice), "\n") {
+			progress.Dim(deps.Err, "ℹ "+line)
+		}
+		fmt.Fprintln(deps.Err)
+	}
+	flags.notice = ""
 }
 
 func emit(deps Dependencies, flags *globalFlags, value app.Result, callErr error) int {

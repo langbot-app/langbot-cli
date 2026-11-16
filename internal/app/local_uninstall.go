@@ -9,6 +9,7 @@ import (
 
 	"github.com/langbot-app/langbot-cli/internal/deploy"
 	"github.com/langbot-app/langbot-cli/internal/i18n"
+	"github.com/langbot-app/langbot-cli/internal/progress"
 	"github.com/langbot-app/langbot-cli/internal/result"
 	"github.com/langbot-app/langbot-cli/internal/telemetry"
 )
@@ -34,6 +35,14 @@ func (s *Service) Uninstall(ctx context.Context, options UninstallOptions) (Resu
 		return Result{}, err
 	}
 	var response Result
+	total := 3
+	if record.Driver == deploy.DriverNative && !record.Uninstalled {
+		total = 5
+	}
+	if options.PurgeData {
+		total++
+	}
+	progress.Plan(ctx, total)
 	if record.Driver == deploy.DriverNative {
 		err := deploy.WithMutationLock(operationCtx, diagnostics.Dir, func() error {
 			current, err := diagnostics.Store.Read()
