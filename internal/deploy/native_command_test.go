@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gofrs/flock"
 )
@@ -116,5 +117,30 @@ func TestNativePythonAndUTF8(t *testing.T) {
 		if !strings.Contains(env, value) {
 			t.Fatal(env)
 		}
+	}
+}
+
+func TestNativeSystemdWorkingDirectory(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "中文 user %")
+	binary, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	unit := nativeSystemdUnit(binary, dir, Record{ServiceManager: "systemd-user"})
+	if !strings.Contains(unit, "WorkingDirectory="+strings.ReplaceAll(dir, "%", "%%")+"\n") || strings.Contains(unit, `WorkingDirectory="`) {
+		t.Fatal(unit)
+	}
+	analyzer, err := exec.LookPath("systemd-analyze")
+	if err != nil {
+		return
+	}
+	path := filepath.Join(t.TempDir(), "langbot-verify.service")
+	if err := os.WriteFile(path, []byte(unit), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if output, err := exec.CommandContext(ctx, analyzer, "verify", path).CombinedOutput(); err != nil {
+		t.Fatalf("%s: %v", output, err)
 	}
 }

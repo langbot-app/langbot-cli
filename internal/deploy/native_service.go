@@ -100,6 +100,15 @@ func nativeExecutable() (string, error) {
 	return binary, nil
 }
 
+func nativeSystemdUnit(binary, dir string, record Record) string {
+	quote := func(value string) string { return strconv.Quote(strings.ReplaceAll(value, "%", "%%")) }
+	target := "default.target"
+	if record.ServiceManager == "systemd" {
+		target = "multi-user.target"
+	}
+	return "[Unit]\nDescription=LangBot\nAfter=network-online.target\n[Service]\nType=simple\nExecStart=" + quote(binary) + " _native-run " + quote(dir) + "\nWorkingDirectory=" + strings.ReplaceAll(dir, "%", "%%") + "\nRestart=on-failure\nRestartSec=5\nKillMode=control-group\nTimeoutStopSec=30\n[Install]\nWantedBy=" + target + "\n"
+}
+
 func InstallNativeService(ctx context.Context, dir string, record Record) error {
 	if record.Autostart != nil && !*record.Autostart {
 		switch record.ServiceManager {
@@ -123,12 +132,7 @@ func InstallNativeService(ctx context.Context, dir string, record Record) error 
 	var content string
 	switch record.ServiceManager {
 	case "systemd", "systemd-user":
-		quote := func(value string) string { return strconv.Quote(strings.ReplaceAll(value, "%", "%%")) }
-		target := "default.target"
-		if record.ServiceManager == "systemd" {
-			target = "multi-user.target"
-		}
-		content = "[Unit]\nDescription=LangBot\nAfter=network-online.target\n[Service]\nType=simple\nExecStart=" + quote(binary) + " _native-run " + quote(dir) + "\nWorkingDirectory=" + quote(dir) + "\nRestart=on-failure\nRestartSec=5\nKillMode=control-group\nTimeoutStopSec=30\n[Install]\nWantedBy=" + target + "\n"
+		content = nativeSystemdUnit(binary, dir, record)
 	case "launchd":
 		content = `<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>Label</key><string>` + xmlText(nativeServiceName(record)) + `</string><key>ProgramArguments</key><array><string>` + xmlText(binary) + `</string><string>_native-run</string><string>` + xmlText(dir) + `</string></array><key>RunAtLoad</key><true/><key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict></dict></plist>`
 	case "schtasks":

@@ -59,7 +59,7 @@ jobs:
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
           echo "LANGBOT_HOME=$RUNNER_TEMP/lang517-native" >> "$GITHUB_ENV"
       - run: sh scripts/test-native-e2e.sh
-      - if: always()
+      - if: failure()
         run: lbctl uninstall --yes --output json
       - uses: actions/upload-artifact@v4
         if: always()
