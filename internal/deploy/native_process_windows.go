@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,10 +22,19 @@ func nativeRemovalRetryable(err error) bool {
 }
 
 func nativeStopWaiter(dir string) (func(context.Context) error, func(), error) {
-	data, err := os.ReadFile(filepath.Join(dir, "native.pid"))
+	file, err := os.Open(filepath.Join(dir, "native.pid"))
 	if os.IsNotExist(err) {
 		return func(context.Context) error { return nil }, func() {}, nil
 	}
+	if err != nil {
+		return nil, nil, err
+	}
+	defer file.Close()
+	data, err := io.ReadAll(file)
+	if err != nil {
+		return nil, nil, err
+	}
+	info, err := file.Stat()
 	if err != nil {
 		return nil, nil, err
 	}
@@ -45,10 +55,10 @@ func nativeStopWaiter(dir string) (func(context.Context) error, func(), error) {
 	if !errors.Is(err, windows.ERROR_NO_MORE_FILES) {
 		return nil, nil, err
 	}
-	return nativeProcessWaiter(uint32(pid), children)
+	return nativeProcessWaiter(uint32(pid), info.ModTime().UnixNano(), children)
 }
 
-func nativeProcessWaiter(pid uint32, children map[uint32][]uint32) (func(context.Context) error, func(), error) {
+func nativeProcessWaiter(pid uint32, pidWritten int64, children map[uint32][]uint32) (func(context.Context) error, func(), error) {
 	type processHandle struct {
 		pid    uint32
 		handle windows.Handle
@@ -93,7 +103,7 @@ func nativeProcessWaiter(pid uint32, children map[uint32][]uint32) (func(context
 		}
 		seen[current.pid] = true
 		handle, err := windows.OpenProcess(windows.SYNCHRONIZE|windows.PROCESS_QUERY_LIMITED_INFORMATION, false, current.pid)
-		if errors.Is(err, windows.ERROR_INVALID_PARAMETER) {
+		if errors.Is(err, windows.ERROR_INVALID_PARAMETER) || (current.pid == pid && errors.Is(err, windows.ERROR_ACCESS_DENIED)) {
 			continue
 		}
 		if err != nil {
@@ -106,7 +116,7 @@ func nativeProcessWaiter(pid uint32, children map[uint32][]uint32) (func(context
 			closeHandles()
 			return nil, nil, err
 		}
-		if created.Nanoseconds() < current.parentStarted {
+		if created.Nanoseconds() < current.parentStarted || (current.pid == pid && created.Nanoseconds() > pidWritten) {
 			windows.CloseHandle(handle)
 			continue
 		}

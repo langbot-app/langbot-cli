@@ -54,7 +54,7 @@ func TestNativeStopWaiterTracksChildAfterSupervisorExit(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer cleanup()
-	staleWait, staleCleanup, err := nativeProcessWaiter(uint32(command.Process.Pid), map[uint32][]uint32{
+	staleWait, staleCleanup, err := nativeProcessWaiter(uint32(command.Process.Pid), time.Now().UnixNano(), map[uint32][]uint32{
 		uint32(command.Process.Pid): {uint32(os.Getpid())},
 	})
 	if err != nil {
@@ -80,6 +80,40 @@ func TestNativeStopWaiterTracksChildAfterSupervisorExit(t *testing.T) {
 	}
 	if err := wait(ctx); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestNativeStopIgnoresReusedRootPID(test *testing.T) {
+	dir := test.TempDir()
+	path := filepath.Join(dir, "native.pid")
+	if err := os.WriteFile(path, []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+		test.Fatal(err)
+	}
+	handle, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(os.Getpid()))
+	if err != nil {
+		test.Fatal(err)
+	}
+	defer windows.CloseHandle(handle)
+	var created, exited, kernel, user windows.Filetime
+	if err := windows.GetProcessTimes(handle, &created, &exited, &kernel, &user); err != nil {
+		test.Fatal(err)
+	}
+	mtime := time.Unix(0, created.Nanoseconds()).Add(-time.Second)
+	if err := os.Chtimes(path, mtime, mtime); err != nil {
+		test.Fatal(err)
+	}
+	wait, cleanup, err := nativeStopWaiter(dir)
+	if err != nil {
+		test.Fatal(err)
+	}
+	defer cleanup()
+	ctx, cancel := context.WithTimeout(test.Context(), 200*time.Millisecond)
+	defer cancel()
+	if err := wait(ctx); err != nil {
+		test.Fatalf("waited for an unrelated process: %v", err)
+	}
+	if err := NativeStop(ctx, dir, Record{ServiceManager: "process"}); err != nil {
+		test.Fatalf("stale PID prevented stop: %v", err)
 	}
 }
 
