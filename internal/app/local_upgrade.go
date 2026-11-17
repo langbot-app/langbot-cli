@@ -20,6 +20,35 @@ import (
 
 const upgradeTimeout = 20 * time.Minute
 
+// Compose healthchecks only report their first result after the configured
+// interval (30s in the official Compose file), so services read as "starting"
+// for a while after Core already answers HTTP. Poll until they settle instead
+// of failing an otherwise successful upgrade on the first snapshot.
+var (
+	upgradeServiceReadyTimeout = 3 * time.Minute
+	upgradeServicePollInterval = 2 * time.Second
+)
+
+func waitForUpgradedServices(ctx context.Context, status func(context.Context) (deploy.StatusResult, error)) (deploy.StatusResult, error) {
+	deadline := time.NewTimer(upgradeServiceReadyTimeout)
+	defer deadline.Stop()
+	ticker := time.NewTicker(upgradeServicePollInterval)
+	defer ticker.Stop()
+	for {
+		current, err := status(ctx)
+		if err == nil && current.Status != "starting" && current.Status != "degraded" {
+			return current, nil
+		}
+		select {
+		case <-ctx.Done():
+			return current, err
+		case <-deadline.C:
+			return current, err
+		case <-ticker.C:
+		}
+	}
+}
+
 var imageDigestPattern = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
 
 type UpgradeOptions struct {
@@ -75,6 +104,14 @@ func (s *Service) Upgrade(ctx context.Context, options UpgradeOptions) (response
 	preview := record
 	preview.CoreVersion = targetVersion
 	s.deploymentContext(ctx, preview, diagnostics.Dir, "stored")
+	if strings.TrimSpace(options.Version) == "" && record.CoreVersion != "" {
+		// Without an explicit --version, being on the latest stable release is
+		// a successful no-op rather than a failed precondition.
+		if comparison, compareErr := deploy.CompareReleaseVersions(record.CoreVersion, targetVersion); compareErr == nil && comparison >= 0 {
+			return Result{Data: map[string]any{"action": "upgrade", "driver": record.Driver, "dry_run": options.DryRun, "up_to_date": true, "changed": false,
+				"source_version": record.CoreVersion, "target_version": record.CoreVersion, "latest_version": targetVersion}}, nil
+		}
+	}
 	if record.Driver == deploy.DriverNative {
 		progress.Plan(ctx, 12)
 		data := map[string]any{"action": "upgrade", "version": targetVersion, "driver": record.Driver, "dry_run": options.DryRun,
@@ -281,7 +318,7 @@ func (s *Service) Upgrade(ctx context.Context, options UpgradeOptions) (response
 		if err := s.waitForLocalVersion(operationCtx, current, targetVersion); err != nil {
 			return fail("http_version", i18n.T("Target HTTP health or version verification failed"))
 		}
-		finalStatus, finalErr := diagnostics.Status(operationCtx)
+		finalStatus, finalErr := waitForUpgradedServices(operationCtx, diagnostics.Status)
 		if finalErr != nil || finalStatus.Status != "running" {
 			return fail("service_health", i18n.T("Not all required target services are ready"))
 		}

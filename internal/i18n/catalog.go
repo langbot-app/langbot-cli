@@ -972,6 +972,7 @@ var chinese = map[string]string{
 	"Target LangBot stable Release tag":                                      "目标 LangBot 稳定 Release tag",
 	"Target HTTP health or version verification failed":                      "目标版本 HTTP 健康或版本验证失败",
 	"Not all required target services are ready":                             "目标版本必需服务未全部就绪",
+	"LangBot is already up to date: ":                                        "LangBot 已是最新版本：",
 	"Target version must be newer than current version":                      "目标版本必须高于当前版本",
 	"Target directory is not empty or unavailable":                           "目标目录不为空或不可用",
 	"Target directory is not empty; refusing to overwrite":                   "目标目录不为空，拒绝覆盖",

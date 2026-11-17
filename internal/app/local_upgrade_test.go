@@ -11,18 +11,21 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/langbot-app/langbot-cli/internal/deploy"
 	"github.com/langbot-app/langbot-cli/internal/result"
 )
 
 type upgradeRunner struct {
-	running        bool
-	failUp         bool
-	failPull       bool
-	pulledVersion  string
-	resolvedConfig string
-	calls          []string
+	running         bool
+	startingPolls   int
+	startingAfterUp int
+	failUp          bool
+	failPull        bool
+	pulledVersion   string
+	resolvedConfig  string
+	calls           []string
 }
 
 func (r *upgradeRunner) Docker(_ context.Context, args ...string) (deploy.CommandResult, error) {
@@ -76,7 +79,12 @@ func (r *upgradeRunner) Compose(_ context.Context, _ deploy.Record, args ...stri
 		if r.running {
 			state = "running"
 		}
-		return deploy.CommandResult{Stdout: fmt.Sprintf(`[{"Service":"langbot","State":%q},{"Service":"langbot_plugin_runtime","State":%q}]`, state, state)}, nil
+		health := ""
+		if r.running && r.startingPolls > 0 {
+			r.startingPolls--
+			health = "starting"
+		}
+		return deploy.CommandResult{Stdout: fmt.Sprintf(`[{"Service":"langbot","State":%q},{"Service":"langbot_plugin_runtime","State":%q,"Health":%q}]`, state, state, health)}, nil
 	case "stop":
 		r.running = false
 		return deploy.CommandResult{}, nil
@@ -85,6 +93,7 @@ func (r *upgradeRunner) Compose(_ context.Context, _ deploy.Record, args ...stri
 			return deploy.CommandResult{Stderr: "failed"}, errors.New("failed")
 		}
 		r.running = true
+		r.startingPolls = r.startingAfterUp
 		return deploy.CommandResult{}, nil
 	default:
 		return deploy.CommandResult{}, fmt.Errorf("unexpected Compose command: %s", call)
@@ -321,5 +330,58 @@ func TestUpgradeFailurePreservesBackupAndBlocksRestart(t *testing.T) {
 	}
 	if runner.running {
 		t.Fatal("失败后不得自动启动旧版")
+	}
+}
+
+func TestUpgradeWaitsForServiceHealthchecksToSettle(t *testing.T) {
+	previousInterval := upgradeServicePollInterval
+	upgradeServicePollInterval = time.Millisecond
+	t.Cleanup(func() { upgradeServicePollInterval = previousInterval })
+	service, runner, record, dir := upgradeServiceFixture(t, false)
+	runner.startingAfterUp = 3
+	response, err := service.Upgrade(context.Background(), UpgradeOptions{
+		CheckOptions: CheckOptions{Endpoint: record.Endpoint, EndpointSet: true}, Version: "v4.10.10", Yes: true,
+	})
+	if err != nil || response.Data.(map[string]any)["completed"] != true {
+		t.Fatalf("Upgrade() = %+v, %v", response.Data, err)
+	}
+	if runner.startingPolls != 0 {
+		t.Fatalf("starting polls left = %d", runner.startingPolls)
+	}
+	state, err := deploy.ReadUpgradeState(dir)
+	if err != nil || state.Phase != "completed" {
+		t.Fatalf("state = %+v, %v", state, err)
+	}
+}
+
+func TestUpgradeServiceWaitGivesUpAfterTimeout(t *testing.T) {
+	previousInterval, previousTimeout := upgradeServicePollInterval, upgradeServiceReadyTimeout
+	upgradeServicePollInterval, upgradeServiceReadyTimeout = time.Millisecond, 20*time.Millisecond
+	t.Cleanup(func() { upgradeServicePollInterval, upgradeServiceReadyTimeout = previousInterval, previousTimeout })
+	polls := 0
+	status, err := waitForUpgradedServices(context.Background(), func(context.Context) (deploy.StatusResult, error) {
+		polls++
+		return deploy.StatusResult{Status: "starting"}, nil
+	})
+	if err != nil || status.Status != "starting" || polls < 2 {
+		t.Fatalf("status = %+v, polls = %d, err = %v", status, polls, err)
+	}
+}
+
+func TestUpgradeWithoutVersionIsNoOpWhenAlreadyLatest(t *testing.T) {
+	service, runner, record, _ := upgradeServiceFixture(t, false)
+	service.deps.LatestRelease = func(context.Context) (string, error) { return record.CoreVersion, nil }
+	response, err := service.Upgrade(context.Background(), UpgradeOptions{CheckOptions: CheckOptions{Endpoint: record.Endpoint, EndpointSet: true}, Yes: true})
+	data, _ := response.Data.(map[string]any)
+	if err != nil || data["up_to_date"] != true || data["changed"] != false {
+		t.Fatalf("up-to-date upgrade = %+v, %v", response.Data, err)
+	}
+	for _, call := range runner.calls {
+		if strings.HasPrefix(call, "docker pull") || call == "compose stop" {
+			t.Fatalf("up-to-date upgrade must not pull or stop: %v", runner.calls)
+		}
+	}
+	if _, err := service.Upgrade(context.Background(), UpgradeOptions{CheckOptions: CheckOptions{Endpoint: record.Endpoint, EndpointSet: true}, Version: record.CoreVersion, Yes: true}); err == nil {
+		t.Fatal("an explicit same --version must still be rejected")
 	}
 }

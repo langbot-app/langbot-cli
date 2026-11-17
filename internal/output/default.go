@@ -445,7 +445,9 @@ func renderLocalAction(w io.Writer, data map[string]any) error {
 	case "upgrade":
 		from, _ := data["source_version"].(string)
 		to, _ := data["target_version"].(string)
-		if data["dry_run"] == true {
+		if data["up_to_date"] == true {
+			line = i18n.T("LangBot is already up to date: ") + from
+		} else if data["dry_run"] == true {
 			line = i18n.T("Upgrade plan: LangBot ") + from + " → " + to
 		} else if data["completed"] == true {
 			line = i18n.T("Upgraded LangBot ") + from + " → " + to
