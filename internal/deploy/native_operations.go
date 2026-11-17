@@ -154,15 +154,16 @@ func pruneNativeBackups(dir string) error {
 	return nil
 }
 
-func UpgradeNative(ctx context.Context, dir string, current Record, version string, out io.Writer, client *http.Client) (string, error) {
-	return upgradeNative(ctx, dir, current, version, progress.Output(ctx, out), client, nativeUpgradeOperations{PrepareNative, NativeStart, NativeStop, WaitNativeHealth})
+func UpgradeNative(ctx context.Context, dir string, current Record, version string, out io.Writer, client *http.Client, beforeStart func(Record)) (string, error) {
+	return upgradeNative(ctx, dir, current, version, progress.Output(ctx, out), client, nativeUpgradeOperations{PrepareNative, NativeStart, NativeStop, WaitNativeHealth, beforeStart})
 }
 
 type nativeUpgradeOperations struct {
-	prepare func(context.Context, string, Record, io.Writer) error
-	start   func(context.Context, string, Record) error
-	stop    func(context.Context, string, Record) error
-	health  func(context.Context, Record, *http.Client) error
+	prepare     func(context.Context, string, Record, io.Writer) error
+	start       func(context.Context, string, Record) error
+	stop        func(context.Context, string, Record) error
+	health      func(context.Context, Record, *http.Client) error
+	beforeStart func(Record)
 }
 
 func upgradeNative(ctx context.Context, dir string, current Record, version string, out io.Writer, client *http.Client, operations nativeUpgradeOperations) (string, error) {
@@ -190,8 +191,8 @@ func upgradeNative(ctx context.Context, dir string, current Record, version stri
 	store := Store{Dir: dir}
 	telemetry.SetStep(ctx, "write_record")
 	err = store.Write(ctx, next)
-	if err == nil {
-		_, err = EnsureLocalAuth(ctx, dir, next, nil)
+	if err == nil && operations.beforeStart != nil {
+		operations.beforeStart(next)
 	}
 	if err == nil {
 		telemetry.SetStep(ctx, "start_service")

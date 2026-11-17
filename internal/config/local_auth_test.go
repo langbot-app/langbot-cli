@@ -11,6 +11,17 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
+func TestInvalidCredentialReferenceDescribesBothSources(t *testing.T) {
+	store := Store{Path: filepath.Join(t.TempDir(), "config.yaml")}
+	err := store.Update(context.Background(), func(file *File) error {
+		file.Contexts["invalid"] = Context{Endpoint: "http://localhost:5300", Credential: &Credential{Type: "local_deployment", Name: "relative"}}
+		return nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "env") || !strings.Contains(err.Error(), "local_deployment") {
+		t.Fatalf("credential error does not describe supported sources: %v", err)
+	}
+}
+
 func TestLocalCredentialPriorityAndIsolation(t *testing.T) {
 	root := t.TempDir()
 	file := emptyFile()

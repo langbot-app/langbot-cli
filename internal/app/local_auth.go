@@ -13,7 +13,38 @@ import (
 	"github.com/langbot-app/langbot-cli/internal/result"
 )
 
-func (s *Service) configureLocalAuth(ctx context.Context, dir string, record deploy.Record, running bool) (bool, error) {
+type localAuthAttempt struct {
+	service *Service
+	dir     string
+	failed  bool
+}
+
+func (auth *localAuthAttempt) configure(ctx context.Context, record deploy.Record) bool {
+	changed, err := auth.service.configureLocalAuth(ctx, auth.dir, record)
+	auth.failed = auth.failed || err != nil
+	return changed
+}
+
+func (auth *localAuthAttempt) bind(ctx context.Context, record deploy.Record) {
+	if !auth.failed && deploy.SupportsLocalAuth(record.CoreVersion) {
+		auth.failed = auth.service.bindLocalAuth(ctx, record) != nil
+	}
+}
+
+func (auth *localAuthAttempt) result(value Result) Result {
+	if auth.failed {
+		data, ok := value.Data.(map[string]any)
+		if !ok {
+			data = map[string]any{}
+			value.Data = data
+		}
+		data["local_auth"] = false
+		data["local_auth_error"] = fmt.Sprintf(i18n.T("Warning: CLI could not connect automatically; check the local API configuration, then run %s"), "lbctl restart --dir "+nativeShellQuote(auth.dir))
+	}
+	return value
+}
+
+func (s *Service) configureLocalAuth(ctx context.Context, dir string, record deploy.Record) (bool, error) {
 	if !deploy.SupportsLocalAuth(record.CoreVersion) {
 		progress.Info(ctx, []string{i18n.T("Automatic API authentication requires Core v4.10.3 or newer; skipped")})
 		return false, nil
@@ -21,9 +52,6 @@ func (s *Service) configureLocalAuth(ctx context.Context, dir string, record dep
 	changed, err := deploy.EnsureLocalAuth(ctx, dir, record, s.localRunner())
 	if err != nil {
 		return false, result.New("precondition", err.Error())
-	}
-	if changed && running {
-		progress.Info(ctx, []string{fmt.Sprintf(i18n.T("Local API key configured; restart to activate: %s"), "lbctl restart --dir "+nativeShellQuote(dir))})
 	}
 	err = s.WithContext(ctx).update(func(file *config.File) error {
 		name := record.DeploymentID
@@ -127,6 +155,7 @@ func (s *Service) automaticCredentialDeployment(options CheckOptions) string {
 }
 
 func (s *Service) repairDockerInstall(ctx context.Context, dir string, record deploy.Record) (Result, error) {
+	auth := localAuthAttempt{service: s, dir: dir}
 	err := deploy.WithMutationLock(ctx, dir, func() error {
 		if err := deploy.CheckUpgradeInterrupted(dir); err != nil {
 			return err
@@ -136,10 +165,7 @@ func (s *Service) repairDockerInstall(ctx context.Context, dir string, record de
 		if err != nil || before.Status == "unknown" {
 			return result.New("precondition", i18n.T("Unable to confirm local deployment status; run doctor first"))
 		}
-		changed, err := s.configureLocalAuth(ctx, dir, record, false)
-		if err != nil {
-			return err
-		}
+		changed := auth.configure(ctx, record)
 		args := []string{"up", "-d"}
 		if changed && before.Status == "running" {
 			args = []string{"restart"}
@@ -150,13 +176,16 @@ func (s *Service) repairDockerInstall(ctx context.Context, dir string, record de
 		if err := s.waitForLocalHTTP(ctx, record); err != nil {
 			return err
 		}
-		return s.bindLocalAuth(ctx, record)
+		return nil
 	})
+	if err == nil {
+		auth.bind(ctx, record)
+	}
 	data := map[string]any{"action": "install", "record": record, "changed": err == nil, "url": record.Endpoint, "instance_dir": dir, "local_auth": deploy.SupportsLocalAuth(record.CoreVersion)}
 	data["local_context"] = record.DeploymentID
 	if err == nil {
 		data["status"] = map[string]any{"status": "running"}
 		installAutostartData(data, record, dir)
 	}
-	return Result{Data: data}, normalizeLocalMutationError(err)
+	return auth.result(Result{Data: data}), normalizeLocalMutationError(err)
 }

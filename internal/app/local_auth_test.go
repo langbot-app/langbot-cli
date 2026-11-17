@@ -40,7 +40,7 @@ func TestLocalAuthPreservesContextAndIsolatesInstances(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(record.DataDir, "config.yaml"), []byte("api: {}\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		changed, err := service.configureLocalAuth(context.Background(), dir, record, false)
+		changed, err := service.configureLocalAuth(context.Background(), dir, record)
 		if err != nil || !changed {
 			t.Fatal("authentication not configured")
 		}
@@ -68,7 +68,7 @@ func TestLocalAuthPreservesContextAndIsolatesInstances(t *testing.T) {
 		}); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := service.configureLocalAuth(context.Background(), dir, record, false); err != nil {
+		if _, err := service.configureLocalAuth(context.Background(), dir, record); err != nil {
 			t.Fatal(err)
 		}
 		file, _ := store.Load()
@@ -109,7 +109,7 @@ func TestLocalAuthSelectsReplacementOfUninstalledInstance(t *testing.T) {
 				t.Fatal(err)
 			}
 			service := New(Dependencies{DefaultConfigPath: func() (string, error) { return configPath, nil }})
-			if _, err := service.configureLocalAuth(context.Background(), newDir, next, false); err != nil {
+			if _, err := service.configureLocalAuth(context.Background(), newDir, next); err != nil {
 				t.Fatal(err)
 			}
 			file, err := store.Load()

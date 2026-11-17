@@ -66,9 +66,17 @@ func renderDefault(w io.Writer, value any, command string) error {
 		return err
 	}
 	if object, ok := data.(map[string]any); ok {
+		if warning, ok := object["local_auth_error"].(string); ok && warning != "" {
+			if _, err := fmt.Fprintln(w, displayCell(warning)); err != nil {
+				return err
+			}
+		}
 		view := make(map[string]any, len(object))
 		meta, _ := envelope["meta"].(map[string]any)
 		for key, item := range object {
+			if key == "local_auth_error" {
+				continue
+			}
 			if key == "error" && envelope["ok"] == false && reflect.DeepEqual(item, envelope["error"]) {
 				continue
 			}

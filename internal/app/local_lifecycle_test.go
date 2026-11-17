@@ -21,10 +21,11 @@ import (
 )
 
 type lifecycleTestRunner struct {
-	mu    sync.Mutex
-	state string
-	port  int
-	calls []string
+	authConfig string
+	mu         sync.Mutex
+	state      string
+	port       int
+	calls      []string
 	// startingAfterUp makes ps report the runtime healthcheck as "starting"
 	// for this many polls after up/restart, like the official Compose file.
 	startingAfterUp int
@@ -38,6 +39,9 @@ func (r *lifecycleTestRunner) Docker(_ context.Context, args ...string) (deploy.
 	r.calls = append(r.calls, "docker "+joined)
 	switch {
 	case strings.HasPrefix(joined, "run --rm --network none --user 0:0 --mount "):
+		if r.authConfig != "" {
+			return deploy.CommandResult{Stdout: r.authConfig}, nil
+		}
 		return deploy.CommandResult{Stdout: "api: {}\n"}, nil
 	case joined == "--version":
 		return deploy.CommandResult{Stdout: "Docker version 29"}, nil

@@ -150,6 +150,7 @@ func (s *Service) Install(ctx context.Context, options InstallOptions) (Result, 
 	}
 
 	var response Result
+	auth := localAuthAttempt{service: s, dir: assets.Dir}
 	locator := deploy.Locator{Path: s.deps.LocalLocatorPath}
 	err = locator.WithLock(operationCtx, func() error {
 		return deploy.WithMutationLock(operationCtx, assets.Dir, func() error {
@@ -192,9 +193,7 @@ func (s *Service) Install(ctx context.Context, options InstallOptions) (Result, 
 			if err := locator.Write(assets.Dir); err != nil {
 				return result.New("server", i18n.T("Failed to write local deployment locator"))
 			}
-			if _, err := s.configureLocalAuth(operationCtx, assets.Dir, record, false); err != nil {
-				return err
-			}
+			auth.configure(operationCtx, record)
 			telemetry.SetStep(ctx, "compose_up")
 			command, commandErr := runner.Compose(operationCtx, record, "up", "-d")
 			if commandErr != nil {
@@ -227,22 +226,20 @@ func (s *Service) Install(ctx context.Context, options InstallOptions) (Result, 
 		if response.Data == nil {
 			response.Data = plan
 		}
-		return response, normalizeLocalMutationError(err)
+		return auth.result(response), normalizeLocalMutationError(err)
 	}
 	if data, ok := response.Data.(map[string]any); ok {
 		if record, ok := data["record"].(deploy.Record); ok {
 			installAutostartData(data, record, assets.Dir)
 			data["local_auth"] = deploy.SupportsLocalAuth(record.CoreVersion)
 			data["local_context"] = record.DeploymentID
-			if err := s.bindLocalAuth(operationCtx, record); err != nil {
-				return response, err
-			}
+			auth.bind(operationCtx, record)
 		}
 		for _, key := range []string{"url", "driver", "instance_dir", "version", "name", "region", "service_manager"} {
 			data[key] = plan[key]
 		}
 	}
-	return response, nil
+	return auth.result(response), nil
 }
 
 func (s *Service) Adopt(ctx context.Context, options AdoptOptions) (Result, error) {
@@ -324,6 +321,7 @@ func (s *Service) Adopt(ctx context.Context, options AdoptOptions) (Result, erro
 	sum := sha256.Sum256(composeData)
 	record.Asset = deploy.AssetInfo{Name: filepath.Base(composeFile), Digest: "sha256:" + hex.EncodeToString(sum[:])}
 
+	auth := localAuthAttempt{service: s, dir: dir}
 	var changed, restartRequired bool
 	locator := deploy.Locator{Path: s.deps.LocalLocatorPath}
 	err = locator.WithLock(operationCtx, func() error {
@@ -348,9 +346,8 @@ func (s *Service) Adopt(ctx context.Context, options AdoptOptions) (Result, erro
 						changed = true
 					}
 					record = existing
-					var authErr error
-					restartRequired, authErr = s.configureLocalAuth(operationCtx, dir, record, true)
-					return authErr
+					restartRequired = auth.configure(operationCtx, record)
+					return nil
 				}
 				return result.New("precondition", i18n.T("Another lbctl-managed deployment already exists"))
 			}
@@ -375,9 +372,8 @@ func (s *Service) Adopt(ctx context.Context, options AdoptOptions) (Result, erro
 				return mapStoreWriteError(readErr)
 			}
 			changed = true
-			var authErr error
-			restartRequired, authErr = s.configureLocalAuth(operationCtx, dir, record, true)
-			return authErr
+			restartRequired = auth.configure(operationCtx, record)
+			return nil
 		}); err != nil {
 			return err
 		}
@@ -390,12 +386,10 @@ func (s *Service) Adopt(ctx context.Context, options AdoptOptions) (Result, erro
 		return Result{}, normalizeLocalMutationError(err)
 	}
 	if !restartRequired {
-		if err := s.bindLocalAuth(operationCtx, record); err != nil {
-			return Result{}, err
-		}
+		auth.bind(operationCtx, record)
 	}
-	return Result{Data: map[string]any{"action": "adopt", "changed": changed, "record": record, "restart_required": restartRequired,
-		"restart_command": "lbctl restart --dir " + nativeShellQuote(dir)}}, nil
+	return auth.result(Result{Data: map[string]any{"action": "adopt", "changed": changed, "record": record, "restart_required": restartRequired,
+		"restart_command": "lbctl restart --dir " + nativeShellQuote(dir)}}), nil
 }
 
 func (s *Service) Start(ctx context.Context, options LifecycleOptions) (Result, error) {
@@ -516,6 +510,7 @@ func (s *Service) runLifecycle(ctx context.Context, action string, options Lifec
 	operationCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	var response Result
+	auth := localAuthAttempt{service: s, dir: diagnostics.Dir}
 	err = deploy.WithMutationLock(operationCtx, diagnostics.Dir, func() error {
 		if err := deploy.CheckUpgradeInterrupted(diagnostics.Dir); err != nil {
 			return result.New("recovery_required", err.Error())
@@ -531,10 +526,9 @@ func (s *Service) runLifecycle(ctx context.Context, action string, options Lifec
 		if (action == "start" && before.Status == "running") || (action == "stop" && before.Status == "stopped") {
 			response = Result{Data: map[string]any{"action": action, "changed": false, "status": before}}
 			if action == "start" {
-				changed, err := s.configureLocalAuth(operationCtx, diagnostics.Dir, current, true)
+				changed := auth.configure(operationCtx, current)
 				response.Data.(map[string]any)["restart_required"] = changed
 				response.Data.(map[string]any)["restart_command"] = "lbctl restart --dir " + nativeShellQuote(diagnostics.Dir)
-				return err
 			}
 			return nil
 		}
@@ -543,9 +537,7 @@ func (s *Service) runLifecycle(ctx context.Context, action string, options Lifec
 		}
 		args := map[string][]string{"start": {"up", "-d"}, "stop": {"stop"}, "restart": {"restart"}}[action]
 		if action != "stop" {
-			if _, err := s.configureLocalAuth(operationCtx, diagnostics.Dir, current, false); err != nil {
-				return err
-			}
+			auth.configure(operationCtx, current)
 		}
 		telemetry.SetStep(ctx, "compose_"+action)
 		command, commandErr := diagnostics.Runner.Compose(operationCtx, current, args...)
@@ -583,10 +575,10 @@ func (s *Service) runLifecycle(ctx context.Context, action string, options Lifec
 	})
 	if err == nil && action != "stop" {
 		if data, ok := response.Data.(map[string]any); ok && data["restart_required"] != true {
-			err = s.bindLocalAuth(operationCtx, record)
+			auth.bind(operationCtx, record)
 		}
 	}
-	return response, normalizeLocalMutationError(err)
+	return auth.result(response), normalizeLocalMutationError(err)
 }
 
 func (s *Service) lifecycleTarget(ctx context.Context, options CheckOptions) (deploy.Record, deploy.Diagnostics, error) {

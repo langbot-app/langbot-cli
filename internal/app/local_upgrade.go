@@ -100,6 +100,8 @@ func (s *Service) Upgrade(ctx context.Context, options UpgradeOptions) (response
 	if err != nil {
 		return Result{}, err
 	}
+	auth := localAuthAttempt{service: s, dir: diagnostics.Dir}
+	defer func() { responseResult = auth.result(responseResult) }()
 	recoveryEndpoint = record.Endpoint
 	var response Result
 	preview := record
@@ -128,18 +130,15 @@ func (s *Service) Upgrade(ctx context.Context, options UpgradeOptions) (response
 			if current.DeploymentID != record.DeploymentID {
 				return result.New("precondition", i18n.T("deployment changed"))
 			}
-			backup, err := deploy.UpgradeNative(operationCtx, diagnostics.Dir, current, targetVersion, s.nativeOutput(), s.deps.LocalHTTP)
+			backup, err := deploy.UpgradeNative(operationCtx, diagnostics.Dir, current, targetVersion, s.nativeOutput(), s.deps.LocalHTTP, func(next deploy.Record) { auth.configure(operationCtx, next) })
 			data["backup_dir"] = backup
 			data["completed"] = err == nil
-			if err == nil {
-				current.CoreVersion = targetVersion
-				_, err = s.configureLocalAuth(operationCtx, diagnostics.Dir, current, false)
-				if err == nil {
-					err = s.bindLocalAuth(operationCtx, current)
-				}
-			}
+
 			return err
 		})
+		if err == nil {
+			auth.bind(operationCtx, preview)
+		}
 		return Result{Data: data}, nativeMutationError(err)
 	}
 	err = deploy.WithMutationLock(operationCtx, diagnostics.Dir, func() error {
@@ -319,9 +318,7 @@ func (s *Service) Upgrade(ctx context.Context, options UpgradeOptions) (response
 		}
 		authRecord := current
 		authRecord.CoreVersion = targetVersion
-		if _, err := s.configureLocalAuth(operationCtx, diagnostics.Dir, authRecord, false); err != nil {
-			return fail("local_auth", err.Error())
-		}
+		auth.configure(operationCtx, authRecord)
 		if _, err := diagnostics.Runner.Compose(operationCtx, current, "up", "-d", "--pull", "never"); err != nil {
 			return fail("compose_up", i18n.T("Failed to start the target version"))
 		}
@@ -344,9 +341,6 @@ func (s *Service) Upgrade(ctx context.Context, options UpgradeOptions) (response
 		if err := diagnostics.Store.Write(operationCtx, current); err != nil {
 			return fail("record_write", i18n.T("Failed to write target version deployment record"))
 		}
-		if err := s.bindLocalAuth(operationCtx, current); err != nil {
-			return fail("local_auth", err.Error())
-		}
 		if err := update("completed"); err != nil {
 			return err
 		}
@@ -359,6 +353,9 @@ func (s *Service) Upgrade(ctx context.Context, options UpgradeOptions) (response
 		plan["status"] = finalStatus
 		return nil
 	})
+	if err == nil && !options.DryRun {
+		auth.bind(operationCtx, preview)
+	}
 	return response, normalizeLocalMutationError(err)
 }
 
