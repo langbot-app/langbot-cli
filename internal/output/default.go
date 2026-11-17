@@ -477,7 +477,11 @@ func renderLocalAction(w io.Writer, data map[string]any) error {
 			return err
 		}
 		if data["restart_required"] == true {
-			if _, err := fmt.Fprintln(w, i18n.T("Local API key configured; run lbctl restart to activate it")); err != nil {
+			command := formatCell(data["restart_command"])
+			if command == "" {
+				command = "lbctl restart"
+			}
+			if _, err := fmt.Fprintln(w, fmt.Sprintf(i18n.T("Local API key configured; restart to activate: %s"), command)); err != nil {
 				return err
 			}
 		}
@@ -529,7 +533,11 @@ func renderLocalAction(w io.Writer, data map[string]any) error {
 		rows = append(rows, [2]string{i18n.T("Directory"), displayCell(data["dir"])}, [2]string{i18n.T("Log"), "lbctl logs"})
 		lines = append(lines, progress.Labels(rows)...)
 		if data["local_auth"] == true {
-			lines = append(lines, i18n.T("CLI connected to this instance: use lbctl bot list directly"))
+			command := "lbctl bot list"
+			if name := formatCell(data["local_context"]); name != "" {
+				command = "lbctl --context " + name + " bot list"
+			}
+			lines = append(lines, fmt.Sprintf(i18n.T("CLI connected to this instance: %s"), command))
 		}
 		lines = append(lines, "", i18n.T("Next steps"))
 		language := "en"

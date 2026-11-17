@@ -2,6 +2,8 @@ package i18n
 
 func init() {
 	for key, value := range map[string]string{
+		"Local API key configured; restart to activate: %s":                    "本地 API Key 已配置，重启后生效：%s",
+		"CLI connected to this instance: %s":                                   "命令行已连接本实例：%s",
 		"Local context changed during authentication":                          "鉴权期间本地 context 已发生变化",
 		"Unable to configure local API authentication":                         "无法配置本地 API 鉴权",
 		"Local API credential unavailable; run lbctl restart":                  "本地 API 凭据不可用；请运行 lbctl restart",

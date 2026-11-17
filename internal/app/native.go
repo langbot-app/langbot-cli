@@ -220,6 +220,7 @@ func (s *Service) installNative(ctx context.Context, options InstallOptions) (Re
 		data["changed"] = true
 		data["status"] = map[string]any{"status": "running"}
 		data["local_auth"] = deploy.SupportsLocalAuth(record.CoreVersion)
+		data["local_context"] = record.DeploymentID
 		installAutostartData(data, record, dir)
 	} else {
 		data["step"] = telemetry.CurrentStep(ctx)
@@ -298,6 +299,7 @@ func (s *Service) nativeLifecycle(ctx context.Context, diagnostics deploy.Diagno
 		err = s.bindLocalAuth(ctx, record)
 	}
 	data := map[string]any{"action": action, "record": record, "restart_required": restartRequired}
+	data["restart_command"] = "lbctl restart --dir " + nativeShellQuote(diagnostics.Dir)
 	if err == nil {
 		state := "running"
 		if action == "stop" {

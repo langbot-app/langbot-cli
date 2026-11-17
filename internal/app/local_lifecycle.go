@@ -233,6 +233,7 @@ func (s *Service) Install(ctx context.Context, options InstallOptions) (Result, 
 		if record, ok := data["record"].(deploy.Record); ok {
 			installAutostartData(data, record, assets.Dir)
 			data["local_auth"] = deploy.SupportsLocalAuth(record.CoreVersion)
+			data["local_context"] = record.DeploymentID
 			if err := s.bindLocalAuth(operationCtx, record); err != nil {
 				return response, err
 			}
@@ -393,7 +394,8 @@ func (s *Service) Adopt(ctx context.Context, options AdoptOptions) (Result, erro
 			return Result{}, err
 		}
 	}
-	return Result{Data: map[string]any{"action": "adopt", "changed": changed, "record": record, "restart_required": restartRequired}}, nil
+	return Result{Data: map[string]any{"action": "adopt", "changed": changed, "record": record, "restart_required": restartRequired,
+		"restart_command": "lbctl restart --dir " + nativeShellQuote(dir)}}, nil
 }
 
 func (s *Service) Start(ctx context.Context, options LifecycleOptions) (Result, error) {
@@ -531,6 +533,7 @@ func (s *Service) runLifecycle(ctx context.Context, action string, options Lifec
 			if action == "start" {
 				changed, err := s.configureLocalAuth(operationCtx, diagnostics.Dir, current, true)
 				response.Data.(map[string]any)["restart_required"] = changed
+				response.Data.(map[string]any)["restart_command"] = "lbctl restart --dir " + nativeShellQuote(diagnostics.Dir)
 				return err
 			}
 			return nil

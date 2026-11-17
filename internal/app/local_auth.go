@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/langbot-app/langbot-cli/internal/config"
@@ -21,7 +22,7 @@ func (s *Service) configureLocalAuth(ctx context.Context, dir string, record dep
 		return false, result.New("precondition", err.Error())
 	}
 	if changed && running {
-		progress.Info(ctx, []string{i18n.T("Local API key configured; run lbctl restart to activate it")})
+		progress.Info(ctx, []string{fmt.Sprintf(i18n.T("Local API key configured; restart to activate: %s"), "lbctl restart --dir "+nativeShellQuote(dir))})
 	}
 	err = s.WithContext(ctx).update(func(file *config.File) error {
 		name := record.DeploymentID
@@ -145,6 +146,7 @@ func (s *Service) repairDockerInstall(ctx context.Context, dir string, record de
 		return s.bindLocalAuth(ctx, record)
 	})
 	data := map[string]any{"action": "install", "record": record, "changed": err == nil, "url": record.Endpoint, "local_auth": deploy.SupportsLocalAuth(record.CoreVersion)}
+	data["local_context"] = record.DeploymentID
 	if err == nil {
 		data["status"] = map[string]any{"status": "running"}
 		installAutostartData(data, record, dir)
