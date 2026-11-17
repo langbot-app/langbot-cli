@@ -90,6 +90,8 @@ jobs:
         shell: pwsh
         run: |
           $env:LANGBOT_HOME = "$env:RUNNER_TEMP/lang546-native-repeat"
+          $env:APPDATA = Join-Path $env:LANGBOT_HOME 'config'
+          New-Item -ItemType Directory -Force $env:APPDATA | Out-Null
           ./scripts/test-native-e2e.ps1
       - if: failure() && runner.os != 'Windows'
         run: lbctl uninstall --yes --output json
