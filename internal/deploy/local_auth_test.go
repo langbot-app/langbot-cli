@@ -90,13 +90,13 @@ func TestEnsureLocalAuth(t *testing.T) {
 	if changed, err := EnsureLocalAuth(context.Background(), dir, record, nil); err != nil || changed {
 		t.Fatal("ensure is not idempotent")
 	}
-	for _, version := range []string{"v4.10.2", "v3.4.0", "unknown"} {
+	for _, version := range []string{"v4.10.2", "v4.10.3", "v4.10.10", "v3.4.0", "unknown"} {
 		record.CoreVersion = version
 		if changed, err := EnsureLocalAuth(context.Background(), "missing", record, nil); err != nil || changed {
 			t.Fatalf("old version %s not skipped", version)
 		}
 	}
-	for _, version := range []string{"v4.10.3", "v4.11.7", "v5.0.0"} {
+	for _, version := range []string{"v4.10.11", "v4.11.7", "v5.0.0"} {
 		if !SupportsLocalAuth(version) {
 			t.Fatalf("supported version %s skipped", version)
 		}

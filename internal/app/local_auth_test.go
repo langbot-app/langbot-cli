@@ -49,7 +49,7 @@ func TestLocalAuthPreservesContextAndIsolatesInstances(t *testing.T) {
 			t.Fatal(err)
 		}
 		keys = append(keys, key)
-		if err := service.bindLocalAuth(context.Background(), record); err != nil {
+		if bound, err := service.bindLocalAuth(context.Background(), record); err != nil || !bound {
 			t.Fatal(err)
 		}
 		if _, err := service.WritePreflight(context.Background(), "bot.create", CheckOptions{Context: record.DeploymentID, ContextSet: true}); err != nil {
@@ -74,6 +74,12 @@ func TestLocalAuthPreservesContextAndIsolatesInstances(t *testing.T) {
 		file, _ := store.Load()
 		if file.Contexts[record.DeploymentID].Credential.Type != "env" || file.CurrentContext != "cloud" {
 			t.Fatal("automatic configuration replaced explicit selection")
+		}
+		auth := localAuthAttempt{service: service, dir: dir}
+		auth.bind(context.Background(), record)
+		response := auth.result(Result{Data: map[string]any{"local_auth": true}})
+		if response.Data.(map[string]any)["local_auth"] != false || auth.failed {
+			t.Fatal("skipped binding must not claim an automatic connection")
 		}
 	}
 	if keys[0] == keys[1] {

@@ -17,6 +17,7 @@ type localAuthAttempt struct {
 	service *Service
 	dir     string
 	failed  bool
+	bound   bool
 }
 
 func (auth *localAuthAttempt) configure(ctx context.Context, record deploy.Record) bool {
@@ -27,11 +28,18 @@ func (auth *localAuthAttempt) configure(ctx context.Context, record deploy.Recor
 
 func (auth *localAuthAttempt) bind(ctx context.Context, record deploy.Record) {
 	if !auth.failed && deploy.SupportsLocalAuth(record.CoreVersion) {
-		auth.failed = auth.service.bindLocalAuth(ctx, record) != nil
+		var err error
+		auth.bound, err = auth.service.bindLocalAuth(ctx, record)
+		auth.failed = err != nil
 	}
 }
 
 func (auth *localAuthAttempt) result(value Result) Result {
+	if data, ok := value.Data.(map[string]any); ok {
+		if _, exists := data["local_auth"]; exists {
+			data["local_auth"] = auth.bound && !auth.failed
+		}
+	}
 	if auth.failed {
 		data, ok := value.Data.(map[string]any)
 		if !ok {
@@ -46,7 +54,7 @@ func (auth *localAuthAttempt) result(value Result) Result {
 
 func (s *Service) configureLocalAuth(ctx context.Context, dir string, record deploy.Record) (bool, error) {
 	if !deploy.SupportsLocalAuth(record.CoreVersion) {
-		progress.Info(ctx, []string{i18n.T("Automatic API authentication requires Core v4.10.3 or newer; skipped")})
+		progress.Info(ctx, []string{i18n.T("Automatic API authentication requires Core v4.10.11 or newer; skipped")})
 		return false, nil
 	}
 	changed, err := deploy.EnsureLocalAuth(ctx, dir, record, s.localRunner())
@@ -78,34 +86,34 @@ func (s *Service) configureLocalAuth(ctx context.Context, dir string, record dep
 	return changed, err
 }
 
-func (s *Service) bindLocalAuth(ctx context.Context, record deploy.Record) error {
+func (s *Service) bindLocalAuth(ctx context.Context, record deploy.Record) (bool, error) {
 	file, err := s.load()
 	if err != nil {
-		return err
+		return false, err
 	}
 	selected, exists := file.Contexts[record.DeploymentID]
 	if !exists || selected.Credential == nil || selected.Credential.Type != "local_deployment" {
-		return nil
+		return false, nil
 	}
 	lookup := func(string) (string, bool) { return "", false }
 	connection, err := config.Resolve(file, config.Options{Context: record.DeploymentID, ContextSet: true}, lookup)
 	if err != nil {
-		return err
+		return false, err
 	}
 	connection, err = connection.WithCredential(config.Options{}, lookup, nil)
 	if err != nil {
-		return err
+		return false, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	identity, err := s.identity(ctx, connection)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if err := workspaceBindingError(connection, identity); err != nil {
-		return err
+		return false, err
 	}
-	return s.WithContext(ctx).update(func(file *config.File) error {
+	err = s.WithContext(ctx).update(func(file *config.File) error {
 		current, exists := file.Contexts[record.DeploymentID]
 		if !exists || current.Endpoint != selected.Endpoint || current.Credential == nil || *current.Credential != *selected.Credential || current.ExpectedWorkspaceUUID != selected.ExpectedWorkspaceUUID {
 			return result.New("precondition", i18n.T("Local context changed during authentication"))
@@ -114,6 +122,7 @@ func (s *Service) bindLocalAuth(ctx context.Context, record deploy.Record) error
 		file.Contexts[record.DeploymentID] = current
 		return nil
 	})
+	return err == nil, err
 }
 
 func (s *Service) ShowAPIKey(ctx context.Context, options CheckOptions) (string, error) {
