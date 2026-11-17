@@ -23,16 +23,17 @@ const upgradeTimeout = 20 * time.Minute
 // Compose healthchecks only report their first result after the configured
 // interval (30s in the official Compose file), so services read as "starting"
 // for a while after Core already answers HTTP. Poll until they settle instead
-// of failing an otherwise successful upgrade on the first snapshot.
+// of failing an otherwise successful upgrade, start or restart on the first
+// snapshot.
 var (
-	upgradeServiceReadyTimeout = 3 * time.Minute
-	upgradeServicePollInterval = 2 * time.Second
+	composeServiceReadyTimeout = 3 * time.Minute
+	composeServicePollInterval = 2 * time.Second
 )
 
-func waitForUpgradedServices(ctx context.Context, status func(context.Context) (deploy.StatusResult, error)) (deploy.StatusResult, error) {
-	deadline := time.NewTimer(upgradeServiceReadyTimeout)
+func waitForComposeServices(ctx context.Context, status func(context.Context) (deploy.StatusResult, error)) (deploy.StatusResult, error) {
+	deadline := time.NewTimer(composeServiceReadyTimeout)
 	defer deadline.Stop()
-	ticker := time.NewTicker(upgradeServicePollInterval)
+	ticker := time.NewTicker(composeServicePollInterval)
 	defer ticker.Stop()
 	for {
 		current, err := status(ctx)
@@ -330,7 +331,7 @@ func (s *Service) Upgrade(ctx context.Context, options UpgradeOptions) (response
 		if err := s.waitForLocalVersion(operationCtx, current, targetVersion); err != nil {
 			return fail("http_version", i18n.T("Target HTTP health or version verification failed"))
 		}
-		finalStatus, finalErr := waitForUpgradedServices(operationCtx, diagnostics.Status)
+		finalStatus, finalErr := waitForComposeServices(operationCtx, diagnostics.Status)
 		if finalErr != nil || finalStatus.Status != "running" {
 			return fail("service_health", i18n.T("Not all required target services are ready"))
 		}
