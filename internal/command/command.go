@@ -24,6 +24,7 @@ import (
 	"github.com/langbot-app/langbot-cli/internal/result"
 	"github.com/langbot-app/langbot-cli/internal/telemetry"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 type Dependencies struct {
@@ -103,7 +104,7 @@ func Execute(ctx context.Context, args []string, deps Dependencies) int {
 	verbose := flags.verbose
 	restoreLanguage := i18n.UseMode(lang, machine)
 	defer restoreLanguage()
-	if deps.NoticeHome != "" {
+	if deps.NoticeHome != "" && noticeVisible(deps, selected, args) {
 		var notice bytes.Buffer
 		_ = i18n.FirstRun(deps.NoticeHome, &notice, lang)
 		flags.notice, flags.noticeMachine = notice.String(), machine
@@ -1927,4 +1928,18 @@ func enrichResult(deps Dependencies, flags *globalFlags, value app.Result, err e
 func hasEnvironmentConfig(deps Dependencies) bool {
 	_, ok := deps.LookupEnv("LANGBOT_CONFIG")
 	return ok
+}
+
+// noticeVisible reports whether the one-time terms notice can reach a person.
+// Help requests and stderr redirected away from a terminal (for example the
+// installer's `lbctl install --help 2>/dev/null` capability probe) must not
+// consume the notice, otherwise the user never sees it.
+func noticeVisible(deps Dependencies, selected *cobra.Command, args []string) bool {
+	if hasHelpFlag(args) || selected != nil && selected.Name() == "help" {
+		return false
+	}
+	if file, ok := deps.Err.(*os.File); ok && !term.IsTerminal(int(file.Fd())) {
+		return false
+	}
+	return true
 }
