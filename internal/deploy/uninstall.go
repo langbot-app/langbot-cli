@@ -16,6 +16,9 @@ func PurgeData(dir string, record Record) (bool, string, error) {
 	if err != nil {
 		return false, "", err
 	}
+	if err := ValidatePurgeData(dir, current); err != nil {
+		return false, current.DataDir, err
+	}
 	dataDir := filepath.Clean(current.DataDir)
 	info, err := os.Lstat(dataDir)
 	if errors.Is(err, os.ErrNotExist) {
@@ -32,12 +35,31 @@ func PurgeData(dir string, record Record) (bool, string, error) {
 		return false, "", err
 	}
 	if err := os.RemoveAll(quarantine); err != nil {
-		return true, quarantine, err
+		return false, quarantine, err
 	}
 	return true, "", nil
 }
 
 func ValidatePurgeData(dir string, record Record) error {
+	current, err := validatedPurgeRecord(dir, record)
+	if err != nil {
+		return err
+	}
+	return filepath.WalkDir(current.DataDir, func(path string, entry fs.DirEntry, walkErr error) error {
+		if errors.Is(walkErr, os.ErrNotExist) && path == current.DataDir {
+			return nil
+		}
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			return errors.New(i18n.T("Data directory contains symbolic links; refusing automatic cleanup"))
+		}
+		return nil
+	})
+}
+
+func ValidatePurgeTarget(dir string, record Record) error {
 	_, err := validatedPurgeRecord(dir, record)
 	return err
 }
@@ -60,21 +82,6 @@ func validatedPurgeRecord(dir string, record Record) (Record, error) {
 	}
 	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return Record{}, errors.New(i18n.T("Data directory is missing, not a directory or a symbolic link"))
-	}
-	if err := filepath.WalkDir(dataDir, func(path string, entry fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		info, err := os.Lstat(path)
-		if err != nil {
-			return err
-		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			return errors.New(i18n.T("Data directory contains symbolic links; refusing automatic cleanup"))
-		}
-		return nil
-	}); err != nil {
-		return Record{}, err
 	}
 	quarantine := filepath.Join(dir, ".purge-data-"+current.DeploymentID)
 	if _, err := os.Lstat(quarantine); !errors.Is(err, os.ErrNotExist) {

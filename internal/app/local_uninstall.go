@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"time"
 
@@ -92,7 +93,7 @@ func (s *Service) Uninstall(ctx context.Context, options UninstallOptions) (Resu
 			return result.New("precondition", i18n.T("Local deployment binding changed"))
 		}
 		if options.PurgeData {
-			if err := deploy.ValidatePurgeData(diagnostics.Dir, current); err != nil {
+			if err := deploy.ValidatePurgeTarget(diagnostics.Dir, current); err != nil {
 				return result.New("precondition", err.Error())
 			}
 		}
@@ -123,13 +124,17 @@ func (s *Service) Uninstall(ctx context.Context, options UninstallOptions) (Resu
 		data["project_removed"] = true
 		if options.PurgeData {
 			telemetry.SetStep(ctx, "purge_data")
-			purged, recoveryPath, purgeErr := deploy.PurgeData(diagnostics.Dir, current)
+			purged, recoveryPath, purgeErr := deploy.PurgeDockerData(operationCtx, diagnostics.Runner, diagnostics.Dir, current)
 			data["data_purged"] = purged
 			if recoveryPath != "" {
 				data["recovery_path"] = recoveryPath
 			}
 			if purgeErr != nil {
-				return result.New("recovery_required", i18n.T("Data cleanup incomplete; inspect preserved cleanup state"))
+				if recoveryPath == "" {
+					recoveryPath = current.DataDir
+					data["recovery_path"] = recoveryPath
+				}
+				return result.New("recovery_required", fmt.Sprintf(i18n.T("Containers removed, but data cleanup failed. Preserved path: %s. Inspect and remove this directory with elevated permissions if necessary: %v"), recoveryPath, purgeErr))
 			}
 			if purged {
 				data["changed"] = true

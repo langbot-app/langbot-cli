@@ -55,6 +55,27 @@ func TestDefaultUninstallOutputIsConcise(t *testing.T) {
 	}
 }
 
+func TestUninstallPurgeSummaryFollowsDataPurged(t *testing.T) {
+	for _, test := range []struct {
+		purged bool
+		want   string
+	}{
+		{true, "已卸载本机受管部署并清理数据；备份和部署记录已保留"},
+		{false, "已卸载本机受管部署，但数据清理未完成；请查看上方保留路径"},
+	} {
+		var out bytes.Buffer
+		value := map[string]any{"ok": true, "data": map[string]any{
+			"action": "uninstall", "project_removed": true, "purge_data": true, "data_purged": test.purged,
+		}}
+		if err := RenderCommand(&out, value, FormatDefault, "uninstall"); err != nil {
+			t.Fatal(err)
+		}
+		if strings.TrimSpace(out.String()) != test.want {
+			t.Fatalf("data_purged=%v: %q", test.purged, out.String())
+		}
+	}
+}
+
 func TestHumanActionNeverConfusesPreflightOrSubmissionWithCompletion(t *testing.T) {
 	for _, test := range []struct {
 		data         map[string]any

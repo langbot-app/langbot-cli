@@ -2,8 +2,10 @@ package deploy
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -34,6 +36,59 @@ func TestPurgeDataRemovesOnlyManagedData(t *testing.T) {
 	purged, _, err = PurgeData(dir, record)
 	if err != nil || purged {
 		t.Fatalf("重复清理应保持幂等: %v, %v", purged, err)
+	}
+}
+
+func TestPurgeDockerRootOwnedData(t *testing.T) {
+	image := os.Getenv("LBCTL_DOCKER_TEST_IMAGE")
+	if image == "" {
+		t.Skip("set LBCTL_DOCKER_TEST_IMAGE for Docker integration")
+	}
+	if os.Geteuid() == 0 {
+		t.Fatal("Docker cleanup test must run as non-root")
+	}
+	for _, symlink := range []bool{false, true} {
+		t.Run(fmt.Sprintf("symlink=%v", symlink), func(t *testing.T) {
+			record, dir := upgradeFixture(t)
+			record.Asset.Name = image
+			record.CoreVersion = strings.TrimPrefix(image, ImageRepository(record)+":")
+			compose := composeAutostart([]byte(renderCompose(image, record.Port, filepath.Join(record.DataDir, "box"), defaultInstallPorts())), record.Autostart)
+			if err := os.WriteFile(record.ComposeFile, compose, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := (Store{Dir: dir}).Write(t.Context(), record); err != nil {
+				t.Fatal(err)
+			}
+			runner := DockerRunner{}
+			script := "import os; os.mkdir('/data/migration-backups', 0o700); open('/data/migration-backups/backup.db', 'w').write('backup')"
+			if symlink {
+				script += "; os.symlink('/etc', '/data/migration-backups/escape')"
+			}
+			output, err := runner.Docker(t.Context(), "run", "--rm", "--network", "none", "--user", "0:0", "--mount", "type=bind,src="+record.DataDir+",dst=/data", "--entrypoint", "python", image, "-c", script)
+			if err != nil {
+				t.Fatalf("create data: %v %s", err, output.Stderr)
+			}
+			t.Cleanup(func() {
+				_, err := runner.Docker(context.Background(), "run", "--rm", "--network", "none", "--user", "0:0", "--mount", "type=bind,src="+dir+",dst=/fixture", "--entrypoint", "python", image, "-c", "import shutil; shutil.rmtree('/fixture/data', ignore_errors=True)")
+				if err != nil {
+					t.Error(err)
+				}
+			})
+			if _, err := os.ReadDir(filepath.Join(record.DataDir, "migration-backups")); !os.IsPermission(err) {
+				t.Fatalf("expected unreadable root-owned data: %v", err)
+			}
+			if err := ValidatePurgeTarget(dir, record); err != nil {
+				t.Fatal(err)
+			}
+			purged, recovery, err := PurgeDockerData(t.Context(), runner, dir, record)
+			if symlink {
+				if err == nil || purged || recovery != record.DataDir || !strings.Contains(err.Error(), "symbolic links") {
+					t.Fatalf("purged=%v recovery=%s err=%v", purged, recovery, err)
+				}
+			} else if err != nil || !purged || recovery != "" {
+				t.Fatalf("purged=%v recovery=%s err=%v", purged, recovery, err)
+			}
+		})
 	}
 }
 
