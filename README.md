@@ -270,7 +270,7 @@ Human help groups commands by purpose, shows applicable and required flags, and 
 
 ```sh
 lbctl bot list --filter my-bot
-lbctl bot get <bot-id>             # Follow use_pipeline_uuid with pipeline get
+lbctl bot get <bot-id>             # Follow event_bindings to the bound Agent or Pipeline
 lbctl model list --type llm --provider <provider-id>
 lbctl model list --filter deepseek -o json
 lbctl bot update --help            # Minimal body example and preflight scope
@@ -377,12 +377,20 @@ lbctl skill preview <name>
 lbctl skill file list <name>
 lbctl skill file read <name> <path>
 lbctl skill file write <name> <path> --file content.md
+lbctl skill file write <name> <path> --file content.md --base-revision <revision>
+lbctl skill package get <name> -O skill.zip
 lbctl skill install github --file skill.yaml
 lbctl skill install upload --file skill.zip
+lbctl skill install upload --dir ./my-skill --dry-run
+lbctl skill install upload --dir ./my-skill
 lbctl skill delete <name> --yes
 ```
 
 Skill installation with `--dry-run` uses a server-side preview. Plugin installation, upgrade, and deletion support `--wait` to follow asynchronous tasks.
+
+`skill install upload --dir` packages a local directory, including relative paths and hidden files. It skips `.git`, rejects symbolic links, and enforces the 10 MB ZIP upload limit. Choose one of `--file` and `--dir`.
+
+Skill reads include `revision` when provided by Core. For edits based on a previous read, pass that revision with `--base-revision` for file writes or `base_revision` in an update request. A conflict preserves the server content and returns `skill_revision_conflict`. Read the latest content, merge your changes, and retry with the latest revision. Omitted revisions use a fresh read before writing. `skill package get -O` saves the ZIP and replaces an existing destination file.
 
 GitHub plugin requests include `owner`, `repo`, `release_tag`, and either `release_id`/`asset_id` or `asset_url`. For URL input, the CLI queries the GitHub release and submits the same ID-based request as WebUI. GitHub metadata requests are separate from Workspace authentication; dry-run performs preflight checks. Example:
 
@@ -556,12 +564,14 @@ Runtime-record queries require `resource.view`. Lists support `--limit 1..500` a
 
 ## Sandbox configuration and diagnostics
 
-Workspace sandbox configuration uses Core's `workspace.sandbox.get/update/check/test` capabilities:
+Workspace sandbox configuration uses Core's `workspace.sandbox.get/update/reset/check/test` capabilities.
 
 ```sh
 lbctl sandbox config get --refresh
 lbctl sandbox config update --file sandbox.yaml --dry-run
 lbctl sandbox config update --file sandbox.yaml --yes
+lbctl sandbox config reset --dry-run
+lbctl sandbox config reset --yes
 lbctl sandbox config check --file e2b.yaml --e2b-api-key-env E2B_API_KEY
 lbctl --timeout 2m sandbox config test --file e2b.yaml --e2b-api-key-env E2B_API_KEY --yes
 ```
@@ -579,7 +589,9 @@ Updates accept `backend: docker/e2b/nsjail`, with optional `e2b` and `limits`. E
 
 A check/test draft such as `e2b.yaml` contains `{"e2b":{"api_url":"https://api.example.com","sandbox_url":"https://sandbox.example.com","template":"base"}}`. Omit the file to use Core's current E2B configuration. `check` neither saves nor creates a sandbox. Explicit `test --yes` consumes E2B capacity and may incur charges: Core creates a temporary sandbox, executes a validation command, and cleans it up. HTTP 200 alone is not success; unconfirmed creation, execution, or cleanup exits nonzero with backend diagnostics retained. The CLI does not retry these operations automatically.
 
-Queries require `workspace.view`. Updates, checks, and tests require `workspace.update` and a saved, Workspace-bound context. Updates also require `workspace.view` and the get capability for independent readback verification. Hidden key values remain unverified; only their configured status is visible. Saved settings apply to new tasks; existing tasks and MCP connections retain their configuration snapshots.
+`reset --yes` clears the Workspace backend, E2B credentials, and resource-limit overrides so new tasks inherit deployment defaults. It reads the configuration back to verify the reset. `reset --dry-run` checks prerequisites.
+
+Queries require `workspace.view`. Updates, resets, checks, and tests require `workspace.update` and a saved, Workspace-bound context. Updates and resets also require `workspace.view` and the get capability for independent readback verification. Hidden key values remain unverified; only their configured status is visible. Saved settings apply to new tasks; existing tasks and MCP connections retain their configuration snapshots.
 
 Limits include `timeout_sec`, `idle_ttl_sec`, `max_sessions`, `cpus`, `memory_mb`, `pids_limit`, and `workspace_quota_mb`. Inspect `limit_caps`, per-backend `limit_capabilities`, and deployment policy with `config get`. The CLI checks advertised support and upper bounds while Core remains authoritative for configuration semantics. `--dry-run` neither saves nor creates a test sandbox and does not guarantee full server-side validation. These commands require matching Core routes and Box SDK/Runtime support; older versions return capability or compatibility errors.
 
@@ -606,7 +618,10 @@ lbctl agent runs list <agent-uuid>
 lbctl monitoring executions --file filters.json
 lbctl op stream <streaming-operation-id> --file input.json --yes
 lbctl agent debug <agent-uuid> --file debug.json --yes
+lbctl agent debug <agent-uuid> --message 'Hello' --yes
 ```
+
+`agent debug --message` sends text as `payload.text`. Choose one of `--message` and `--file`.
 
 `op call` accepts an optional JSON/YAML object via `--file path` or `--file -`, defaulting to `{}`; `op stream` requires `--file`. Generic calls obtain risk and execution mode from `op describe`; catalog-hidden IDs already registered by this CLI use their built-in contracts. Unknown hidden IDs remain unavailable. Writes and high/dangerous-risk operations require interactive confirmation or `--yes`. Friendly commands use their registered operation contracts and the same confirmation rule. Writes require a saved, Workspace-bound context. Stdin cannot simultaneously supply a request body, an API key, or a confirmation answer. Streams emit each event immediately in the selected format, then a completion result; errors or disconnection before `done` fail without retrying.
 

@@ -4,6 +4,8 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,7 +15,10 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
+
+	"go.yaml.in/yaml/v3"
 )
 
 type operationTransport func(*http.Request) (*http.Response, error)
@@ -28,13 +33,18 @@ func operationCLI(t *testing.T, server *httptest.Server, input string, arguments
 
 func operationCLITransport(t *testing.T, server *httptest.Server, input string, transport http.RoundTripper, arguments ...string) (int, string) {
 	t.Helper()
+	return operationCLIContext(t, context.Background(), server, input, transport, arguments...)
+}
+
+func operationCLIContext(t *testing.T, ctx context.Context, server *httptest.Server, input string, transport http.RoundTripper, arguments ...string) (int, string) {
+	t.Helper()
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	configuration := fmt.Sprintf("version: 1\ncurrent_context: test\ncontexts:\n  test:\n    endpoint: %s\n    expected_workspace_uuid: workspace\n    credential:\n      type: env\n      name: TEST_KEY\n", server.URL)
 	if err := os.WriteFile(path, []byte(configuration), 0600); err != nil {
 		t.Fatal(err)
 	}
 	var output bytes.Buffer
-	code := executeChinese(context.Background(), append([]string{"--config", path, "-o", "json"}, arguments...), Dependencies{
+	code := executeChinese(ctx, append([]string{"--config", path, "-o", "json"}, arguments...), Dependencies{
 		In: strings.NewReader(input), Out: &output, Err: &output, Version: "test",
 		Transport: transport,
 		LookupEnv: func(name string) (string, bool) {
@@ -42,6 +52,422 @@ func operationCLITransport(t *testing.T, server *httptest.Server, input string, 
 		},
 	})
 	return code, output.String()
+}
+
+func decodeOperationStream(t *testing.T, output, format string) []map[string]any {
+	t.Helper()
+	var decoder interface{ Decode(any) error } = json.NewDecoder(strings.NewReader(output))
+	if format == "yaml" {
+		decoder = yaml.NewDecoder(strings.NewReader(output))
+	}
+	envelopes := []map[string]any{}
+	for {
+		var envelope map[string]any
+		err := decoder.Decode(&envelope)
+		if err == io.EOF {
+			return envelopes
+		}
+		if err != nil {
+			t.Fatalf("invalid %s stream output %q: %v", format, output, err)
+		}
+		envelopes = append(envelopes, envelope)
+	}
+}
+
+func TestAgentDebugMessageAndFileInputsUseExistingStream(t *testing.T) {
+	message := " 你好，Agent🙂\n第二行\n "
+	for _, test := range []struct{ name, source, format string }{
+		{"Unicode multiline JSON", "message", "json"},
+		{"Unicode multiline YAML", "message", "yaml"},
+		{"message with credential stdin", "message-key-stdin", "json"},
+		{"complex event JSON stdin", "file", "json"},
+		{"complex event YAML file", "yaml-file", "yaml"},
+		{"generic stream complex event", "generic", "json"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			want := map[string]any{"agent_uuid": "agent", "payload": map[string]any{"text": message}}
+			args := []string{"agent", "debug", "agent", "--yes", "-o", test.format}
+			input := ""
+			switch test.source {
+			case "message":
+				args = append(args, "--message", message)
+			case "message-key-stdin":
+				args = append(args, "--message", message, "--api-key-stdin")
+				input = "test-secret\n"
+			default:
+				want["payload"] = map[string]any{"event_type": "custom.event", "event_data": map[string]any{"text": "复杂事件", "count": float64(2)}, "event_context": map[string]any{"user_id": "user-a"}}
+				encoded, err := json.Marshal(want)
+				if err != nil {
+					t.Fatal(err)
+				}
+				input = string(encoded)
+				filename := "-"
+				if test.source == "yaml-file" {
+					encoded, err := yaml.Marshal(want)
+					if err != nil {
+						t.Fatal(err)
+					}
+					filename = filepath.Join(t.TempDir(), "event.yaml")
+					if err := os.WriteFile(filename, encoded, 0o600); err != nil {
+						t.Fatal(err)
+					}
+					input = ""
+				}
+				if test.source == "generic" {
+					args = []string{"op", "stream", "agent.debug.stream", "--yes", "-o", test.format}
+				}
+				args = append(args, "--file", filename)
+			}
+			var streamCalls atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				if request.Header.Get("X-API-Key") != "test-secret" || request.Header.Get("Authorization") != "" {
+					t.Error("Agent debug lost the API credential")
+				}
+				if operationPreflight(writer, request, true) {
+					return
+				}
+				if request.Method == http.MethodGet {
+					fmt.Fprint(writer, `{"id":"agent.debug.stream","risk":"write","permission":"runtime.operate","streaming":true}`)
+					return
+				}
+				if request.Method != http.MethodPost || request.URL.Path != "/api/v1/operations/agent.debug.stream/stream" {
+					t.Errorf("unexpected Agent debug request %s %s", request.Method, request.URL.Path)
+					writer.WriteHeader(http.StatusNotFound)
+					return
+				}
+				streamCalls.Add(1)
+				var body map[string]any
+				if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+					t.Error(err)
+				}
+				if !reflect.DeepEqual(body, want) {
+					t.Errorf("Agent debug body = %#v, want %#v", body, want)
+				}
+				writer.Header().Set("Content-Type", "text/event-stream")
+				fmt.Fprint(writer, "data: {\"kind\":\"result\",\"data\":{\"text\":\"回应🙂\"}}\n\nevent: done\ndata: {}\n\n")
+			}))
+			defer server.Close()
+			code, output := operationCLI(t, server, input, args...)
+			envelopes := decodeOperationStream(t, output, test.format)
+			if code != 0 || streamCalls.Load() != 1 || len(envelopes) != 2 {
+				t.Fatalf("code=%d stream calls=%d output=%s", code, streamCalls.Load(), output)
+			}
+			first, last := envelopes[0], envelopes[1]
+			if first["ok"] != true || first["data"].(map[string]any)["data"].(map[string]any)["text"] != "回应🙂" || last["ok"] != true || last["data"].(map[string]any)["completed"] != true {
+				t.Fatalf("Agent debug stream envelopes = %#v", envelopes)
+			}
+		})
+	}
+}
+
+func TestAgentDebugValidatesSourcesAndUsesExistingAuthorization(t *testing.T) {
+	for _, test := range []struct {
+		name, input      string
+		flags            []string
+		code, requests   int
+		permissionDenied bool
+	}{
+		{name: "missing source", flags: []string{"--yes"}, code: 2},
+		{name: "empty message", flags: []string{"--message", "", "--yes"}, code: 2},
+		{name: "blank message", flags: []string{"--message", " \n\u2003", "--yes"}, code: 2},
+		{name: "empty file", flags: []string{"--file", "", "--yes"}, code: 2},
+		{name: "both sources", flags: []string{"--message", "hello", "--file", "-", "--yes"}, input: "invalid JSON", code: 2},
+		{name: "explicit empty message with file", flags: []string{"--message", "", "--file", "-", "--yes"}, input: `{}`, code: 2},
+		{name: "stdin conflict", flags: []string{"--file", "-", "--api-key-stdin", "--yes"}, input: `{}`, code: 2},
+		{name: "message confirmation", flags: []string{"--message", "hello"}, code: 6, requests: 2},
+		{name: "file confirmation", flags: []string{"--file", "-"}, input: `{"payload":{"text":"hello"}}`, code: 6, requests: 2},
+		{name: "runtime permission", flags: []string{"--message", "hello", "--yes"}, code: 4, requests: 2, permissionDenied: true},
+		{name: "file identity mismatch", flags: []string{"--file", "-", "--yes"}, input: `{"agent_uuid":"other","payload":{"text":"hello"}}`, code: 2},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var requests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				requests.Add(1)
+				if test.permissionDenied && request.URL.Path == "/api/v1/system/context" {
+					fmt.Fprint(writer, `{"code":0,"data":{"instance_uuid":"instance","workspace_uuid":"workspace","api_key_id":"key","permissions":["resource.view"]}}`)
+					return
+				}
+				if operationPreflight(writer, request, true) {
+					return
+				}
+				t.Errorf("invalid Agent debug request reached Core: %s %s", request.Method, request.URL.Path)
+				writer.WriteHeader(http.StatusInternalServerError)
+			}))
+			defer server.Close()
+			args := append([]string{"agent", "debug", "agent"}, test.flags...)
+			code, output := operationCLI(t, server, test.input, args...)
+			envelopes := decodeOperationStream(t, output, "json")
+			if code != test.code || int(requests.Load()) != test.requests || len(envelopes) != 1 || envelopes[0]["ok"] != false {
+				t.Fatalf("code=%d requests=%d output=%s", code, requests.Load(), output)
+			}
+		})
+	}
+}
+
+type cancelAfterResponseRead struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (body cancelAfterResponseRead) Read(data []byte) (int, error) {
+	n, err := body.ReadCloser.Read(data)
+	if n > 0 {
+		body.cancel()
+	}
+	return n, err
+}
+
+func TestAgentDebugCancellationAndTimeoutDoNotRetry(t *testing.T) {
+	for _, mode := range []string{"cancel", "timeout"} {
+		t.Run(mode, func(t *testing.T) {
+			var streamCalls atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				if operationPreflight(writer, request, true) {
+					return
+				}
+				if request.Method != http.MethodPost || request.URL.Path != "/api/v1/operations/agent.debug.stream/stream" {
+					t.Errorf("unexpected Agent debug request %s %s", request.Method, request.URL.Path)
+					writer.WriteHeader(http.StatusNotFound)
+					return
+				}
+				streamCalls.Add(1)
+				writer.Header().Set("Content-Type", "text/event-stream")
+				fmt.Fprint(writer, "data: {\"kind\":\"result\",\"data\":{\"text\":\"partial\"}}\n\n")
+				writer.(http.Flusher).Flush()
+				<-request.Context().Done()
+			}))
+			defer server.Close()
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			var transport http.RoundTripper
+			args := []string{"agent", "debug", "agent", "--message", "hello", "--yes"}
+			if mode == "cancel" {
+				transport = operationTransport(func(request *http.Request) (*http.Response, error) {
+					response, err := http.DefaultTransport.RoundTrip(request)
+					if err == nil && strings.HasSuffix(request.URL.Path, "/stream") {
+						response.Body = cancelAfterResponseRead{ReadCloser: response.Body, cancel: cancel}
+					}
+					return response, err
+				})
+			} else {
+				args = append(args, "--timeout", "200ms")
+			}
+			code, output := operationCLIContext(t, ctx, server, "", transport, args...)
+			envelopes := decodeOperationStream(t, output, "json")
+			if code != 7 || streamCalls.Load() != 1 || len(envelopes) != 2 {
+				t.Fatalf("code=%d stream calls=%d output=%s", code, streamCalls.Load(), output)
+			}
+			last := envelopes[len(envelopes)-1]
+			if last["ok"] != false || last["data"].(map[string]any)["completed"] != false || last["error"].(map[string]any)["type"] != "network" {
+				t.Fatalf("interrupted Agent debug output = %#v", last)
+			}
+		})
+	}
+}
+
+func TestSkillPackageDownloadWritesArchiveAndRetainsPublicationMetadata(t *testing.T) {
+	var archive bytes.Buffer
+	zipWriter := zip.NewWriter(&archive)
+	file, err := zipWriter.Create("SKILL.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.WriteString(file, "# Demo\n\nInstructions.\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := zipWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	encoded := base64.StdEncoding.EncodeToString(archive.Bytes())
+	checksum := fmt.Sprintf("%x", sha256.Sum256(archive.Bytes()))
+	for _, test := range []struct{ outputFlag, format string }{{"", "json"}, {"-O", "json"}, {"--out-file", "json"}, {"-O", "yaml"}} {
+		t.Run("flag="+test.outputFlag+"/format="+test.format, func(t *testing.T) {
+			calls := 0
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				if operationPreflight(writer, request, true) {
+					return
+				}
+				if request.Method != http.MethodPost || request.URL.Path != "/api/v1/operations/skill.package.get" {
+					t.Errorf("unexpected request %s %s", request.Method, request.URL.Path)
+					writer.WriteHeader(http.StatusNotFound)
+					return
+				}
+				calls++
+				var body map[string]any
+				if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+					t.Error(err)
+				}
+				if !reflect.DeepEqual(body, map[string]any{"skill_name": "demo", "revision": "sha256:r1"}) {
+					t.Errorf("package request body = %#v", body)
+				}
+				fmt.Fprintf(writer, `{"code":0,"data":{"content":%q,"revision":"sha256:r1","sha256":%q,"filename":"demo.zip","manifest":{"name":"demo"}}}`, encoded, checksum)
+			}))
+			defer server.Close()
+			destination := filepath.Join(t.TempDir(), "demo.zip")
+			args := []string{"skill", "package", "get", "demo", "--file", "-", "-o", test.format}
+			if test.outputFlag != "" {
+				if err := os.WriteFile(destination, []byte("previous package"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				args = append(args, test.outputFlag, destination)
+			}
+			code, output := operationCLI(t, server, `{"revision":"sha256:r1"}`, args...)
+			var envelope struct {
+				OK   bool           `json:"ok" yaml:"ok"`
+				Data map[string]any `json:"data" yaml:"data"`
+			}
+			unmarshal := json.Unmarshal
+			if test.format == "yaml" {
+				unmarshal = yaml.Unmarshal
+			}
+			if err := unmarshal([]byte(output), &envelope); err != nil {
+				t.Fatalf("invalid structured output %q: %v", output, err)
+			}
+			if code != 0 || !envelope.OK || calls != 1 {
+				t.Fatalf("code=%d calls=%d output=%s", code, calls, output)
+			}
+			data := envelope.Data
+			if data["revision"] != "sha256:r1" || data["sha256"] != checksum || data["filename"] != "demo.zip" || data["manifest"].(map[string]any)["name"] != "demo" {
+				t.Fatalf("publication metadata = %#v", data)
+			}
+			if test.outputFlag == "" {
+				if data["content"] != encoded || data["file"] != nil || data["bytes"] != nil {
+					t.Fatalf("default package response changed: %#v", data)
+				}
+				return
+			}
+			if data["file"] != destination || fmt.Sprint(data["bytes"]) != fmt.Sprint(archive.Len()) || data["content"] != nil {
+				t.Fatalf("saved package output = %#v", data)
+			}
+			saved, err := os.ReadFile(destination)
+			if err != nil || !bytes.Equal(saved, archive.Bytes()) {
+				t.Fatalf("package bytes changed: %v", err)
+			}
+			entries, err := os.ReadDir(filepath.Dir(destination))
+			if err != nil || len(entries) != 1 || entries[0].Name() != "demo.zip" {
+				t.Fatalf("package output left temporary files: %#v, error=%v", entries, err)
+			}
+		})
+	}
+}
+
+func TestSkillPackageDownloadFailurePreservesDestination(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		content     any
+		destination string
+		wantCode    int
+		wantType    string
+	}{
+		{name: "invalid base64", content: "YWJj!!", wantCode: 8, wantType: "incompatible"},
+		{name: "missing content", wantCode: 2, wantType: "input"},
+		{name: "wrong content type", content: 123, wantCode: 2, wantType: "input"},
+		{name: "missing parent directory", content: "YWJj", destination: "missing", wantCode: 2, wantType: "input"},
+		{name: "destination is directory", content: "YWJj", destination: "directory", wantCode: 2, wantType: "input"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				if operationPreflight(writer, request, true) {
+					return
+				}
+				payload := map[string]any{"revision": "sha256:r1"}
+				if test.content != nil {
+					payload["content"] = test.content
+				}
+				json.NewEncoder(writer).Encode(map[string]any{"code": 0, "data": payload})
+			}))
+			defer server.Close()
+			directory := t.TempDir()
+			original := filepath.Join(directory, "demo.zip")
+			if err := os.WriteFile(original, []byte("previous package"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			destination := original
+			switch test.destination {
+			case "missing":
+				destination = filepath.Join(directory, "missing", "demo.zip")
+			case "directory":
+				destination = directory
+			}
+			code, output := operationCLI(t, server, "", "skill", "package", "get", "demo", "-O", destination)
+			var envelope struct {
+				OK    bool `json:"ok"`
+				Error struct {
+					Type string `json:"type"`
+				} `json:"error"`
+			}
+			if err := json.Unmarshal([]byte(output), &envelope); err != nil {
+				t.Fatalf("invalid structured output %q: %v", output, err)
+			}
+			if code != test.wantCode || envelope.OK || envelope.Error.Type != test.wantType {
+				t.Fatalf("code=%d output=%s", code, output)
+			}
+			saved, err := os.ReadFile(original)
+			if err != nil || string(saved) != "previous package" {
+				t.Fatalf("failed download changed previous package: %q, error=%v", saved, err)
+			}
+			entries, err := os.ReadDir(directory)
+			if err != nil || len(entries) != 1 || entries[0].Name() != "demo.zip" {
+				t.Fatalf("failed download left files: %#v, error=%v", entries, err)
+			}
+		})
+	}
+}
+
+type cancelOnResponseClose struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (body cancelOnResponseClose) Close() error {
+	err := body.ReadCloser.Close()
+	body.cancel()
+	return err
+}
+
+func TestSkillPackageDownloadCancellationPreservesDestination(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if operationPreflight(writer, request, true) {
+			return
+		}
+		fmt.Fprint(writer, `{"code":0,"data":{"content":"YWJj","revision":"sha256:r1"}}`)
+	}))
+	defer server.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	transport := operationTransport(func(request *http.Request) (*http.Response, error) {
+		response, err := http.DefaultTransport.RoundTrip(request)
+		if err == nil && request.URL.Path == "/api/v1/operations/skill.package.get" {
+			response.Body = cancelOnResponseClose{ReadCloser: response.Body, cancel: cancel}
+		}
+		return response, err
+	})
+	directory := t.TempDir()
+	destination := filepath.Join(directory, "demo.zip")
+	if err := os.WriteFile(destination, []byte("previous package"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	code, output := operationCLIContext(t, ctx, server, "", transport, "skill", "package", "get", "demo", "-O", destination)
+	var envelope struct {
+		OK    bool `json:"ok"`
+		Error struct {
+			Type string `json:"type"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(output), &envelope); err != nil {
+		t.Fatalf("invalid structured output %q: %v", output, err)
+	}
+	if code != 7 || envelope.OK || envelope.Error.Type != "network" {
+		t.Fatalf("cancelled download code=%d output=%s", code, output)
+	}
+	saved, err := os.ReadFile(destination)
+	if err != nil || string(saved) != "previous package" {
+		t.Fatalf("cancelled download changed previous package: %q, error=%v", saved, err)
+	}
+	entries, err := os.ReadDir(directory)
+	if err != nil || len(entries) != 1 || entries[0].Name() != "demo.zip" {
+		t.Fatalf("cancelled download left files: %#v, error=%v", entries, err)
+	}
 }
 
 func operationPreflight(writer http.ResponseWriter, request *http.Request, supported bool) bool {

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -1604,11 +1605,17 @@ func (s *Service) SkillUpdate(ctx context.Context, name string, body map[string]
 	if body == nil {
 		return Result{}, result.New("input", i18n.T("Skill request body must be a JSON object"))
 	}
-	if err := validateBodyFields(body, "name", "display_name", "description", "instructions"); err != nil {
+	if err := validateBodyFields(body, "name", "display_name", "description", "instructions", "base_revision"); err != nil {
 		return Result{}, err
 	}
-	if len(body) == 0 {
+	_, hasRevision := body["base_revision"]
+	if len(body) == 0 || (len(body) == 1 && hasRevision) {
 		return Result{}, result.New("input", i18n.T("Skill update contains no editable fields"))
+	}
+	if revision, exists := body["base_revision"]; exists {
+		if value, ok := revision.(string); !ok || strings.TrimSpace(value) == "" {
+			return Result{}, result.New("input", i18n.T("Skill base_revision must be a non-empty string"))
+		}
 	}
 	if value, exists := body["name"]; exists {
 		bodyName, ok := value.(string)
@@ -1621,8 +1628,13 @@ func (s *Service) SkillUpdate(ctx context.Context, name string, body map[string]
 		return Result{Meta: preflight.Meta()}, err
 	}
 	client, target := s.writeClient(preflight)
-	if _, err := client.SkillGet(ctx, target, name); err != nil {
+	current, err := client.SkillGet(ctx, target, name)
+	if err != nil {
 		return Result{Meta: preflight.Meta()}, err
+	}
+	body = maps.Clone(body)
+	if revision, ok := current["revision"].(string); !hasRevision && ok && strings.TrimSpace(revision) != "" {
+		body["base_revision"] = revision
 	}
 	if dryRun {
 		plan := writePlan(preflight, "skill.update", "")
@@ -1684,7 +1696,10 @@ func (s *Service) SkillDelete(ctx context.Context, name string, confirmed, dryRu
 	return Result{Data: data, Meta: preflight.Meta()}, verificationError(i18n.T("Skill is still readable after deletion"))
 }
 
-func (s *Service) SkillFileWrite(ctx context.Context, name, path, content string, dryRun bool, options CheckOptions) (Result, error) {
+func (s *Service) SkillFileWrite(ctx context.Context, name, path, content string, dryRun bool, options CheckOptions, baseRevision ...string) (Result, error) {
+	if len(baseRevision) > 1 {
+		return Result{}, result.New("input", i18n.T("Skill file write accepts at most one base_revision"))
+	}
 	if err := api.ValidateResourceID(name); err != nil {
 		return Result{}, err
 	}
@@ -1696,8 +1711,13 @@ func (s *Service) SkillFileWrite(ctx context.Context, name, path, content string
 		return Result{Meta: preflight.Meta()}, err
 	}
 	client, target := s.writeClient(preflight)
-	if _, err := client.SkillGet(ctx, target, name); err != nil {
+	current, err := client.SkillGet(ctx, target, name)
+	if err != nil {
 		return Result{Meta: preflight.Meta()}, err
+	}
+	revision, _ := current["revision"].(string)
+	if len(baseRevision) == 1 && strings.TrimSpace(baseRevision[0]) != "" {
+		revision = baseRevision[0]
 	}
 	if dryRun {
 		plan := writePlan(preflight, "skill.files.write", "")
@@ -1706,7 +1726,7 @@ func (s *Service) SkillFileWrite(ctx context.Context, name, path, content string
 		data["path"] = path
 		return plan, nil
 	}
-	if _, err := client.SkillFileWrite(ctx, target, name, path, content); err != nil {
+	if _, err := client.SkillFileWrite(ctx, target, name, path, content, revision); err != nil {
 		return Result{Meta: preflight.Meta()}, err
 	}
 	file, matches, err := client.SkillFileMatches(ctx, target, name, path, content)
@@ -2551,7 +2571,7 @@ func (s *Service) writePreflight(ctx context.Context, operation, permission stri
 		return WritePreflight{Connection: conn, Identity: identity}, result.New("permission", i18n.T("Current API Key lacks ")+permission+i18n.T(" permission"))
 	}
 	readPermission := "resource.view"
-	if operation == "workspace.sandbox.update" {
+	if operation == "workspace.sandbox.update" || operation == "workspace.sandbox.reset" {
 		readPermission = "workspace.view"
 	} else if operation == "workspace.sandbox.check" || operation == "workspace.sandbox.test" {
 		readPermission = ""
@@ -2580,7 +2600,7 @@ func (s *Service) writePreflight(ctx context.Context, operation, permission stri
 
 func readbackCapability(operation string) string {
 	switch {
-	case operation == "workspace.sandbox.update":
+	case operation == "workspace.sandbox.update" || operation == "workspace.sandbox.reset":
 		return "workspace.sandbox.get"
 	case strings.HasPrefix(operation, "bot."):
 		return "bot.get"

@@ -243,7 +243,7 @@ lbctl upgrade --version <newer-vX.Y.Z> --yes -o json
 
 ```sh
 lbctl bot list --filter my-bot
-lbctl bot get <bot-id>             # 查看 use_pipeline_uuid，再用 pipeline get 查看关联配置
+lbctl bot get <bot-id>             # 根据 event_bindings 查看关联的 Agent 或 Pipeline
 lbctl model list --type llm --provider <provider-id>
 lbctl model list --filter deepseek -o json
 lbctl bot update --help            # 查看最小请求体示例和预检说明
@@ -350,12 +350,20 @@ lbctl skill preview <name>
 lbctl skill file list <name>
 lbctl skill file read <name> <path>
 lbctl skill file write <name> <path> --file content.md
+lbctl skill file write <name> <path> --file content.md --base-revision <revision>
+lbctl skill package get <name> -O skill.zip
 lbctl skill install github --file skill.yaml
 lbctl skill install upload --file skill.zip
+lbctl skill install upload --dir ./my-skill --dry-run
+lbctl skill install upload --dir ./my-skill
 lbctl skill delete <name> --yes
 ```
 
 Skill 安装的 `--dry-run` 调用服务端预览，不产生安装。Plugin 安装、升级和删除可用 `--wait` 跟踪异步任务。
+
+`skill install upload --dir` 将本地目录打包，保留相对路径和普通隐藏文件，跳过 `.git`，拒绝符号链接，并按现有 10 MB ZIP 上传上限检查。`--file` 和 `--dir` 选择其中一项。
+
+Core 提供修订号时，Skill 查询会返回 `revision`。基于先前读取内容编辑时，文件写入可传 `--base-revision`，更新请求可带 `base_revision`。发生冲突返回 `skill_revision_conflict`，请读取最新内容、合并修改，再携最新修订号重试。省略修订号时，CLI 在写入前读取当前修订。`skill package get -O` 保存 ZIP 并覆盖已有目标文件。
 
 GitHub 插件安装请求包含 `owner`、`repo`、`release_tag`，以及 `release_id`/`asset_id` 或 `asset_url`。链接输入会由 CLI 查询 GitHub release 并转换成与 WebUI 一致的 ID 请求；GitHub 查询与 Workspace 鉴权分离，dry-run 执行前置检查。示例：
 
@@ -529,12 +537,14 @@ lbctl monitoring sessions --active true
 
 ## Sandbox 配置与诊断
 
-工作区沙箱配置使用 Core 的 `workspace.sandbox.get/update/check/test` 能力：
+工作区沙箱配置使用 Core 的 `workspace.sandbox.get/update/reset/check/test` 能力。
 
 ```sh
 lbctl sandbox config get --refresh
 lbctl sandbox config update --file sandbox.yaml --dry-run
 lbctl sandbox config update --file sandbox.yaml --yes
+lbctl sandbox config reset --dry-run
+lbctl sandbox config reset --yes
 lbctl sandbox config check --file e2b.yaml --e2b-api-key-env E2B_API_KEY
 lbctl --timeout 2m sandbox config test --file e2b.yaml --e2b-api-key-env E2B_API_KEY --yes
 ```
@@ -552,7 +562,9 @@ limits:
 
 `e2b.yaml` 的检查/测试请求形如 `{"e2b":{"api_url":"https://api.example.com","sandbox_url":"https://sandbox.example.com","template":"base"}}`；也可以省略文件，检查或测试服务端当前的 E2B 配置。`check` 不保存、不创建沙箱；显式 `test --yes` 会消耗 E2B 配额并可能计费，由 Core 创建临时沙箱、执行验证命令并清理。HTTP 200 不代表测试成功；创建、执行或清理未确认成功都会返回非零退出码并保留后端诊断。CLI 不自动重试这些操作。
 
-查询要求 `workspace.view`；保存、检查和测试要求 `workspace.update`，并沿用已保存且绑定 Workspace 的 context。保存还要求 `workspace.view` 和查询能力，以独立回读验证提交字段；隐藏密钥只确认是否已配置，不声称核对过实际值。保存仅影响新任务，既有任务和 MCP 连接保留原配置快照。
+`reset --yes` 清除工作区的后端、E2B 凭据和资源限额覆盖，让新任务继承部署默认值，并独立回读验证结果。`reset --dry-run` 检查执行前提。
+
+查询要求 `workspace.view`。保存、重置、检查和测试要求 `workspace.update`，并沿用已保存且绑定 Workspace 的 context。保存和重置还要求 `workspace.view` 和查询能力，以独立回读验证提交字段。隐藏密钥只确认是否已配置。保存仅影响新任务，既有任务和 MCP 连接保留原配置快照。
 
 限制字段包括 `timeout_sec`、`idle_ttl_sec`、`max_sessions`、`cpus`、`memory_mb`、`pids_limit`、`workspace_quota_mb`。先用 `config get` 查看 `limit_caps`、各后端的 `limit_capabilities` 和平台策略；CLI 按服务端上限及支持能力检查，最终配置语义由 Core 决定。`--dry-run` 不保存或创建测试沙箱，也不代表完整的服务端业务校验已通过。本功能要求具备对应接口的 Core 及配套 Box SDK/Runtime；旧版本会返回能力或兼容性错误。
 
@@ -579,7 +591,10 @@ lbctl agent runs list <agent-uuid>
 lbctl monitoring executions --file filters.json
 lbctl op stream <streaming-operation-id> --file input.json --yes
 lbctl agent debug <agent-uuid> --file debug.json --yes
+lbctl agent debug <agent-uuid> --message '你好' --yes
 ```
+
+`agent debug --message` 将文本作为 `payload.text` 发送。`--message` 和 `--file` 选择其中一项。
 
 `op call` 的 `--file path|-` 可选，接受 JSON/YAML 对象，默认 `{}`；`op stream` 必须提供 `--file`。通用调用从 `op describe` 获取风险与执行模式；目录隐藏但 CLI 已登记的 ID 使用内置契约，未知隐藏 ID 仍不可调用。write/high/dangerous 操作交互时确认，非交互时必须 `--yes`。友好命令使用登记的操作契约并遵循相同确认规则。写操作要求保存且绑定 Workspace 的 context；请求体、API Key 和确认答案不能同时读取 stdin。SSE 每收到事件即按选定格式输出，最后输出完成结果；错误或未收到 `done` 就断开连接会失败，不自动重试。
 

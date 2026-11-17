@@ -929,6 +929,7 @@ func newSkillCommand(service *app.Service, deps Dependencies, flags *globalFlags
 			return service.SkillUpdate(cmd.Context(), args[0], body, updateDryRun, connectionOptions(flags))
 		})
 	}}
+	update.Example = i18n.T("  lbctl skill get demo -o json\n  # edit.yaml = {\"instructions\":\"Updated instructions\",\"base_revision\":\"<revision>\"}\n  lbctl skill update demo --file edit.yaml --dry-run\n  lbctl skill update demo --file edit.yaml")
 	update.Flags().StringVar(&updateFile, "file", "", i18n.T("JSON/YAML request body file; use - to read stdin"))
 	update.Flags().BoolVar(&updateDryRun, "dry-run", false, i18n.T("Check prerequisites without writing"))
 	command.AddCommand(update)
@@ -957,9 +958,12 @@ func newSkillCommand(service *app.Service, deps Dependencies, flags *globalFlags
 			return service.SkillFileRead(cmd.Context(), args[0], args[1], connectionOptions(flags))
 		})
 	}})
-	var contentFile string
+	var contentFile, baseRevision string
 	var fileDryRun bool
 	fileWrite := &cobra.Command{Use: "write <name> <path>", Short: i18n.T("Write a Skill file"), Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
+		if cmd.Flags().Changed("base-revision") && strings.TrimSpace(baseRevision) == "" {
+			return emitCommand(deps, flags, app.Result{}, result.New("input", i18n.T("Skill base_revision must be a non-empty string")))
+		}
 		if err := requestbody.ValidateSources(contentFile, flags.apiKeyStdin); err != nil {
 			return emitCommand(deps, flags, app.Result{}, err)
 		}
@@ -968,10 +972,12 @@ func newSkillCommand(service *app.Service, deps Dependencies, flags *globalFlags
 			return emitCommand(deps, flags, app.Result{}, err)
 		}
 		return emitCall(deps, flags, func() (app.Result, error) {
-			return service.SkillFileWrite(cmd.Context(), args[0], args[1], content, fileDryRun, connectionOptions(flags))
+			return service.SkillFileWrite(cmd.Context(), args[0], args[1], content, fileDryRun, connectionOptions(flags), baseRevision)
 		})
 	}}
+	fileWrite.Example = "  lbctl skill file read demo SKILL.md -o json\n  lbctl skill file write demo SKILL.md --file content.md --base-revision <revision>"
 	fileWrite.Flags().StringVar(&contentFile, "file", "", i18n.T("Content file; use - to read stdin"))
+	fileWrite.Flags().StringVar(&baseRevision, "base-revision", "", i18n.T("Base revision from skill get or skill file read; omitted uses the current revision"))
 	fileWrite.Flags().BoolVar(&fileDryRun, "dry-run", false, i18n.T("Check prerequisites without writing"))
 	fileCommand.AddCommand(fileWrite)
 	command.AddCommand(fileCommand)
@@ -999,16 +1005,24 @@ func newSkillCommand(service *app.Service, deps Dependencies, flags *globalFlags
 	install.AddCommand(github)
 
 	var sourcePaths []string
-	var uploadFile string
+	var uploadFile, uploadDirectory string
 	var uploadDryRun bool
-	upload := &cobra.Command{Use: "upload", Short: i18n.T("Install a Skill from ZIP"), Args: cobra.NoArgs,
+	upload := &cobra.Command{Use: "upload", Short: i18n.T("Install a Skill from ZIP or a local directory"), Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if (uploadFile == "") == (uploadDirectory == "") {
+				return emitCommand(deps, flags, app.Result{}, result.New("input", i18n.T("Provide exactly one --file or --dir")))
+			}
 			return emitCall(deps, flags, func() (app.Result, error) {
+				if uploadDirectory != "" {
+					return service.SkillInstallDirectory(cmd.Context(), uploadDirectory, sourcePaths, uploadDryRun, connectionOptions(flags))
+				}
 				return service.SkillInstallUpload(cmd.Context(), uploadFile, sourcePaths, uploadDryRun, connectionOptions(flags))
 			})
 		},
 	}
+	upload.Example = "  lbctl skill install upload --dir ./my-skill --dry-run\n  lbctl skill install upload --dir ./my-skill\n  lbctl skill install upload --file skill.zip"
 	upload.Flags().StringVar(&uploadFile, "file", "", i18n.T("Skill ZIP file"))
+	upload.Flags().StringVar(&uploadDirectory, "dir", "", i18n.T("Local Skill directory; packaged as ZIP before upload"))
 	upload.Flags().StringSliceVar(&sourcePaths, "source-path", nil, i18n.T("Skill package source_paths; repeatable"))
 	upload.Flags().BoolVar(&uploadDryRun, "dry-run", false, i18n.T("Use server preview without installing"))
 	install.AddCommand(upload)

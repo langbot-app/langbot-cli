@@ -299,13 +299,14 @@ func flagEnum(command, flag string) []string {
 }
 
 var commandExamples = map[string]string{
+	"agent.debug":    "  lbctl agent debug <agent-uuid> --message 'Hello' --yes\n  lbctl agent debug <agent-uuid> --file debug.json --yes",
 	"context.list":   "  lbctl context list\n  lbctl context list --discover\n  lbctl --config ./config.yaml context list",
 	"context.show":   "  lbctl context show\n  lbctl context show production",
 	"context.add":    "  lbctl context add local --endpoint http://127.0.0.1:5300 --api-key-env LANGBOT_API_KEY\n  lbctl --context local whoami\n  lbctl context update local --expect-workspace <workspace-id>\n  lbctl context use local",
 	"context.use":    "  lbctl context use local\n  lbctl status\n  lbctl bot list",
 	"schema":         "  lbctl schema --summary\n  lbctl schema --command bot\n  lbctl schema --command 'bot update'",
 	"bot.list":       "  lbctl bot list\n  lbctl bot list --filter LangBot\n  lbctl bot list -o json",
-	"bot.get":        i18n.Source("  lbctl bot get <bot-id>\n  # Inspect the pipeline referenced by use_pipeline_uuid\n  lbctl pipeline get <pipeline-id>"),
+	"bot.get":        i18n.Source("  lbctl bot get <bot-id>\n  # Inspect event_bindings for the bound Agent or Pipeline\n  lbctl agent get <agent-id>\n  lbctl pipeline get <pipeline-id>"),
 	"bot.update":     i18n.Source("  # Minimal request.yaml: {\"name\":\"my-bot\"}\n  lbctl bot update <bot-id> --file request.yaml --dry-run\n  lbctl bot update <bot-id> --file request.yaml\n  # Get adapter_config before editing to preserve needed values; *** is redacted."),
 	"pipeline.apply": i18n.Source("  # Update example: {\"uuid\":\"<pipeline-id>\",\"name\":\"my-pipeline\"}\n  # Without uuid, creates a pipeline; config depends on the target Core version.\n  lbctl pipeline apply --file pipeline.yaml --dry-run\n  lbctl pipeline apply --file pipeline.yaml"),
 	"model.list":     "  lbctl model list --filter deepseek\n  lbctl model list --type llm --provider <provider-id>\n  lbctl model list -o json",

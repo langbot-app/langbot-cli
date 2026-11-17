@@ -164,6 +164,7 @@ var schemaMetaByName = map[string]schemaCommandMeta{
 	"sandbox.sessions":                  readMeta(operationIDs("sandbox.sessions")...),
 	"sandbox.errors":                    readMeta(operationIDs("sandbox.errors")...),
 	"sandbox.config.get":                readMeta(operationIDs("workspace.sandbox.get")...),
+	"sandbox.config.reset":              writeMeta(operationIDs("workspace.sandbox.reset"), schemaWriteOptions{SupportsDryRun: true, RequiresYes: true, Destructive: true, Readbacks: []schemaOperation{readbackID("workspace.sandbox.get")}}),
 	"sandbox.config.update":             writeMeta(operationIDs("workspace.sandbox.update"), schemaWriteOptions{SupportsDryRun: true, RequiresYes: true, RequiredFlags: []string{"file"}, Readbacks: []schemaOperation{readbackID("workspace.sandbox.get")}}),
 	"sandbox.config.check": func() schemaCommandMeta {
 		meta := readMeta(operationIDs("workspace.sandbox.check")...)
@@ -290,7 +291,12 @@ var schemaMetaByName = map[string]schemaCommandMeta{
 	"skill.file.write":     writeMeta(operationIDs("skill.files.write"), schemaWriteOptions{SupportsDryRun: true, RequiredFlags: []string{"file"}, Readbacks: []schemaOperation{readbackID("skill.files.read")}}),
 	"skill.preview":        readMeta(operationIDs("skill.preview")...),
 	"skill.install.github": writeMeta(operationIDs("skill.install.github"), schemaWriteOptions{SupportsDryRun: true, RequiredFlags: []string{"file"}}),
-	"skill.install.upload": writeMeta(operationIDs("skill.install.upload"), schemaWriteOptions{SupportsDryRun: true, RequiredFlags: []string{"file"}}),
+	"skill.install.upload": func() schemaCommandMeta {
+		meta := writeMeta(operationIDs("skill.install.upload"), schemaWriteOptions{SupportsDryRun: true})
+		meta.RequiredOneOf = [][]string{{"file", "dir"}}
+		meta.InputConflicts = []schemaConflict{{Operands: []schemaOperand{{Flag: "file", Present: true}, {Flag: "dir", Present: true}}, Reason: i18n.Source("Provide exactly one --file or --dir")}}
+		return meta
+	}(),
 
 	"mcp-server.list":               readMeta(operationIDs("mcp_server.list")...),
 	"mcp-server.get":                readMeta(operationIDs("mcp_server.get")...),

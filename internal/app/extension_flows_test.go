@@ -2,8 +2,10 @@ package app
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -255,6 +257,79 @@ func TestExtensionUploadSizeIsRejectedBeforeNetwork(t *testing.T) {
 	}
 	if calls.Load() != 0 {
 		t.Fatalf("network calls = %d", calls.Load())
+	}
+}
+
+func TestSkillDirectoryRejectsInvalidFilesBeforeNetwork(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		setup func(*testing.T, string) string
+	}{
+		{"empty", func(t *testing.T, directory string) string { return directory }},
+		{"git only", func(t *testing.T, directory string) string {
+			if err := os.Mkdir(filepath.Join(directory, ".git"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(directory, ".git", "config"), []byte("private"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			return directory
+		}},
+		{"linked directory", func(t *testing.T, directory string) string {
+			link := filepath.Join(t.TempDir(), "linked")
+			if err := os.Symlink(directory, link); err != nil {
+				t.Skipf("symlinks unavailable: %v", err)
+			}
+			return link
+		}},
+		{"linked file", func(t *testing.T, directory string) string {
+			target := filepath.Join(t.TempDir(), "outside.md")
+			if err := os.WriteFile(target, []byte("outside"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(target, filepath.Join(directory, "SKILL.md")); err != nil {
+				t.Skipf("symlinks unavailable: %v", err)
+			}
+			return directory
+		}},
+		{"oversized archive", func(t *testing.T, directory string) string {
+			file, err := os.Create(filepath.Join(directory, "random.bin"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer file.Close()
+			if _, err := io.CopyN(file, rand.Reader, maxExtensionUploadBytes+64*1024); err != nil {
+				t.Fatal(err)
+			}
+			if err := file.Close(); err != nil {
+				t.Fatal(err)
+			}
+			return directory
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			directory := test.setup(t, t.TempDir())
+			packages := t.TempDir()
+			for _, key := range []string{"TMPDIR", "TEMP", "TMP"} {
+				t.Setenv(key, packages)
+			}
+			var calls atomic.Int32
+			service := New(Dependencies{Transport: taskRoundTripFunc(func(*http.Request) (*http.Response, error) {
+				calls.Add(1)
+				return nil, errors.New("unexpected network request")
+			})})
+			_, err := service.SkillInstallDirectory(context.Background(), directory, nil, false, CheckOptions{})
+			if err == nil || result.AsError(err).Kind != "input" {
+				t.Fatalf("invalid directory error = %v", err)
+			}
+			if calls.Load() != 0 {
+				t.Fatalf("network calls = %d", calls.Load())
+			}
+			entries, err := os.ReadDir(packages)
+			if err != nil || len(entries) != 0 {
+				t.Fatalf("temporary packages leaked: %v, error = %v", entries, err)
+			}
+		})
 	}
 }
 

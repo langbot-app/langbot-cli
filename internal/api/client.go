@@ -136,6 +136,7 @@ var capabilityOperationIDs = []string{
 	"sandbox.errors",
 	"workspace.sandbox.get",
 	"workspace.sandbox.update",
+	"workspace.sandbox.reset",
 	"workspace.sandbox.check",
 	"workspace.sandbox.test",
 
@@ -813,7 +814,7 @@ func (c Client) SkillUpdate(ctx context.Context, target Target, name string, bod
 	}
 	resp, err := c.write(ctx, target, http.MethodPut, path, body)
 	if err != nil {
-		return nil, err
+		return nil, skillRevisionError(err)
 	}
 	skill, err := parseSkillResponse(resp, name, target.secret())
 	if err != nil {
@@ -831,7 +832,10 @@ func (c Client) SkillDelete(ctx context.Context, target Target, name string) err
 	return err
 }
 
-func (c Client) SkillFileWrite(ctx context.Context, target Target, name, filePath, content string) (any, error) {
+func (c Client) SkillFileWrite(ctx context.Context, target Target, name, filePath, content string, baseRevision ...string) (any, error) {
+	if len(baseRevision) > 1 {
+		return nil, result.New("input", i18n.T("Skill file write accepts at most one base_revision"))
+	}
 	if err := ValidateSkillFilePath(filePath, false); err != nil {
 		return nil, err
 	}
@@ -839,11 +843,27 @@ func (c Client) SkillFileWrite(ctx context.Context, target Target, name, filePat
 	if err != nil {
 		return nil, err
 	}
-	resp, err := c.write(ctx, target, http.MethodPut, path, map[string]any{"content": content})
+	body := map[string]any{"content": content}
+	if len(baseRevision) == 1 && strings.TrimSpace(baseRevision[0]) != "" {
+		body["base_revision"] = baseRevision[0]
+	}
+	resp, err := c.write(ctx, target, http.MethodPut, path, body)
 	if err != nil {
-		return nil, err
+		return nil, skillRevisionError(err)
 	}
 	return redactConnectionSecret(resp.Data, target.secret()), nil
+}
+
+func skillRevisionError(err error) error {
+	failure := result.AsError(err)
+	if failure.HTTPStatus != http.StatusConflict {
+		return err
+	}
+	conflict := *failure
+	conflict.Kind = "precondition"
+	conflict.Type = "skill_revision_conflict"
+	conflict.Message = i18n.T("Skill revision changed. Run lbctl skill get and lbctl skill file read to review the latest content, merge your changes, then retry with the latest base_revision")
+	return &conflict
 }
 
 // SkillInstallGitHub 安装 GitHub Skill，服务端同步返回安装结果。
@@ -1478,7 +1498,7 @@ func (c Client) doWithContentType(ctx context.Context, target Target, method, pa
 }
 
 func knownWritePath(method, path string) bool {
-	if method == http.MethodPut && path == workspaceSandboxPath || method == http.MethodPost && path == workspaceSandboxPath+"/test" {
+	if (method == http.MethodPut || method == http.MethodDelete) && path == workspaceSandboxPath || method == http.MethodPost && path == workspaceSandboxPath+"/test" {
 		return true
 	}
 	basePath, query, ok := splitWritePath(path)
@@ -2045,7 +2065,7 @@ func projectPlugin(value map[string]any, author, name, secret string) map[string
 }
 
 func projectSkillSummary(value map[string]any, secret string) map[string]any {
-	return projectScalarFields(value, []string{"name", "display_name", "description", "package_root", "created_at", "updated_at"}, secret)
+	return projectScalarFields(value, []string{"name", "display_name", "description", "package_root", "revision", "created_at", "updated_at"}, secret)
 }
 
 func parseSkillResponse(resp response, expectedName, secret string) (map[string]any, error) {
