@@ -81,7 +81,7 @@ func TestInstallAutostartHint(t *testing.T) {
 	defer i18n.Use(i18n.Chinese)()
 	var out bytes.Buffer
 	err := renderLocalAction(&out, map[string]any{"action": "install", "changed": true, "status": map[string]any{"status": "running"}, "autostart": true, "autostart_mechanism": "HKCU Run", "autostart_disable_command": "lbctl autostart disable --name 'mybot'"})
-	if err != nil || !strings.Contains(out.String(), "已开启开机/登录自启") || strings.Contains(out.String(), "Autostart enabled") || !strings.Contains(out.String(), "lbctl autostart disable --name 'mybot'") {
+	if err != nil || !strings.Contains(out.String(), "开机自启") || !strings.Contains(out.String(), "已开启 · 开机/登录后自动启动") || strings.Contains(out.String(), "Autostart enabled") || !strings.Contains(out.String(), "lbctl autostart disable --name 'mybot'") {
 		t.Fatalf("%s: %v", out.String(), err)
 	}
 }

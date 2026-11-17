@@ -509,14 +509,18 @@ func renderLocalAction(w io.Writer, data map[string]any) error {
 		if driver != "" {
 			instance += " · " + driver
 		}
+		rows := [][2]string{{"WebUI", displayCell(endpoint)}, {i18n.T("Instance"), instance}}
 		if enabled, ok := data["autostart"].(bool); ok {
-			message := i18n.T("Autostart disabled")
+			// Startup is called out on its own row so users notice that
+			// LangBot will come back by itself after a reboot or login.
+			message := i18n.T("Off · start it manually with lbctl start")
 			if enabled {
-				message = i18n.T("Autostart enabled")
+				message = "✓ " + i18n.T("On · starts automatically after boot/login (ready in about a minute)")
 			}
-			instance += " · " + message
+			rows = append(rows, [2]string{i18n.T("Start on boot"), message})
 		}
-		lines = append(lines, progress.Labels([][2]string{{"WebUI", displayCell(endpoint)}, {i18n.T("Instance"), instance}, {i18n.T("Directory"), displayCell(data["dir"])}, {i18n.T("Log"), "lbctl logs"}})...)
+		rows = append(rows, [2]string{i18n.T("Directory"), displayCell(data["dir"])}, [2]string{i18n.T("Log"), "lbctl logs"})
+		lines = append(lines, progress.Labels(rows)...)
 		lines = append(lines, "", i18n.T("Next steps"))
 		language := "en"
 		if data["autostart_note"] == "loginctl enable-linger" {
