@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"time"
 
 	"github.com/langbot-app/langbot-cli/internal/config"
@@ -35,7 +36,13 @@ func (s *Service) configureLocalAuth(ctx context.Context, dir string, record dep
 			selected.Credential = &config.Credential{Type: "local_deployment", Name: deploy.LocalKeyPath(dir)}
 		}
 		file.Contexts[name] = selected
-		if file.CurrentContext == "" {
+		selectCurrent := file.CurrentContext == ""
+		previous := file.Contexts[file.CurrentContext]
+		if previous.Credential != nil && previous.Credential.Type == "local_deployment" && sameLocalEndpoint(previous.Endpoint, record.Endpoint) {
+			retired, err := (deploy.Store{Dir: filepath.Dir(previous.Credential.Name)}).Read()
+			selectCurrent = err == nil && retired.Uninstalled && retired.DeploymentID == file.CurrentContext
+		}
+		if selectCurrent {
 			file.CurrentContext = name
 		}
 		return nil

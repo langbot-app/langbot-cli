@@ -80,3 +80,42 @@ func TestLocalAuthPreservesContextAndIsolatesInstances(t *testing.T) {
 		t.Fatal("instances share credentials")
 	}
 }
+
+func TestLocalAuthSelectsReplacementOfUninstalledInstance(t *testing.T) {
+	for _, retired := range []bool{false, true} {
+		t.Run(fmt.Sprint(retired), func(t *testing.T) {
+			root := t.TempDir()
+			oldDir := filepath.Join(root, "old")
+			old := deploy.Record{DeploymentID: "local-old", Driver: deploy.DriverNative, CoreVersion: "v4.11.7", Endpoint: "http://127.0.0.1:5300", Port: 5300, DataDir: filepath.Join(oldDir, "data"), Uninstalled: retired}
+			if err := (deploy.Store{Dir: oldDir}).Write(context.Background(), old); err != nil {
+				t.Fatal(err)
+			}
+			configPath := filepath.Join(root, "cli.yaml")
+			store := config.Store{Path: configPath}
+			if err := store.Update(context.Background(), func(file *config.File) error {
+				file.CurrentContext = old.DeploymentID
+				file.Contexts[old.DeploymentID] = config.Context{Endpoint: old.Endpoint, Credential: &config.Credential{Type: "local_deployment", Name: deploy.LocalKeyPath(oldDir)}}
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			newDir := filepath.Join(root, "new")
+			next := old
+			next.DeploymentID, next.DataDir, next.Uninstalled = "local-new", filepath.Join(newDir, "data"), false
+			if err := os.MkdirAll(next.DataDir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(next.DataDir, "config.yaml"), []byte("api: {}\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			service := New(Dependencies{DefaultConfigPath: func() (string, error) { return configPath, nil }})
+			if _, err := service.configureLocalAuth(context.Background(), newDir, next, false); err != nil {
+				t.Fatal(err)
+			}
+			file, err := store.Load()
+			if err != nil || (file.CurrentContext == next.DeploymentID) != retired || file.Contexts[old.DeploymentID].Credential.Name != deploy.LocalKeyPath(oldDir) {
+				t.Fatal("replacement selected an active context or changed its credential")
+			}
+		})
+	}
+}
