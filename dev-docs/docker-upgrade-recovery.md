@@ -18,6 +18,12 @@ calling it. It replaces the data tree, including removal of files created by the
 failed version. The backup stays read-only; host access to the live data is not
 required. Compose assets and the deployment record remain separate recovery steps.
 
+Backups intentionally normalize file modes to 0600 and directory modes to 0700;
+restored data is owned by root, matching the default container runtime user.
+Original permission bits and ownership are not preserved. If custom data includes
+executable scripts or files requiring other permissions, reapply those permissions
+inside the container before restarting the instance.
+
 Run `scripts/test-docker-e2e.sh` with an isolated `LANGBOT_HOME` as a non-root
 Docker-group user. It installs v4.11.7, creates a root-only data directory, upgrades
 to v4.11.8, checks backup contents and HTTP readiness, and stops its own deployment.

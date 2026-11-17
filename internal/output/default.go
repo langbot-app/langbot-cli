@@ -103,6 +103,13 @@ func renderDefaultError(w io.Writer, value any) error {
 		return err
 	}
 	message := displayCell(detail["message"])
+	if text, ok := detail["message"].(string); ok && text != "" {
+		lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
+		for index, line := range lines {
+			lines[index] = formatCell(line)
+		}
+		message = strings.Join(lines, "\n")
+	}
 	if message == "-" {
 		message = i18n.T("Operation failed")
 	}
