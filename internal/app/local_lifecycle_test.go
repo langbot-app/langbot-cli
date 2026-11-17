@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/langbot-app/langbot-cli/internal/deploy"
 	"github.com/langbot-app/langbot-cli/internal/result"
@@ -24,6 +25,10 @@ type lifecycleTestRunner struct {
 	state string
 	port  int
 	calls []string
+	// startingAfterUp makes ps report the runtime healthcheck as "starting"
+	// for this many polls after up/restart, like the official Compose file.
+	startingAfterUp int
+	startingPolls   int
 }
 
 func (r *lifecycleTestRunner) Docker(_ context.Context, args ...string) (deploy.CommandResult, error) {
@@ -61,19 +66,26 @@ func (r *lifecycleTestRunner) Compose(_ context.Context, _ deploy.Record, args .
 		return deploy.CommandResult{Stdout: fmt.Sprintf("0.0.0.0:%d\n", r.port)}, nil
 	case joined == "up -d":
 		r.state = "running"
+		r.startingPolls = r.startingAfterUp
 		return deploy.CommandResult{}, nil
 	case joined == "stop":
 		r.state = "stopped"
 		return deploy.CommandResult{}, nil
 	case joined == "restart":
 		r.state = "running"
+		r.startingPolls = r.startingAfterUp
 		return deploy.CommandResult{}, nil
 	case joined == "ps --format json":
 		state := "exited"
 		if r.state == "running" {
 			state = "running"
 		}
-		return deploy.CommandResult{Stdout: fmt.Sprintf(`[{"Name":"langbot","Service":"langbot","State":%q},{"Name":"runtime","Service":"langbot_plugin_runtime","State":%q}]`, state, state)}, nil
+		health := ""
+		if r.state == "running" && r.startingPolls > 0 {
+			r.startingPolls--
+			health = "starting"
+		}
+		return deploy.CommandResult{Stdout: fmt.Sprintf(`[{"Name":"langbot","Service":"langbot","State":%q},{"Name":"runtime","Service":"langbot_plugin_runtime","State":%q,"Health":%q}]`, state, state, health)}, nil
 	case strings.HasPrefix(joined, "logs "):
 		return deploy.CommandResult{Stdout: "first\nsecond\n"}, nil
 	default:
@@ -152,6 +164,46 @@ func TestInstallAndLifecycleCommands(t *testing.T) {
 	logs, err := service.LocalLogs(context.Background(), LocalLogsOptions{CheckOptions: options.CheckOptions, Tail: 20})
 	if err != nil || logs.Data.(map[string]any)["count"] != 2 {
 		t.Fatalf("LocalLogs() = %#v, %v", logs.Data, err)
+	}
+}
+
+func TestStartAndRestartWaitForComposeHealthchecks(t *testing.T) {
+	previousInterval := composeServicePollInterval
+	composeServicePollInterval = time.Millisecond
+	t.Cleanup(func() { composeServicePollInterval = previousInterval })
+	port := freeLifecyclePort(t)
+	root := t.TempDir()
+	dir := filepath.Join(root, "deployment")
+	runner := &lifecycleTestRunner{state: "stopped", port: port}
+	service := New(Dependencies{
+		LocalDir: dir, LocalLocatorPath: filepath.Join(root, "locator.yaml"), LocalRunner: runner,
+		Version:   "0.4.1",
+		Transport: lifecycleTransport{runner: runner}, LocalHTTP: &http.Client{Transport: lifecycleTransport{runner: runner}},
+		LatestRelease:     func(context.Context) (string, error) { return "v4.10.10", nil },
+		DefaultConfigPath: func() (string, error) { return filepath.Join(root, "config.yaml"), nil },
+	})
+	if _, err := service.Install(context.Background(), InstallOptions{ImageRepository: deploy.DefaultImageRepository, Profile: "basic", Port: port, PluginDebugPort: new(int), AdapterPorts: []string{"none"}}); err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	record, err := (deploy.Store{Dir: dir}).Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	options := LifecycleOptions{CheckOptions: CheckOptions{Endpoint: record.Endpoint, EndpointSet: true}}
+	runner.startingAfterUp = 3
+	restarted, err := service.Restart(context.Background(), options)
+	if err != nil || actionStatus(restarted) != "running" {
+		t.Fatalf("Restart() = %#v, %v", restarted.Data, err)
+	}
+	if _, err := service.Stop(context.Background(), options); err != nil {
+		t.Fatal(err)
+	}
+	started, err := service.Start(context.Background(), options)
+	if err != nil || actionStatus(started) != "running" {
+		t.Fatalf("Start() = %#v, %v", started.Data, err)
+	}
+	if runner.startingPolls != 0 {
+		t.Fatalf("starting polls left = %d", runner.startingPolls)
 	}
 }
 

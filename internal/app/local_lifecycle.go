@@ -511,12 +511,19 @@ func (s *Service) runLifecycle(ctx context.Context, action string, options Lifec
 		args := map[string][]string{"start": {"up", "-d"}, "stop": {"stop"}, "restart": {"restart"}}[action]
 		telemetry.SetStep(ctx, "compose_"+action)
 		command, commandErr := diagnostics.Runner.Compose(operationCtx, current, args...)
+		var after deploy.StatusResult
+		var statusErr error
 		if commandErr == nil && (action == "start" || action == "restart") {
 			_ = s.waitForLocalHTTP(operationCtx, current)
+			// Adopted official Compose files report healthchecks only after
+			// their interval, so services stay "starting" after HTTP is up.
+			after, statusErr = waitForComposeServices(operationCtx, diagnostics.Status)
 		}
-		readbackCtx, readbackCancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
-		defer readbackCancel()
-		after, statusErr := diagnostics.Status(readbackCtx)
+		if commandErr != nil || action == "stop" || operationCtx.Err() != nil {
+			readbackCtx, readbackCancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+			defer readbackCancel()
+			after, statusErr = diagnostics.Status(readbackCtx)
+		}
 		response = Result{Data: map[string]any{"action": action, "changed": true, "status": after}}
 		desired := after.Status == "running"
 		if action == "stop" {
@@ -656,7 +663,8 @@ func lifecycleTimeout(action string) time.Duration {
 	if action == "stop" {
 		return time.Minute
 	}
-	return 2 * time.Minute
+	// Leaves room for Core HTTP plus composeServiceReadyTimeout.
+	return 5 * time.Minute
 }
 
 func installPlanData(assets deploy.InstallAssets, checks []deploy.Check) map[string]any {
