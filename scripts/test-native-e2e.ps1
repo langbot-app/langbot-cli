@@ -79,6 +79,19 @@ try {
     $registryName = 'langbot-' + $install.record.deployment_id
     Assert-RunValue $true
     Assert-Health
+    Invoke-Lbctl @('whoami') | Out-Null
+    Invoke-Lbctl @('bot', 'list') | Out-Null
+    Invoke-Lbctl @('model', 'list') | Out-Null
+    $botDraft = Join-Path $env:LANGBOT_HOME 'bot.json'
+    Set-Content -Path $botDraft -Value '{}' -Encoding Ascii
+    & lbctl bot create --file $botDraft --dry-run --output json
+    if ($LASTEXITCODE -ne 0) { throw 'Automatic Workspace binding failed' }
+    $contextOutput = & lbctl context show --output json
+    if ($LASTEXITCODE -ne 0) { throw 'Local context unavailable' }
+    $apiKey = Get-Content -Raw (Join-Path $instanceDir '.api-key')
+    $configPath = if ($env:LANGBOT_CONFIG) { $env:LANGBOT_CONFIG } else { Join-Path $HOME '.config/langbot/config.yaml' }
+    if (-not $apiKey -or ($contextOutput -join "`n").Contains($apiKey) -or (Get-Content -Raw $configPath).Contains($apiKey)) { throw 'Unsafe local credential output' }
+    Write-Host 'Local API authentication and credential redaction verified'
     $status = Invoke-Lbctl @('autostart', 'status')
     if (-not $status.autostart -or $status.mechanism -ne 'HKCU Run') { throw 'Unexpected autostart status' }
     Invoke-Lbctl @('autostart', 'disable') | Out-Null

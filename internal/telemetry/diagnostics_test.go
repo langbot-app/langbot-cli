@@ -50,9 +50,12 @@ func TestFailureDiagnostics(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"install.log", "langbot.log"} {
-		if err := os.WriteFile(filepath.Join(dir, "logs", name), []byte(strings.Repeat("progress\n", 100)+"api_key: secret-value\n"+name), 0o600); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, "logs", name), []byte(strings.Repeat("progress\n", 100)+"api_key: secret-value\nplain-custom-local-key\n"+name), 0o600); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".api-key"), []byte("plain-custom-local-key"), 0o600); err != nil {
+		t.Fatal(err)
 	}
 	var mutex sync.Mutex
 	var events []Event
@@ -85,7 +88,7 @@ func TestFailureDiagnostics(t *testing.T) {
 			t.Fatal(operation.Event)
 		}
 		body, _ := json.Marshal(operation.Event)
-		if strings.Contains(string(body), "secret-value") || len(body) > diagnostic.EventLimit {
+		if strings.Contains(string(body), "secret-value") || strings.Contains(string(body), "plain-custom-local-key") || len(body) > diagnostic.EventLimit {
 			t.Fatalf("unsafe details: %s", body)
 		}
 		log := operation.Event.Details["log"].(map[string]any)

@@ -148,7 +148,17 @@ func (s *Service) installNative(ctx context.Context, options InstallOptions) (Re
 					return result.New("precondition", i18n.T("deployment changed"))
 				}
 				if deploy.NativeRunning(dir) {
-					return nil
+					changed, err := s.configureLocalAuth(ctx, dir, record, false)
+					if err != nil || !changed {
+						return err
+					}
+					if err := deploy.NativeStop(ctx, dir, record); err != nil {
+						return err
+					}
+					if err := deploy.NativeStart(ctx, dir, record); err != nil {
+						return err
+					}
+					return deploy.WaitNativeHealth(ctx, record, s.deps.LocalHTTP)
 				}
 			} else if err := deploy.ValidateInstallTarget(dir, true); err != nil {
 				return err
@@ -176,6 +186,9 @@ func (s *Service) installNative(ctx context.Context, options InstallOptions) (Re
 			if err := deploy.PrepareNative(ctx, dir, record, io.MultiWriter(progress.Output(ctx, s.nativeOutput()), installLog)); err != nil {
 				return err
 			}
+			if _, err := s.configureLocalAuth(ctx, dir, record, false); err != nil {
+				return err
+			}
 			telemetry.SetStep(ctx, "install_service")
 			if err := deploy.InstallNativeService(ctx, dir, record); err != nil {
 				return err
@@ -201,8 +214,12 @@ func (s *Service) installNative(ctx context.Context, options InstallOptions) (Re
 		data["record"] = saved
 	}
 	if err == nil {
+		err = s.bindLocalAuth(ctx, record)
+	}
+	if err == nil {
 		data["changed"] = true
 		data["status"] = map[string]any{"status": "running"}
+		data["local_auth"] = deploy.SupportsLocalAuth(record.CoreVersion)
 		installAutostartData(data, record, dir)
 	} else {
 		data["step"] = telemetry.CurrentStep(ctx)
@@ -246,6 +263,7 @@ func (s *Service) nativeLifecycle(ctx context.Context, diagnostics deploy.Diagno
 	progress.Plan(ctx, map[string]int{"start": 4, "stop": 3, "restart": 5}[action])
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
+	var restartRequired bool
 	err := deploy.WithMutationLock(ctx, diagnostics.Dir, func() error {
 		current, err := diagnostics.Store.Read()
 		if err != nil {
@@ -261,6 +279,12 @@ func (s *Service) nativeLifecycle(ctx context.Context, diagnostics deploy.Diagno
 			}
 		}
 		if action != "stop" {
+			running := action == "start" && deploy.NativeRunning(diagnostics.Dir)
+			changed, err := s.configureLocalAuth(ctx, diagnostics.Dir, current, running)
+			if err != nil {
+				return err
+			}
+			restartRequired = changed && running
 			telemetry.SetStep(ctx, "start_service")
 			if err := deploy.NativeStart(ctx, diagnostics.Dir, current); err != nil {
 				return err
@@ -270,7 +294,10 @@ func (s *Service) nativeLifecycle(ctx context.Context, diagnostics deploy.Diagno
 		}
 		return nil
 	})
-	data := map[string]any{"action": action, "record": record}
+	if err == nil && action != "stop" && !restartRequired {
+		err = s.bindLocalAuth(ctx, record)
+	}
+	data := map[string]any{"action": action, "record": record, "restart_required": restartRequired}
 	if err == nil {
 		state := "running"
 		if action == "stop" {

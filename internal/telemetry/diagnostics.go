@@ -33,12 +33,21 @@ func SetTools(ctx context.Context, uv, python string) {
 }
 
 func RecordCommand(ctx context.Context, args []string, exitCode int, stdout, stderr string) {
+	if private, _ := ctx.Value(privateCommandKey{}).(bool); private {
+		return
+	}
 	if op, ok := ctx.Value(operationKey{}).(*Operation); ok {
 		op.process = map[string]any{"command": filepath.Base(args[0]), "args": diagnostic.Args(args[1:]),
 			"exit_code": exitCode, "stdout": diagnostic.Tail(diagnostic.Text(stdout), 60, diagnostic.FieldLimit),
 			"stderr": diagnostic.Tail(diagnostic.Text(stderr), 60, diagnostic.FieldLimit)}
 		op.processStep = op.Event.Step
 	}
+}
+
+type privateCommandKey struct{}
+
+func PrivateCommand(ctx context.Context) context.Context {
+	return context.WithValue(ctx, privateCommandKey{}, true)
 }
 
 func RecordSource(ctx context.Context, address string) {
@@ -97,7 +106,11 @@ func (op *Operation) diagnostics() map[string]any {
 						data = []byte(tail)
 					}
 				}
-				details["log"] = map[string]any{"file": name, "tail": diagnostic.Tail(diagnostic.Text(string(data)), 80, diagnostic.FieldLimit)}
+				text := string(data)
+				if key, err := os.ReadFile(filepath.Join(op.dir, ".api-key")); err == nil && len(key) > 0 {
+					text = strings.ReplaceAll(text, string(key), "[redacted]")
+				}
+				details["log"] = map[string]any{"file": name, "tail": diagnostic.Tail(diagnostic.Text(text), 80, diagnostic.FieldLimit)}
 			}
 		}
 	}

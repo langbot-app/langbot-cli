@@ -193,7 +193,8 @@ func validateFile(file File) error {
 			return inputError(i18n.T("Invalid context endpoint"))
 		}
 		if item.Credential != nil {
-			if item.Credential.Type != "env" || !envPattern.MatchString(item.Credential.Name) {
+			if !(item.Credential.Type == "env" && envPattern.MatchString(item.Credential.Name)) &&
+				!(item.Credential.Type == "local_deployment" && filepath.IsAbs(item.Credential.Name)) {
 				return inputError(i18n.T("context credential must be a valid env reference"))
 			}
 		}

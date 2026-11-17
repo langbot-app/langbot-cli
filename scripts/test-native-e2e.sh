@@ -23,6 +23,21 @@ test "$(grep '^deployment_id:' "$record")" = "$identity"
 test "$(cat "$LANGBOT_HOME/instances/default/data/resume-marker")" = resume-preserved
 test -f "$LANGBOT_HOME/instances/default/venvs/v4.11.7/bin/python"
 printf 'Failed installation resumed: original identity, version and data preserved\n'
+lbctl whoami --output json
+lbctl bot list --output json
+lbctl model list --output json
+printf '{}\n' > "$LANGBOT_HOME/bot.json"
+lbctl bot create --file "$LANGBOT_HOME/bot.json" --dry-run --output json
+lbctl context show --output json > "$LANGBOT_HOME/context.json"
+python3 - <<'PY'
+import os, pathlib
+root = pathlib.Path(os.environ['LANGBOT_HOME'])
+key = (root / 'instances/default/.api-key').read_text()
+config = pathlib.Path(os.environ.get('LANGBOT_CONFIG', str(pathlib.Path.home() / '.config/langbot/config.yaml')))
+assert key and key not in config.read_text()
+assert key not in (root / 'context.json').read_text()
+print('Local API authentication and credential redaction verified')
+PY
 test "$(curl -s -o /dev/null -w '%{http_code}' "$endpoint/")" = 200
 printf 'WebUI HTTP 200\n'
 autostart=$(lbctl autostart status --output json)

@@ -191,6 +191,9 @@ func upgradeNative(ctx context.Context, dir string, current Record, version stri
 	telemetry.SetStep(ctx, "write_record")
 	err = store.Write(ctx, next)
 	if err == nil {
+		_, err = EnsureLocalAuth(ctx, dir, next, nil)
+	}
+	if err == nil {
 		telemetry.SetStep(ctx, "start_service")
 		err = operations.start(ctx, dir, next)
 	}

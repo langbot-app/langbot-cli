@@ -130,6 +130,13 @@ func (s *Service) Upgrade(ctx context.Context, options UpgradeOptions) (response
 			backup, err := deploy.UpgradeNative(operationCtx, diagnostics.Dir, current, targetVersion, s.nativeOutput(), s.deps.LocalHTTP)
 			data["backup_dir"] = backup
 			data["completed"] = err == nil
+			if err == nil {
+				current.CoreVersion = targetVersion
+				_, err = s.configureLocalAuth(operationCtx, diagnostics.Dir, current, false)
+				if err == nil {
+					err = s.bindLocalAuth(operationCtx, current)
+				}
+			}
 			return err
 		})
 		return Result{Data: data}, nativeMutationError(err)
@@ -309,6 +316,11 @@ func (s *Service) Upgrade(ctx context.Context, options UpgradeOptions) (response
 		if err := update("starting"); err != nil {
 			return err
 		}
+		authRecord := current
+		authRecord.CoreVersion = targetVersion
+		if _, err := s.configureLocalAuth(operationCtx, diagnostics.Dir, authRecord, false); err != nil {
+			return fail("local_auth", err.Error())
+		}
 		if _, err := diagnostics.Runner.Compose(operationCtx, current, "up", "-d", "--pull", "never"); err != nil {
 			return fail("compose_up", i18n.T("Failed to start the target version"))
 		}
@@ -330,6 +342,9 @@ func (s *Service) Upgrade(ctx context.Context, options UpgradeOptions) (response
 		}
 		if err := diagnostics.Store.Write(operationCtx, current); err != nil {
 			return fail("record_write", i18n.T("Failed to write target version deployment record"))
+		}
+		if err := s.bindLocalAuth(operationCtx, current); err != nil {
+			return fail("local_auth", err.Error())
 		}
 		if err := update("completed"); err != nil {
 			return err

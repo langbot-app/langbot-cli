@@ -20,10 +20,12 @@ import (
 )
 
 type lifecycleTestRunner struct {
-	mu    sync.Mutex
-	state string
-	port  int
-	calls []string
+	mu                   sync.Mutex
+	state                string
+	port                 int
+	calls                []string
+	startingPolls        int
+	startingAfterRestart int
 }
 
 func (r *lifecycleTestRunner) Docker(_ context.Context, args ...string) (deploy.CommandResult, error) {
@@ -32,6 +34,8 @@ func (r *lifecycleTestRunner) Docker(_ context.Context, args ...string) (deploy.
 	joined := strings.Join(args, " ")
 	r.calls = append(r.calls, "docker "+joined)
 	switch {
+	case strings.HasPrefix(joined, "run --rm --network none --user 0:0 --mount "):
+		return deploy.CommandResult{Stdout: "api: {}\n"}, nil
 	case joined == "--version":
 		return deploy.CommandResult{Stdout: "Docker version 29"}, nil
 	case strings.HasPrefix(joined, "info "):
@@ -67,8 +71,13 @@ func (r *lifecycleTestRunner) Compose(_ context.Context, _ deploy.Record, args .
 		return deploy.CommandResult{}, nil
 	case joined == "restart":
 		r.state = "running"
+		r.startingPolls = r.startingAfterRestart
 		return deploy.CommandResult{}, nil
 	case joined == "ps --format json":
+		if r.startingPolls > 0 {
+			r.startingPolls--
+			return deploy.CommandResult{Stdout: `[{"Service":"langbot","State":"running","Health":"starting"},{"Service":"langbot_plugin_runtime","State":"running","Health":"starting"}]`}, nil
+		}
 		state := "exited"
 		if r.state == "running" {
 			state = "running"
@@ -105,7 +114,7 @@ func (t lifecycleTransport) RoundTrip(*http.Request) (*http.Response, error) {
 	if edition == "" {
 		edition = "community"
 	}
-	body := fmt.Sprintf(`{"code":0,"data":{"version":"v4.10.10","edition":%q,"instance_uuid":"instance-local","workspace_uuid":"workspace-local","api_key_id":"key-local","permissions":[]},"msg":"ok"}`, edition)
+	body := fmt.Sprintf(`{"code":0,"data":{"version":"v4.10.10","edition":%q,"instance_uuid":"instance-local","workspace_uuid":"workspace-local","api_key_id":"key-local","permissions":[],"schema_version":1,"operations":{}},"msg":"ok"}`, edition)
 	return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
 }
 
@@ -113,7 +122,7 @@ func TestInstallAndLifecycleCommands(t *testing.T) {
 	port := freeLifecyclePort(t)
 	root := t.TempDir()
 	dir := filepath.Join(root, "deployment")
-	runner := &lifecycleTestRunner{state: "stopped", port: port}
+	runner := &lifecycleTestRunner{state: "stopped", port: port, startingAfterRestart: 2}
 	service := New(Dependencies{
 		LocalDir: dir, LocalLocatorPath: filepath.Join(root, "locator.yaml"), LocalRunner: runner,
 		Version:   "0.4.1",
@@ -246,7 +255,10 @@ func TestAdoptRequiresLocalEndpointAndMatchingPublishedPort(t *testing.T) {
 	port := freeLifecyclePort(t)
 	root := t.TempDir()
 	composeFile := filepath.Join(root, "compose.yaml")
-	if err := os.WriteFile(composeFile, []byte("services: {}\n"), 0o600); err != nil {
+	if err := os.WriteFile(composeFile, []byte("services:\n  langbot:\n    image: rockchin/langbot:v4.10.10\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "data"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	runner := &lifecycleTestRunner{state: "running", port: port}

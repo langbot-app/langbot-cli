@@ -86,9 +86,15 @@ The Go baseline is 1.26. Run the compiled binary directly; deployment management
 
 ## Configure remote instances
 
-Provide the API Key through an environment variable or one-time stdin input. Configuration is selected in this order: `--config`, `LANGBOT_CONFIG`, then `~/.config/langbot/config.yaml`. It stores the variable name rather than the key itself. `context list`, `context show`, `status`, and `doctor` display the selected configuration path. Without a name, `context show` inspects the current context. Offline credential availability only means the variable is set; use `context check` or `whoami` to verify authentication.
+Local installations connect automatically: `lbctl install` creates a per-instance API key and a `local-…` context, so `lbctl whoami`, `lbctl bot list`, and `lbctl model list` work without WebUI setup. After startup, the authenticated Workspace is bound to the context so resource writes retain the usual permission and identity checks. The first context becomes current; use `lbctl context use <name>` to switch between instances. Existing contexts, including Cloud connections, keep their selection and explicit credential settings.
 
-Create a Workspace API Key in the target LangBot dashboard's API Key management after initial setup. Authenticated commands detect missing credentials and show the selected environment variable, hidden-input PowerShell/Bash examples, and a same-target `whoami` verification step. JSON/YAML includes `error.reason` and `error.guidance`; the error type remains `auth` with exit code 3. A rejected key is reported separately from an unset variable; the CLI never prompts automatically or saves the key.
+For remote services, provide the API Key through an environment variable or one-time stdin input. Configuration is selected in this order: `--config`, `LANGBOT_CONFIG`, then `~/.config/langbot/config.yaml`. It stores a credential reference rather than the key itself. `context list`, `context show`, `status`, and `doctor` display the selected configuration path. Without a name, `context show` inspects the current context. Offline credential availability does not verify authentication; use `context check` or `whoami`.
+
+Automatic local authentication requires Core **v4.10.3+**, the first release containing `api.global_api_key` (v4.10.2 lacks it). Keys use 32 cryptographically random bytes and are stored in Core's `data/config.yaml` and a separate owner-only `.api-key` file in the deployment directory (0600 on Unix; the user's directory ACL on Windows). The lbctl config stores only a `local_deployment` file reference. Existing nonempty global keys are reused. `start`, `restart`, and `upgrade` configure older installations when starting them; repeated installation also repairs authentication. `adopt` never restarts services: when it adds a key, run `lbctl restart` as prompted. Docker-owned configuration is accessed through a short-lived container without host sudo; adopted Compose files remain unchanged.
+
+To intentionally reveal the selected key for an MCP client or another local tool, run `lbctl auth show-key --yes`. This prints the raw key; do not share or capture it in public logs. Ordinary commands redact it. After manually rotating Core's key, restart with lbctl to refresh the local credential.
+
+For remote services, create a Workspace API Key in the target LangBot dashboard's API Key management after initial setup. Authenticated commands detect missing credentials and show the selected environment variable, hidden-input PowerShell/Bash examples, and a same-target `whoami` verification step. JSON/YAML includes `error.reason` and `error.guidance`; the error type remains `auth` with exit code 3. A rejected key is reported separately from an unset variable; the CLI never prompts automatically for a remote key.
 
 First discover the Workspace associated with the key:
 
@@ -134,7 +140,7 @@ Connection settings follow this precedence, with validation of the selected targ
 |---|---|
 | Context | `--context` → `LANGBOT_CONTEXT` → current context |
 | Endpoint | `--endpoint` → `LANGBOT_ENDPOINT` → context configuration |
-| Key | `--api-key-stdin` → `LANGBOT_API_KEY` → context environment variable reference |
+| Key | `--api-key-stdin` → `LANGBOT_API_KEY` → context credential (`--api-key-env` reference or automatic local deployment) |
 | Timeout | `--timeout` → `LANGBOT_TIMEOUT` → context configuration → 30s |
 
 Use `--api-key-stdin` for a single invocation and `--file -` separately for request-body input. Temporary endpoints support controlled reads; resource writes use a saved, Workspace-bound context.

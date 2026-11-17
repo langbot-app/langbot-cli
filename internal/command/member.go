@@ -60,6 +60,20 @@ func stdinSecret(reader io.Reader) (string, error) {
 
 func newAuthCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
 	root := &cobra.Command{Use: "auth", Short: i18n.T("Manage member sessions")}
+	var showYes bool
+	show := &cobra.Command{Use: "show-key", Short: i18n.T("Print the selected API key explicitly"), Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+		if !showYes {
+			return emitCommand(deps, flags, app.Result{}, result.New("input", i18n.T("Printing an API key requires --yes")))
+		}
+		key, err := service.ShowAPIKey(cmd.Context(), connectionOptions(flags))
+		if err != nil {
+			return emitCommand(deps, flags, app.Result{}, err)
+		}
+		_, err = fmt.Fprintln(deps.Out, key)
+		return err
+	}}
+	show.Flags().BoolVar(&showYes, "yes", false, i18n.T("Confirm printing the API key"))
+	root.AddCommand(show)
 	var email string
 	var passwordStdin, totp, tokenStdin bool
 	login := &cobra.Command{Use: "login", Short: i18n.T("Log in to a local account and save member token"), Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {

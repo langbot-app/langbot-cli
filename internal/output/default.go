@@ -476,6 +476,11 @@ func renderLocalAction(w io.Writer, data map[string]any) error {
 		if _, err := fmt.Fprintln(w, line); err != nil {
 			return err
 		}
+		if data["restart_required"] == true {
+			if _, err := fmt.Fprintln(w, i18n.T("Local API key configured; run lbctl restart to activate it")); err != nil {
+				return err
+			}
+		}
 	}
 	if action == "install" && data["step"] != nil {
 		if data["preflight"] == true {
@@ -523,6 +528,9 @@ func renderLocalAction(w io.Writer, data map[string]any) error {
 		}
 		rows = append(rows, [2]string{i18n.T("Directory"), displayCell(data["dir"])}, [2]string{i18n.T("Log"), "lbctl logs"})
 		lines = append(lines, progress.Labels(rows)...)
+		if data["local_auth"] == true {
+			lines = append(lines, i18n.T("CLI connected to this instance: use lbctl bot list directly"))
+		}
 		lines = append(lines, "", i18n.T("Next steps"))
 		language := "en"
 		if data["autostart_note"] == "loginctl enable-linger" {
