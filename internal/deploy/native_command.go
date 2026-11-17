@@ -1,6 +1,7 @@
 package deploy
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -11,7 +12,9 @@ import (
 	"sync"
 	"unicode/utf16"
 
+	"github.com/langbot-app/langbot-cli/internal/diagnostic"
 	"github.com/langbot-app/langbot-cli/internal/i18n"
+	"github.com/langbot-app/langbot-cli/internal/telemetry"
 )
 
 var ErrNativeInterrupted = errors.New("native command interrupted")
@@ -32,18 +35,18 @@ func (writer *commandWriter) Write(data []byte) (int, error) {
 
 func (tail *commandTail) Write(data []byte) (int, error) {
 	count := len(data)
-	if len(data) >= 2048 {
-		tail.data = append(tail.data[:0], data[len(data)-2048:]...)
+	if len(data) >= 65536 {
+		tail.data = append(tail.data[:0], data[len(data)-65536:]...)
 		return count, nil
 	}
 	tail.data = append(tail.data, data...)
-	if len(tail.data) > 2048 {
-		tail.data = tail.data[len(tail.data)-2048:]
+	if len(tail.data) > 65536 {
+		tail.data = tail.data[len(tail.data)-65536:]
 	}
 	return count, nil
 }
 
-func runNativeCommand(command *exec.Cmd, out io.Writer) (string, error) {
+func runNativeCommand(ctx context.Context, command *exec.Cmd, out io.Writer) (string, error) {
 	var stdout, stderr commandTail
 	if out == nil {
 		out = io.Discard
@@ -57,7 +60,13 @@ func runNativeCommand(command *exec.Cmd, out io.Writer) (string, error) {
 	if strings.TrimSpace(output) == "" {
 		output = string(stdout.data)
 	}
+	output = diagnostic.Tail(output, 0, 2048)
 	if err != nil {
+		exitCode := -1
+		if command.ProcessState != nil {
+			exitCode = command.ProcessState.ExitCode()
+		}
+		telemetry.RecordCommand(ctx, command.Args, exitCode, string(stdout.data), string(stderr.data))
 		if command.ProcessState != nil {
 			if state, ok := command.ProcessState.Sys().(interface{ Signaled() bool }); ok && state.Signaled() {
 				err = fmt.Errorf("%w: %w", ErrNativeInterrupted, err)

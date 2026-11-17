@@ -16,30 +16,34 @@ import (
 	"time"
 
 	"github.com/gofrs/flock"
+	"github.com/langbot-app/langbot-cli/internal/diagnostic"
 	"github.com/langbot-app/langbot-cli/internal/progress"
 )
 
 const DefaultEndpoint = "https://space.langbot.app/api/v1/telemetry"
 
 type Event struct {
-	EventType      string `json:"event_type"`
-	EventID        string `json:"event_id"`
-	InstanceID     string `json:"instance_id"`
-	Command        string `json:"command"`
-	Outcome        string `json:"outcome"`
-	Step           string `json:"step"`
-	ErrorCode      string `json:"error_code"`
-	Error          string `json:"error"`
-	DurationMs     int64  `json:"duration_ms"`
-	LBCTLVersion   string `json:"lbctl_version"`
-	OS             string `json:"os"`
-	Arch           string `json:"arch"`
-	Driver         string `json:"driver"`
-	ServiceManager string `json:"service_manager"`
-	Region         string `json:"region"`
-	CoreVersion    string `json:"core_version"`
-	Locale         string `json:"locale"`
-	Source         string `json:"source"`
+	AttemptID        string         `json:"attempt_id,omitempty"`
+	PreviousFailures int            `json:"previous_failures"`
+	Details          map[string]any `json:"details,omitempty"`
+	EventType        string         `json:"event_type"`
+	EventID          string         `json:"event_id"`
+	InstanceID       string         `json:"instance_id"`
+	Command          string         `json:"command"`
+	Outcome          string         `json:"outcome"`
+	Step             string         `json:"step"`
+	ErrorCode        string         `json:"error_code"`
+	Error            string         `json:"error"`
+	DurationMs       int64          `json:"duration_ms"`
+	LBCTLVersion     string         `json:"lbctl_version"`
+	OS               string         `json:"os"`
+	Arch             string         `json:"arch"`
+	Driver           string         `json:"driver"`
+	ServiceManager   string         `json:"service_manager"`
+	Region           string         `json:"region"`
+	CoreVersion      string         `json:"core_version"`
+	Locale           string         `json:"locale"`
+	Source           string         `json:"source"`
 }
 
 type Options struct {
@@ -135,6 +139,15 @@ func (client *Client) send(event Event) {
 	if event.EventID == "" {
 		return
 	}
+	details := event.Details
+	event.Details = nil
+	base, _ := json.Marshal(event)
+	for len(base) > diagnostic.EventLimit-1024 && event.Error != "" {
+		event.Error = diagnostic.Tail(event.Error, 0, len(event.Error)/2)
+		base, _ = json.Marshal(event)
+	}
+	diagnostic.Fit(details, diagnostic.EventLimit-len(base)-32)
+	event.Details = details
 	client.wait.Add(1)
 	go func() {
 		defer client.wait.Done()
@@ -177,9 +190,14 @@ func (client *Client) Close() {
 }
 
 type Operation struct {
-	Event   Event
-	started time.Time
-	client  *Client
+	Event           Event
+	started         time.Time
+	client          *Client
+	dir, uv, python string
+	processStep     string
+	process         map[string]any
+	sources         map[string][]string
+	sourceMu        sync.Mutex
 }
 
 type operationKey struct{}
@@ -211,6 +229,7 @@ func (client *Client) Begin(ctx context.Context, command string) (context.Contex
 		version = "unknown"
 	}
 	op := &Operation{client: client, started: time.Now(), Event: Event{EventType: "cli_operation", InstanceID: identity,
+		AttemptID: newID(), PreviousFailures: client.failures(command, false),
 		Command: command, Outcome: "started", Step: "validation", LBCTLVersion: version, OS: runtime.GOOS, Arch: runtime.GOARCH,
 		Source: source, Locale: locale}}
 	client.send(op.Event)
@@ -266,6 +285,10 @@ func ImagePullFailed(ctx context.Context) {
 	event.Command, event.Step, event.Outcome = "image_pull", "image_pull", "failed"
 	event.ErrorCode, event.Error = "image_pull", "image_pull"
 	event.DurationMs = time.Since(op.started).Milliseconds()
+	event.PreviousFailures = op.client.failures("image_pull", true)
+	if op.process != nil {
+		event.Details = diagnostic.Object(map[string]any{"process": op.cleanIdentity(op.process)})
+	}
 	op.client.send(event)
 }
 
@@ -277,17 +300,16 @@ func (op *Operation) Finish(err error, code string) {
 	op.Event.Outcome = "succeeded"
 	if err != nil {
 		op.Event.Outcome = "failed"
+		if code == "interrupted" {
+			op.Event.Outcome = "interrupted"
+		}
 		op.Event.ErrorCode = Identifier(code)
 		if op.Event.ErrorCode == "" {
 			op.Event.ErrorCode = "unknown"
 		}
-		usernames := []string{}
-		for _, key := range []string{"USER", "USERNAME", "LOGNAME"} {
-			if username, _ := op.client.lookup(key); username != "" {
-				usernames = append(usernames, username)
-			}
-		}
-		op.Event.Error = SanitizeError(sanitizeIdentity(err.Error(), op.client.home, usernames))
+		op.Event.Error = SanitizeError(sanitizeIdentity(err.Error(), op.client.home, op.usernames()))
+		op.Event.Details = op.diagnostics()
+		op.client.failures(op.Event.Command, true)
 	}
 	op.client.send(op.Event)
 }

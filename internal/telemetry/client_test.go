@@ -18,13 +18,13 @@ import (
 func TestSanitizeError(t *testing.T) {
 	for _, secret := range []string{`C:\Users\alice\AppData\Local\uv`, `/home/alice/.langbot`, `/Users/alice/Library`,
 		`token=secret-value`, `API_KEY="private key"`, `Authorization: Bearer abc.def`, `username=alice`, `sk-123456789abc`,
-		`ghp_abcdef123`, `eyJhbGciOiJI.eyJhIjoiYiJ9.signature`, `192.168.1.2`, `2001:db8::1`, `https://bob:pass@example.org/path?key=secret`} {
+		`ghp_abcdef123`, `eyJhbGciOiJI.eyJhIjoiYiJ9.signature`, `8.8.8.8`, `2001:db8::1`, `https://bob:pass@example.org/path?key=secret`} {
 		if clean := SanitizeError("failed: " + secret); strings.Contains(clean, secret) {
 			t.Errorf("not redacted: %q", secret)
 		}
 	}
-	clean := SanitizeError(strings.Repeat("失败", 1000))
-	if len(clean) > 1024 || !utf8.ValidString(clean) {
+	clean := SanitizeError(strings.Repeat("失败", 3000))
+	if len(clean) > 8192 || !utf8.ValidString(clean) {
 		t.Fatalf("invalid truncation: %d", len(clean))
 	}
 	if clean := SanitizeError("download failed: exit status 1"); clean != "download failed: exit status 1" {
@@ -34,9 +34,9 @@ func TestSanitizeError(t *testing.T) {
 
 func TestSanitizeErrorKeepsCompleteTailLines(t *testing.T) {
 	line := strings.Repeat("download progress ", 10)
-	message := strings.Repeat(line+"\n", 30) + "final dependency failure"
+	message := strings.Repeat(line+"\n", 100) + "final dependency failure"
 	clean := SanitizeError(message)
-	if len(clean) > 1024 || !strings.HasSuffix(clean, "final dependency failure") {
+	if len(clean) > 8192 || !strings.HasSuffix(clean, "final dependency failure") {
 		t.Fatalf("invalid tail: %q", clean)
 	}
 	for _, retained := range strings.Split(clean, "\n") {

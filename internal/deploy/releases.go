@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"github.com/langbot-app/langbot-cli/internal/i18n"
 	"github.com/langbot-app/langbot-cli/internal/progress"
+	"github.com/langbot-app/langbot-cli/internal/telemetry"
 	"io"
 	"net/http"
 	"strings"
@@ -73,6 +74,7 @@ func LatestCore(ctx context.Context, client *http.Client) (string, error) {
 }
 
 func Fetch(ctx context.Context, client *http.Client, address string, limit int64) ([]byte, error) {
+	telemetry.RecordSource(ctx, address)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, address, nil)
 	if err != nil {
 		return nil, err

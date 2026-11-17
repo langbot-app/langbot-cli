@@ -63,7 +63,7 @@ func AutostartStatus(ctx context.Context, record Record) (AutostartInfo, error) 
 			args = append([]string{"--user"}, args...)
 		}
 		var output string
-		output, err = runNativeCommand(exec.CommandContext(ctx, "systemctl", args...), nil)
+		output, err = runNativeCommand(ctx, exec.CommandContext(ctx, "systemctl", args...), nil)
 		switch strings.TrimSpace(output) {
 		case "enabled", "enabled-runtime":
 			info.Enabled, err = true, nil
@@ -80,7 +80,7 @@ func AutostartStatus(ctx context.Context, record Record) (AutostartInfo, error) 
 		info.Location = `Task Scheduler\` + nativeServiceName(record)
 		command := exec.CommandContext(ctx, "schtasks.exe", "/Query", "/TN", nativeServiceName(record), "/XML")
 		var output strings.Builder
-		_, err = runNativeCommand(command, &output)
+		_, err = runNativeCommand(ctx, command, &output)
 		if err == nil {
 			var task struct {
 				Enabled bool `xml:"Settings>Enabled"`
@@ -138,7 +138,7 @@ func setNativeAutostart(ctx context.Context, dir string, record Record, enabled 
 		}
 		return nil
 	case "schtasks":
-		_, err := runNativeCommand(nativeAutostartToggle(ctx, record, enabled), nil)
+		_, err := runNativeCommand(ctx, nativeAutostartToggle(ctx, record, enabled), nil)
 		return err
 	default:
 		return InstallNativeService(ctx, dir, record)

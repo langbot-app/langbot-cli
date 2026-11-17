@@ -67,6 +67,7 @@ func imageRegistry(repository string) (string, string) {
 
 func (sources ImageSources) request(ctx context.Context, method, repository, path string) (*http.Response, error) {
 	base, repo := imageRegistry(repository)
+	telemetry.RecordSource(ctx, base+"/v2/")
 	client := sources.HTTP
 	if client == nil {
 		client = http.DefaultClient
@@ -131,6 +132,7 @@ func (sources ImageSources) Probe(ctx context.Context, repository, tag string) (
 	probe = ImageProbe{Repository: repository, Reason: i18n.T("Image registry unavailable")}
 	defer func() { probe.LatencyMS = time.Since(started).Milliseconds() }()
 	base, _ := imageRegistry(repository)
+	telemetry.RecordSource(ctx, base+"/v2/")
 	client := sources.HTTP
 	if client == nil {
 		client = http.DefaultClient

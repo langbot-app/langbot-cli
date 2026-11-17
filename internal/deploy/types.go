@@ -14,6 +14,7 @@ import (
 
 	"github.com/gofrs/flock"
 	"github.com/langbot-app/langbot-cli/internal/i18n"
+	"github.com/langbot-app/langbot-cli/internal/telemetry"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -108,6 +109,13 @@ type DockerRunner struct {
 }
 
 func (r DockerRunner) Docker(ctx context.Context, args ...string) (CommandResult, error) {
+	if len(args) > 1 && args[0] == "pull" {
+		host, _, _ := strings.Cut(args[len(args)-1], "/")
+		if !strings.ContainsAny(host, ".:") && host != "localhost" {
+			host = "registry-1.docker.io"
+		}
+		telemetry.RecordSource(ctx, "https://"+host+"/v2/")
+	}
 	if len(args) == 0 {
 		return CommandResult{}, errors.New(i18n.T("docker command must not be empty"))
 	}
@@ -133,7 +141,7 @@ func (r DockerRunner) Compose(ctx context.Context, record Record, args ...string
 	if r.Exec != nil {
 		return r.exec(ctx, append(base, args...)...)
 	}
-	return captureDockerCommand(r.composeCommand(ctx, contextName, record, args...))
+	return captureDockerCommand(ctx, r.composeCommand(ctx, contextName, record, args...))
 }
 
 func (r DockerRunner) ComposeStream(ctx context.Context, record Record, stdout, stderr io.Writer, args ...string) error {
@@ -243,7 +251,7 @@ func (r DockerRunner) exec(ctx context.Context, args ...string) (CommandResult, 
 	command := exec.CommandContext(ctx, args[0], args[1:]...)
 	command.Env = localDockerEnvironment()
 	configureCommandCancellation(command)
-	return captureDockerCommand(command)
+	return captureDockerCommand(ctx, command)
 }
 
 // Docker on Windows launches Compose as a child that can retain output pipes.
@@ -267,7 +275,7 @@ func configureCommandCancellation(command *exec.Cmd) {
 	}
 }
 
-func captureDockerCommand(command *exec.Cmd) (CommandResult, error) {
+func captureDockerCommand(ctx context.Context, command *exec.Cmd) (CommandResult, error) {
 	var stdout, stderr strings.Builder
 	command.Stdout, command.Stderr = &stdout, &stderr
 	err := command.Run()
@@ -279,6 +287,11 @@ func captureDockerCommand(command *exec.Cmd) (CommandResult, error) {
 	if errors.As(err, &exitErr) {
 		result.ExitCode = exitErr.ExitCode()
 	}
+	exitCode := -1
+	if command.ProcessState != nil {
+		exitCode = command.ProcessState.ExitCode()
+	}
+	telemetry.RecordCommand(ctx, command.Args, exitCode, result.Stdout, result.Stderr)
 	return result, err
 }
 

@@ -561,6 +561,7 @@ func (s *Service) lifecycleTarget(ctx context.Context, options CheckOptions) (de
 			return record, diagnostics, result.New("incompatible", i18n.T("unsupported local deployment driver"))
 		}
 		telemetry.SetEnvironment(ctx, record.Driver, record.ServiceManager, record.Region, record.CoreVersion)
+		telemetry.SetDirectory(ctx, dir)
 		telemetry.SetStep(ctx, "preflight")
 		return record, diagnostics, nil
 	}
@@ -584,6 +585,7 @@ func (s *Service) lifecycleTarget(ctx context.Context, options CheckOptions) (de
 		return deploy.Record{}, deploy.Diagnostics{}, result.New("incompatible", i18n.T("Current local deployment does not support Docker Compose lifecycle operations"))
 	}
 	telemetry.SetEnvironment(ctx, resolved.Record.Driver, resolved.Record.ServiceManager, resolved.Record.Region, resolved.Record.CoreVersion)
+	telemetry.SetDirectory(ctx, resolved.Diagnostics.Dir)
 	telemetry.SetStep(ctx, "preflight")
 	return resolved.Record, *resolved.Diagnostics, nil
 }

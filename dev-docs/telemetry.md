@@ -1,7 +1,7 @@
 # Lifecycle telemetry
 
 `lbctl install`, `upgrade`, `uninstall`, `start`, `stop`, `restart`, `update`
-(including `self-update`), and `autostart status|enable|disable` send a `started` event and a `succeeded` or `failed`
+(including `self-update`), and `autostart status|enable|disable` send a `started` event and a `succeeded`, `failed`, or `interrupted`
 event directly to Space. Help and unrelated commands do not send events.
 Autostart command names are reported as `autostart.status`, `autostart.enable`, and `autostart.disable`.
 Validation failures and dry-run/check executions are included.
@@ -21,12 +21,34 @@ can lose an event. Events are not queued on disk.
 Payloads contain the command, outcome, step, error code, duration, lbctl version,
 OS/architecture, driver, service manager, region, Core version, locale, and
 installation source. Environment fields are populated when resolved; early
-failures may leave them empty. No command arguments, hostnames, deployment paths,
-Core credentials, or command output streams are collected. Error messages redact
-home directories, known usernames, absolute user paths, URLs, IP addresses and
-common token/API-key forms, and retain at most 1,024 UTF-8 bytes from the tail,
-keeping complete lines when possible. Space repeats
-redaction and accepts only the defined metadata fields.
+failures may leave them empty. Each invocation has an `attempt_id` shared by its
+started and terminal events. `previous_failures` is the count of earlier failed
+or interrupted invocations of the same command on this installation, persisted
+under `~/.langbot/telemetry-failures.json`; successful runs do not reset it.
+
+Failed and interrupted events optionally include `details`:
+- `process`: command basename, redacted arguments, exit code, and separate
+  stdout/stderr tails (60 lines and 8 KiB per stream).
+- `log`: filename and tail (80 lines, 8 KiB). `health_check` and `start_service`
+  use `logs/langbot.log`; other steps use `logs/install.log`, if present.
+- `environment`: OS version, container/WSL/admin flags, shell version, CPU count,
+  total memory and available instance-disk bytes, proxy presence booleans,
+  and available Docker/Compose/uv/Python versions. Version queries have a shared
+  two-second deadline. No proxy values or environment dumps are collected.
+- `network`: one HEAD request per actual attempted source during `download_uv`,
+  `install_python`, `install_package`, or `pull_image`, recording the sanitized
+  source URL, HTTP status or error type, and elapsed milliseconds. Queries and
+  userinfo are removed before probing. Probes do not follow redirects, each has
+  a three-second deadline, and all diagnostic collection shares five seconds.
+
+URLs retain scheme, host and path; credentials, fragments and query values are
+removed. User-home paths retain the filename with only the username segment
+replaced by `<user>`. Private, loopback and link-local IPs are retained; public
+IPs, tokens, authorization values, passwords, API keys and JWTs are redacted.
+Sensitive object/configuration keys are redacted recursively. Errors retain at
+most 8 KiB of UTF-8 text, keeping complete tail lines when possible. The encoded
+event is at most 32 KiB: large diagnostic fields are shortened to fit, without
+dropping the failure itself. Space repeats redaction and size bounding.
 
 Native dependency execution failures use `error_code=dependency`. Cancellation
 and signal termination use `interrupted`. Registration conflicts use
@@ -42,9 +64,9 @@ Their source files are `public/install.sh` and `public/install.ps1` in
 and `$env:LBCTL_INSTALL_SOURCE = "install.ps1"`, respectively. That repository
 is outside this change's two-repository scope.
 
-`telemetry.Options.OnFirstRun` is the integration hook for the upcoming localized
-privacy/terms notice. It runs when an enabled lifecycle command first creates
-the installation ID. No notice text is introduced here; the i18n work owns it.
+The first-run localized terms notice states that failures include redacted
+diagnostic information. Opt-out disables diagnostics, probes and failure-counter
+writes as well as transmission and installation-ID creation.
 `LBCTL_LANG`, `LC_ALL`, `LC_MESSAGES`, then `LANG` supply the current locale hint.
 
 ## Local verification
@@ -63,4 +85,8 @@ The Space integration test accepts `LBCTL_TEST_BINARY` and exercises this binary
 against a local HTTP server and PostgreSQL database. It occupies an ephemeral
 port, runs native install with an explicit Core version and region, and asserts
 exit code 6 plus a stored `failed` event with `step=check_ports` and a redacted
-error. It does not download Core or alter installed services.
+error. Optional extended Linux scenarios use `LBCTL_TEST_UV` (a real uv binary)
+and `LBCTL_TEST_PYTHON` (an installed uv-managed CPython directory) to exercise an
+unreachable PyPI index and a real health-check timeout against an intentionally
+unresponsive temporary process. They do not alter installed services.
+`LBCTL_DIAGNOSTICS_ARTIFACT` saves the three persisted Space events as JSON.

@@ -4,13 +4,23 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/langbot-app/langbot-cli/internal/deploy"
 	"github.com/langbot-app/langbot-cli/internal/i18n"
 	"github.com/langbot-app/langbot-cli/internal/progress"
+	"github.com/langbot-app/langbot-cli/internal/telemetry"
 )
 
 func (s *Service) deploymentContext(ctx context.Context, record deploy.Record, dir, requestedRegion string) {
+	telemetry.SetDirectory(ctx, dir)
+	uv := "uv"
+	if os.PathSeparator == '\\' {
+		uv += ".exe"
+	}
+	if record.Driver == deploy.DriverNative {
+		telemetry.SetTools(ctx, filepath.Join(record.ToolsDir, "uv", deploy.UVVersion, uv), deploy.NativePython(dir, record.CoreVersion))
+	}
 	source := i18n.Human("auto-detected")
 	if requestedRegion == "stored" {
 		source = i18n.Human("Saved deployment settings")
