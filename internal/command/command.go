@@ -103,7 +103,10 @@ func Execute(ctx context.Context, args []string, deps Dependencies) int {
 	verbose := flags.verbose
 	restoreLanguage := i18n.UseMode(lang, machine)
 	defer restoreLanguage()
-	if deps.NoticeHome != "" {
+	// Help requests (`--help`, `-h`, `help`) are what install scripts use to
+	// probe capabilities with stderr discarded; they must not consume the
+	// one-time terms notice, or the user never sees it.
+	if deps.NoticeHome != "" && !hasHelpFlag(args) && (selected == nil || selected.Name() != "help") {
 		var notice bytes.Buffer
 		_ = i18n.FirstRun(deps.NoticeHome, &notice, lang)
 		flags.notice, flags.noticeMachine = notice.String(), machine
