@@ -88,6 +88,11 @@ func (*imagePullRunner) Compose(context.Context, Record, ...string) (CommandResu
 }
 
 func TestImageSourceSelectionAndFallback(t *testing.T) {
+	for _, repository := range PublicImageRepositories() {
+		if strings.Contains(repository, "xuanyuan") || strings.Contains(repository, "hub.rat.dev") {
+			t.Fatal(repository)
+		}
+	}
 	for _, test := range []struct {
 		name                               string
 		unavailable, mismatch, pullFailure bool
@@ -185,7 +190,7 @@ func TestImageSourcesReuseAndReselect(t *testing.T) {
 	}
 	runner.fail = map[string]bool{record.ImageRepository: true}
 	selection, err = sources.Pull(context.Background(), runner, record, "v4.10.11", true, nil)
-	if err != nil || selection.Repository != "docker.1ms.run/rockchin/langbot" || probes.Load() != 5 {
+	if err != nil || selection.Repository != "docker.1ms.run/rockchin/langbot" || probes.Load() != int32(len(PublicImageRepositories())) {
 		t.Fatalf("%+v %v probes=%d", selection, err, probes.Load())
 	}
 }

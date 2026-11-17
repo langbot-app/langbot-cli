@@ -125,7 +125,7 @@ func TestUpgradeReselectsThenPersistsAndReusesPinnedImage(t *testing.T) {
 		if err := deploy.ValidateOwnedLayout(updated, dir); err != nil {
 			t.Fatal(err)
 		}
-		if probes.Load() != 5 {
+		if probes.Load() != int32(len(deploy.PublicImageRepositories())) {
 			t.Fatalf("unexpected reprobe: %d", probes.Load())
 		}
 	}

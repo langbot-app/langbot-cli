@@ -292,7 +292,7 @@ func WriteUpgradeCompose(record Record, content []byte) error {
 	return writeAtomic(record.ComposeFile, content, 0o600)
 }
 
-func CreateUpgradeBackup(ctx context.Context, record Record, state UpgradeState, recordDir string) (string, error) {
+func CreateUpgradeBackup(ctx context.Context, record Record, state UpgradeState, recordDir string, runners ...Runner) (string, error) {
 	root := filepath.Join(filepath.Dir(record.DataDir), "backups")
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		return "", err
@@ -310,6 +310,12 @@ func CreateUpgradeBackup(ctx context.Context, record Record, state UpgradeState,
 	}
 	manifest := BackupManifest{SourceVersion: state.SourceVersion, ComposeDigest: state.SourceCompose, Files: []BackupFile{}}
 	sources := []struct{ path, dest string }{{record.DataDir, "data"}, {record.ComposeFile, "compose.yaml"}, {filepath.Join(recordDir, recordFileName), recordFileName}}
+	if len(runners) != 0 {
+		if err := copyDockerUpgradeData(ctx, runners[0], record, tmp, false); err != nil {
+			return "", err
+		}
+		sources[0].path = filepath.Join(tmp, "data")
+	}
 	envFile := record.EnvFile
 	if envFile == "" {
 		candidate := filepath.Join(filepath.Dir(record.ComposeFile), ".env")
@@ -343,6 +349,12 @@ func CreateUpgradeBackup(ctx context.Context, record Record, state UpgradeState,
 				return errors.New(i18n.T("Backup source contains unsupported file types"))
 			}
 			dest := filepath.Join(tmp, name)
+			if path == dest {
+				if info.Mode().IsRegular() {
+					manifest.Files = append(manifest.Files, BackupFile{Path: name, Size: info.Size(), SHA256: fileDigestPathContext(ctx, path)})
+				}
+				return nil
+			}
 			if info.IsDir() {
 				return os.MkdirAll(dest, 0o700)
 			}

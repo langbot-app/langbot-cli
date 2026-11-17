@@ -141,6 +141,11 @@ try {
     Invoke-Lbctl @('uninstall', '--name', 'replacement', '--yes') | Out-Null
     $installed = $false
     Write-Host 'Uninstall then reinstall under a new name: same port, WebUI HTTP 200, old data preserved'
+} catch {
+    Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId, Name, CreationDate | Format-Table -AutoSize | Out-Host
+    $pidPath = Join-Path $instanceDir 'native.pid'
+    if (Test-Path $pidPath) { Write-Host "Supervisor PID: $(Get-Content $pidPath)" }
+    throw
 } finally {
     if ($installed) {
         & lbctl uninstall --endpoint $endpoint --yes --output json

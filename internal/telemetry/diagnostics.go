@@ -203,9 +203,9 @@ func (op *Operation) environment(parent context.Context) map[string]any {
 	result := systemEnvironment(dir)
 	result["cpu_count"] = runtime.NumCPU()
 	for _, key := range []string{"HTTP_PROXY", "HTTPS_PROXY"} {
-		_, upper := op.client.lookup(key)
-		_, lower := op.client.lookup(strings.ToLower(key))
-		result[strings.ToLower(key)+"_set"] = upper || lower
+		upper, _ := op.client.lookup(key)
+		lower, _ := op.client.lookup(strings.ToLower(key))
+		result[strings.ToLower(key)+"_set"] = upper != "" || lower != ""
 	}
 	uv, python := op.uv, op.python
 	if python == "" && op.dir != "" && op.Event.CoreVersion != "" {

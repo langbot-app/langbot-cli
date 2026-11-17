@@ -200,6 +200,20 @@ func TestMachineJSONAndYAMLRoundTripSameSafeData(t *testing.T) {
 	}
 }
 
+func TestRenderDefaultMultilineError(t *testing.T) {
+	var out bytes.Buffer
+	value := map[string]any{"ok": false, "error": map[string]any{
+		"message": "install failed\r\nfetch failed\nterminal\x1b[31m\tcontrol\rcarriage literal\\n",
+	}}
+	if err := RenderCommand(&out, value, FormatDefault, "install"); err != nil {
+		t.Fatal(err)
+	}
+	want := "install failed\nfetch failed\nterminal\\u001b[31m\\tcontrol\\rcarriage literal\\n"
+	if !strings.Contains(out.String(), want) {
+		t.Fatalf("multiline error = %q, want substring %q", out.String(), want)
+	}
+}
+
 func TestRenderDefaultEscapesControlsAndSecrets(t *testing.T) {
 	var out bytes.Buffer
 	value := map[string]any{"ok": true, "data": map[string]any{
