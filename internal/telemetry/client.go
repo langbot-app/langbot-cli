@@ -257,6 +257,18 @@ func SetEnvironment(ctx context.Context, driver, manager, region, coreVersion st
 	}
 }
 
+func ImagePullFailed(ctx context.Context) {
+	op, ok := ctx.Value(operationKey{}).(*Operation)
+	if !ok || op.client == nil {
+		return
+	}
+	event := op.Event
+	event.Command, event.Step, event.Outcome = "image_pull", "image_pull", "failed"
+	event.ErrorCode, event.Error = "image_pull", "image_pull"
+	event.DurationMs = time.Since(op.started).Milliseconds()
+	op.client.send(event)
+}
+
 func (op *Operation) Finish(err error, code string) {
 	if op == nil {
 		return

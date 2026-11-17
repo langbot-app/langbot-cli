@@ -142,6 +142,38 @@ func (d Diagnostics) Doctor(ctx context.Context) ([]Check, error) {
 		return checks, err
 	}
 	checks := make([]Check, 0, 12)
+	imageRecord, _ := d.Store.Read()
+	tag := imageRecord.CoreVersion
+	if tag == "" {
+		tag = "latest"
+	}
+	repositories := append([]string{DefaultImageRepository}, PublicImageRepositories()...)
+	repositories = append(repositories, CanonicalImageRepository)
+	probes := (ImageSources{HTTP: d.HTTP}).ProbeAll(ctx, repositories, tag)
+	selected := CanonicalImageRepository
+	bestLatency := int64(1<<63 - 1)
+	for _, probe := range probes {
+		status := "warn"
+		if probe.Available {
+			status = "ok"
+			if probe.Repository != DefaultImageRepository && probe.Repository != CanonicalImageRepository && probe.LatencyMS < bestLatency {
+				selected, bestLatency = probe.Repository, probe.LatencyMS
+			}
+		}
+		checks = append(checks, Check{Name: probe.Repository, Status: status, Reason: fmt.Sprintf(i18n.T("%s (%d ms)"), probe.Reason, probe.LatencyMS), Detail: probe})
+	}
+	if imageRecord.Region != "cn" && probes[0].Available {
+		selected = DefaultImageRepository
+	}
+	for _, probe := range probes {
+		if probe.Repository == imageRecord.ImageRepository && probe.Available {
+			selected = imageRecord.ImageRepository
+		}
+	}
+	if ExplicitImageRepository(imageRecord) {
+		selected = ImageRepository(imageRecord)
+	}
+	checks = append(checks, Check{Name: i18n.T("Docker image repositories"), Status: "info", Reason: fmt.Sprintf(i18n.T("Selected image repository: %s"), selected), Detail: map[string]any{"selected": selected, "probes": probes}})
 	add := func(name, status, reason string, detail any) {
 		checks = append(checks, Check{Name: name, Status: status, Reason: reason, Detail: detail})
 	}

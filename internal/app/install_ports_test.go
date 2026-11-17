@@ -37,6 +37,7 @@ func TestInstallMultipleProjectsWithIndependentPortSelections(t *testing.T) {
 		{Dir: filepath.Join(root, "first"), Version: "v4.10.10", Project: "first", Port: freePort(), PluginDebugPort: new(int), AdapterPorts: []string{"none"}},
 		{Dir: filepath.Join(root, "second"), Version: "v4.10.10", Project: "second", Port: freePort(), PluginDebugPort: &debug, AdapterPorts: []string{fmt.Sprintf("%d:2283", adapter)}},
 	} {
+		options.ImageRepository = deploy.DefaultImageRepository
 		value, err := service.Install(context.Background(), options)
 		if err != nil {
 			t.Fatalf("install %s: %v data=%+v", options.Project, err, value.Data)

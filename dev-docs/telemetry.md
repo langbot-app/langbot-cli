@@ -49,6 +49,11 @@ the installation ID. No notice text is introduced here; the i18n work owns it.
 
 ## Local verification
 
+Docker source failures additionally emit `command=image_pull`, `step=image_pull`,
+`outcome=failed`, `error_code=image_pull` even if a later source succeeds. These
+attempt events do not change the enclosing install/upgrade outcome and contain
+no repository URL or Docker output. See [Docker image sources](docker-image-sources.md).
+
 ```sh
 go test ./internal/telemetry ./internal/command ./internal/app ./internal/deploy
 go build -o lbctl ./cmd/lbctl

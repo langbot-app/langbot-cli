@@ -169,12 +169,21 @@ func TestDoctorOnCleanNestedDirIsReadOnly(t *testing.T) {
 		"info --format {{.ServerVersion}}": {Stdout: "27"},
 		"compose version --short":          {Stdout: "v2.29.0"},
 	}}
-	checks, err := (Diagnostics{Dir: dir, Store: Store{Dir: dir}, Runner: runner}).Doctor(context.Background())
+	checks, err := (Diagnostics{Dir: dir, Store: Store{Dir: dir}, Runner: runner, HTTP: testImageSources(t, registryResponse).HTTP}).Doctor(context.Background())
 	if err != nil {
 		t.Fatalf("clean nested directory failed doctor: %v, checks=%+v", err, checks)
 	}
 	if _, statErr := os.Stat(filepath.Join(base, "missing")); !os.IsNotExist(statErr) {
 		t.Fatalf("doctor created deployment path: %v", statErr)
+	}
+	found := false
+	for _, check := range checks {
+		if detail, ok := check.Detail.(map[string]any); ok && detail["selected"] == DefaultImageRepository {
+			found = len(detail["probes"].([]ImageProbe)) == 7
+		}
+	}
+	if !found {
+		t.Fatal("doctor did not report image sources and selected repository")
 	}
 }
 
@@ -187,7 +196,7 @@ func TestDoctorDoesNotClaimPermissionFailureWhenDaemonIsDown(t *testing.T) {
 		},
 		err: errors.New("daemon unavailable"),
 	}
-	checks, _ := (Diagnostics{Dir: dir, Store: Store{Dir: dir}, Runner: runner}).Doctor(context.Background())
+	checks, _ := (Diagnostics{Dir: dir, Store: Store{Dir: dir}, Runner: runner, HTTP: testImageSources(t, registryResponse).HTTP}).Doctor(context.Background())
 	for _, check := range checks {
 		if check.Name == "docker_cli" && check.Status != "ok" {
 			t.Fatalf("Docker CLI was conflated with daemon state: %+v", check)
@@ -208,7 +217,7 @@ func TestDoctorDoesNotBindOrQueryUnmanagedComposeProject(t *testing.T) {
 		"info --format {{.ServerVersion}}": {Stdout: "27"},
 		"compose version --short":          {Stdout: "v2.29.0"},
 	}}
-	checks, err := (Diagnostics{Dir: dir, Store: Store{Dir: dir}, Runner: runner}).Doctor(context.Background())
+	checks, err := (Diagnostics{Dir: dir, Store: Store{Dir: dir}, Runner: runner, HTTP: testImageSources(t, registryResponse).HTTP}).Doctor(context.Background())
 	if err != nil {
 		t.Fatalf("unmanaged Compose should remain a warning: %v, checks=%+v", err, checks)
 	}

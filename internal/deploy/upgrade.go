@@ -131,7 +131,7 @@ func ValidateOwnedLayout(record Record, dir string) error {
 	if record.Driver != DriverDockerCompose || !ValidComposeProject(record.ComposeProject) ||
 		(record.InstallPorts == nil && record.ComposeProject != DefaultComposeProject) ||
 		record.ComposeFile != filepath.Join(dir, "compose.yaml") || record.EnvFile != filepath.Join(dir, ".env") ||
-		record.DataDir != filepath.Join(dir, "data") || record.Asset.Name != ImageRepository(record)+":"+record.CoreVersion ||
+		record.DataDir != filepath.Join(dir, "data") || !ownedImageReference(record) ||
 		record.Endpoint != fmt.Sprintf("http://127.0.0.1:%d", record.Port) ||
 		!regularFile(record.EnvFile) || !releaseVersionPattern.MatchString(record.CoreVersion) {
 		return errors.New(i18n.T("Only default Compose deployments installed by lbctl are supported"))
@@ -155,6 +155,15 @@ func ValidateOwnedLayout(record Record, dir string) error {
 		return errors.New(i18n.T("Compose assets have changed"))
 	}
 	return nil
+}
+
+func ownedImageReference(record Record) bool {
+	return record.Asset.Name == ImageRepository(record)+":"+record.CoreVersion ||
+		(digestPattern.MatchString(record.Asset.Digest) && record.Asset.Name == ImageRepository(record)+"@"+record.Asset.Digest)
+}
+
+func PinComposeImage(content []byte, source, target string) []byte {
+	return []byte(strings.ReplaceAll(string(content), "\n    image: "+source+"\n", "\n    image: "+target+"\n"))
 }
 
 func InspectUpgradeData(record Record) (dataBytes int64, freeBytes uint64, err error) {

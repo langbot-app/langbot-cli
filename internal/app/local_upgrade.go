@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"os"
 	"regexp"
 	"strings"
@@ -156,16 +157,25 @@ func (s *Service) Upgrade(ctx context.Context, options UpgradeOptions) (Result, 
 			return nil
 		}
 		// 官方镜像由 LangBot Release 发布流程生成；校验摘要后才停服。
-		telemetry.SetStep(operationCtx, "pull_image")
-		pulled, pullErr := diagnostics.Runner.Docker(operationCtx, "pull", state.TargetImage)
+		telemetry.SetStep(operationCtx, "image_pull")
+		pullSettings := current
+		if deploy.IsAdoptedLayout(current) {
+			pullSettings.ImageRepositoryExplicit = true
+		}
+		selection, pullErr := (deploy.ImageSources{HTTP: s.deps.LocalHTTP}).Pull(operationCtx, diagnostics.Runner, pullSettings, targetVersion, true, func(selected deploy.ImageSelection) {
+			if selected.Repository != deploy.ImageRepository(current) {
+				progress.Info(ctx, []string{fmt.Sprintf(i18n.T("Image source changed: %s → %s"), deploy.ImageRepository(current), selected.Repository)})
+			}
+			progress.Info(ctx, []string{deploy.ImageSelectionMessage(selected)})
+		})
 		if pullErr != nil {
-			return mapDockerCommandError(pulled, pullErr, i18n.T("Failed to pull target official images; deployment unchanged"))
+			return result.New("precondition", pullErr.Error())
 		}
-		inspected, inspectErr := diagnostics.Runner.Docker(operationCtx, "image", "inspect", "--format", "{{index .RepoDigests 0}}", state.TargetImage)
-		if inspectErr != nil {
-			return result.New("precondition", i18n.T("Unable to verify target image digest; deployment unchanged"))
-		}
-		state.TargetDigest = repositoryDigest(inspected.Stdout)
+		compose = deploy.PinComposeImage(compose, state.TargetImage, selection.Reference)
+		targetComposeDigest = composeDigest(compose)
+		state.TargetImage, state.TargetDigest, state.TargetCompose = selection.Reference, selection.Digest, targetComposeDigest
+		current.ImageRepository = selection.Repository
+		plan["target_image"], plan["target_compose_digest"] = state.TargetImage, state.TargetCompose
 		if !imageDigestPattern.MatchString(state.TargetDigest) {
 			return result.New("precondition", i18n.T("Target image has no verifiable repository digest; deployment unchanged"))
 		}

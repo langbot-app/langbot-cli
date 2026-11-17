@@ -107,6 +107,7 @@ func (s *Service) Install(ctx context.Context, options InstallOptions) (Result, 
 	}
 	assets.SetDeployIdentity(s.deps.Version)
 	settings := deploy.Record{Name: options.Name, Region: options.Region, PyPIIndex: options.PyPIIndex, PythonMirror: options.PythonMirror, ImageRepository: options.ImageRepository, ServiceManager: "docker_compose"}
+	settings.ImageRepositoryExplicit = options.ImageRepository != ""
 	if settings.Region != "" {
 		settings.Region, err = deploy.ResolveRegion(operationCtx, settings.Region, s.deps.LocalHTTP)
 		if err != nil {
@@ -153,21 +154,24 @@ func (s *Service) Install(ctx context.Context, options InstallOptions) (Result, 
 			if occupiedErr != nil || occupied {
 				return result.New("precondition", i18n.T("Managed Compose project is unavailable"))
 			}
-			telemetry.SetStep(ctx, "pull_image")
-			pull, pullErr := runner.Docker(operationCtx, "pull", assets.Image)
+			telemetry.SetStep(ctx, "image_pull")
+			selection, pullErr := (deploy.ImageSources{HTTP: s.deps.LocalHTTP}).Pull(operationCtx, runner, settings, version, false, func(selected deploy.ImageSelection) {
+				progress.Info(ctx, []string{deploy.ImageSelectionMessage(selected)})
+			})
 			if pullErr != nil {
-				return mapDockerCommandError(pull, pullErr, i18n.T("Failed to pull official images"))
+				return result.New("precondition", pullErr.Error())
 			}
-			imageDigest := ""
-			if inspected, inspectErr := runner.Docker(operationCtx, "image", "inspect", "--format", "{{index .RepoDigests 0}}", assets.Image); inspectErr == nil {
-				imageDigest = repositoryDigest(inspected.Stdout)
-			}
+			settings.ImageRepository = selection.Repository
+			assets.SetImageReference(selection.Reference)
+			assets.SetPackageIndex(settings.PyPIIndex)
+			imageDigest := selection.Digest
 			deploymentID, idErr := deploy.NewDeploymentID()
 			if idErr != nil {
 				return result.New("internal", i18n.T("Failed to generate deployment identity"))
 			}
 			record := assets.Record(deploymentID, imageDigest)
 			record.Name, record.Region, record.PyPIIndex, record.PythonMirror, record.ImageRepository, record.ServiceManager = settings.Name, settings.Region, settings.PyPIIndex, settings.PythonMirror, settings.ImageRepository, settings.ServiceManager
+			record.ImageRepositoryExplicit = settings.ImageRepositoryExplicit
 			store := deploy.Store{Dir: assets.Dir}
 			telemetry.SetStep(ctx, "write_record")
 			if err := store.Write(operationCtx, record); err != nil {
