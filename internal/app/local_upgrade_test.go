@@ -334,9 +334,9 @@ func TestUpgradeFailurePreservesBackupAndBlocksRestart(t *testing.T) {
 }
 
 func TestUpgradeWaitsForServiceHealthchecksToSettle(t *testing.T) {
-	previousInterval := upgradeServicePollInterval
-	upgradeServicePollInterval = time.Millisecond
-	t.Cleanup(func() { upgradeServicePollInterval = previousInterval })
+	previousInterval := composeServicePollInterval
+	composeServicePollInterval = time.Millisecond
+	t.Cleanup(func() { composeServicePollInterval = previousInterval })
 	service, runner, record, dir := upgradeServiceFixture(t, false)
 	runner.startingAfterUp = 3
 	response, err := service.Upgrade(context.Background(), UpgradeOptions{
@@ -355,11 +355,11 @@ func TestUpgradeWaitsForServiceHealthchecksToSettle(t *testing.T) {
 }
 
 func TestUpgradeServiceWaitGivesUpAfterTimeout(t *testing.T) {
-	previousInterval, previousTimeout := upgradeServicePollInterval, upgradeServiceReadyTimeout
-	upgradeServicePollInterval, upgradeServiceReadyTimeout = time.Millisecond, 20*time.Millisecond
-	t.Cleanup(func() { upgradeServicePollInterval, upgradeServiceReadyTimeout = previousInterval, previousTimeout })
+	previousInterval, previousTimeout := composeServicePollInterval, composeServiceReadyTimeout
+	composeServicePollInterval, composeServiceReadyTimeout = time.Millisecond, 20*time.Millisecond
+	t.Cleanup(func() { composeServicePollInterval, composeServiceReadyTimeout = previousInterval, previousTimeout })
 	polls := 0
-	status, err := waitForUpgradedServices(context.Background(), func(context.Context) (deploy.StatusResult, error) {
+	status, err := waitForComposeServices(context.Background(), func(context.Context) (deploy.StatusResult, error) {
 		polls++
 		return deploy.StatusResult{Status: "starting"}, nil
 	})
