@@ -267,10 +267,8 @@ func TestDockerRunnerUsesCurrentLocalContext(t *testing.T) {
 		calls = append(calls, append([]string{command}, args...))
 		joined := strings.Join(args, " ")
 		switch joined {
-		case "context show":
-			return CommandResult{Stdout: "desktop-linux\n"}, nil
-		case "context inspect desktop-linux --format {{.Endpoints.docker.Host}}":
-			return CommandResult{Stdout: "unix:///tmp/docker.sock\n"}, nil
+		case "context inspect --format {{.Name}}\t{{.Endpoints.docker.Host}}":
+			return CommandResult{Stdout: "desktop-linux\tunix:///tmp/docker.sock\n"}, nil
 		}
 		return CommandResult{}, nil
 	}}
@@ -280,7 +278,7 @@ func TestDockerRunnerUsesCurrentLocalContext(t *testing.T) {
 	if _, err := runner.Compose(context.Background(), Record{ComposeProject: "langbot"}, "ps"); err != nil {
 		t.Fatal(err)
 	}
-	if len(calls) != 6 || len(calls[2]) < 3 || calls[2][1] != "--context" || calls[2][2] != "desktop-linux" || len(calls[5]) < 3 || calls[5][1] != "--context" || calls[5][2] != "desktop-linux" {
+	if len(calls) != 4 || len(calls[1]) < 3 || calls[1][1] != "--context" || calls[1][2] != "desktop-linux" || len(calls[3]) < 3 || calls[3][1] != "--context" || calls[3][2] != "desktop-linux" {
 		t.Fatalf("runner commands did not use current local context: %#v", calls)
 	}
 	for _, key := range []string{"DOCKER_HOST=", "DOCKER_CONTEXT=", "DOCKER_TLS_VERIFY=", "DOCKER_CERT_PATH="} {
@@ -295,10 +293,8 @@ func TestDockerRunnerUsesCurrentLocalContext(t *testing.T) {
 func TestDockerRunnerRejectsRemoteContext(t *testing.T) {
 	runner := DockerRunner{Exec: func(_ context.Context, _ string, args ...string) (CommandResult, error) {
 		switch strings.Join(args, " ") {
-		case "context show":
-			return CommandResult{Stdout: "production\n"}, nil
-		case "context inspect production --format {{.Endpoints.docker.Host}}":
-			return CommandResult{Stdout: "ssh://docker.example\n"}, nil
+		case "context inspect --format {{.Name}}\t{{.Endpoints.docker.Host}}":
+			return CommandResult{Stdout: "production\tssh://docker.example\n"}, nil
 		default:
 			t.Fatalf("不应该执行远程 Docker 命令: %v", args)
 			return CommandResult{}, nil

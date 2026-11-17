@@ -208,20 +208,19 @@ func composeWorkingPath(dir, platform string) string {
 }
 
 func (r DockerRunner) localContext(ctx context.Context) (string, CommandResult, error) {
-	shown, err := r.exec(ctx, "docker", "context", "show")
-	if err != nil {
-		return "", shown, err
-	}
-	name := strings.TrimSpace(shown.Stdout)
-	if name == "" {
-		return "", shown, errors.New(i18n.T("Docker context is empty"))
-	}
-	inspected, err := r.exec(ctx, "docker", "context", "inspect", name, "--format", "{{.Endpoints.docker.Host}}")
+	// `docker context inspect` without a name inspects the current context.
+	// Unlike `docker context show` (Docker 23+) it also works on Docker 20.10,
+	// which is still the default docker.io package on Debian 12.
+	inspected, err := r.exec(ctx, "docker", "context", "inspect", "--format", "{{.Name}}\t{{.Endpoints.docker.Host}}")
 	if err != nil {
 		return "", inspected, err
 	}
-	host := strings.TrimSpace(inspected.Stdout)
-	if !isLocalDockerEndpoint(host) {
+	name, host, _ := strings.Cut(strings.TrimSpace(inspected.Stdout), "\t")
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", inspected, errors.New(i18n.T("Docker context is empty"))
+	}
+	if !isLocalDockerEndpoint(strings.TrimSpace(host)) {
 		inspected.Stderr = i18n.T(localContextRequired)
 		return "", inspected, errors.New(inspected.Stderr)
 	}
