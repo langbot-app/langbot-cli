@@ -197,6 +197,7 @@ type Operation struct {
 	processStep     string
 	process         map[string]any
 	sources         map[string][]string
+	sourceMu        sync.Mutex
 }
 
 type operationKey struct{}
@@ -284,6 +285,10 @@ func ImagePullFailed(ctx context.Context) {
 	event.Command, event.Step, event.Outcome = "image_pull", "image_pull", "failed"
 	event.ErrorCode, event.Error = "image_pull", "image_pull"
 	event.DurationMs = time.Since(op.started).Milliseconds()
+	event.PreviousFailures = op.client.failures("image_pull", true)
+	if op.process != nil {
+		event.Details = diagnostic.Object(map[string]any{"process": op.cleanIdentity(op.process)})
+	}
 	op.client.send(event)
 }
 

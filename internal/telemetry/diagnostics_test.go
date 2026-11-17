@@ -111,6 +111,12 @@ func TestProbeSources(t *testing.T) {
 	ctx := context.WithValue(t.Context(), operationKey{}, op)
 	RecordSource(ctx, strings.Replace(server.URL, "://", "://user:pass@", 1)+"/simple?token=secret-value")
 	RecordSource(ctx, server.URL+"/simple")
+	var wait sync.WaitGroup
+	for range 10 {
+		wait.Add(1)
+		go func() { defer wait.Done(); RecordSource(ctx, server.URL+"/simple") }()
+	}
+	wait.Wait()
 	result := probeSources(t.Context(), op.sources["install_package"])
 	if len(result) != 1 || result[0].(map[string]any)["status_code"] != 403 || len(methods) != 1 || methods[0] != "HEAD" {
 		t.Fatal(result, methods)

@@ -52,6 +52,8 @@ func RecordSource(ctx context.Context, address string) {
 	}
 	parsed.User, parsed.RawQuery, parsed.Fragment = nil, "", ""
 	address = parsed.String()
+	op.sourceMu.Lock()
+	defer op.sourceMu.Unlock()
 	if op.sources == nil {
 		op.sources = make(map[string][]string)
 	}
