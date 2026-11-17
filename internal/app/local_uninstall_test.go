@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -18,9 +19,14 @@ import (
 type uninstallRunner struct {
 	containers bool
 	downCalls  int
+	dockerCall func(...string) (deploy.CommandResult, error)
+	downErr    error
 }
 
-func (r *uninstallRunner) Docker(context.Context, ...string) (deploy.CommandResult, error) {
+func (r *uninstallRunner) Docker(_ context.Context, args ...string) (deploy.CommandResult, error) {
+	if len(args) > 0 && args[0] == "run" && r.dockerCall != nil {
+		return r.dockerCall(args...)
+	}
 	return deploy.CommandResult{Stdout: "29"}, nil
 }
 
@@ -34,10 +40,110 @@ func (r *uninstallRunner) Compose(_ context.Context, _ deploy.Record, args ...st
 		return deploy.CommandResult{Stdout: `[{"Service":"langbot","State":"exited"},{"Service":"langbot_plugin_runtime","State":"exited"}]`}, nil
 	case "down --remove-orphans":
 		r.downCalls++
+		if r.downErr != nil {
+			return deploy.CommandResult{}, r.downErr
+		}
 		r.containers = false
 		return deploy.CommandResult{}, nil
 	default:
 		return deploy.CommandResult{}, fmt.Errorf("unexpected Compose command: %s", call)
+	}
+}
+
+func TestUninstallPurgePermissionFallbackAfterDown(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("requires Unix permissions and a non-root user")
+	}
+	for _, mode := range []os.FileMode{0, 0o500} {
+		for _, fail := range []bool{false, true} {
+			t.Run(fmt.Sprintf("mode=%o/fail=%v", mode, fail), func(t *testing.T) {
+				service, runner, record, dir := uninstallFixture(t, true)
+				protected := filepath.Join(record.DataDir, "migration-backups")
+				if err := os.Mkdir(protected, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(protected, "backup.db"), []byte("backup"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Chmod(protected, mode); err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() {
+					os.Chmod(protected, 0o700)
+					os.Chmod(filepath.Join(dir, ".purge-data-"+record.DeploymentID, "migration-backups"), 0o700)
+				})
+				calls := 0
+				var mounted string
+				runner.dockerCall = func(args ...string) (deploy.CommandResult, error) {
+					calls++
+					if runner.downCalls != 1 || runner.containers {
+						t.Fatal("cleanup must run after containers are removed")
+					}
+					joined := strings.Join(args, " ")
+					for _, expected := range []string{"--rm", "--network none", "--user 0:0", "--entrypoint python", "rockchin/langbot:"} {
+						if !strings.Contains(joined, expected) {
+							t.Fatalf("missing %s: %s", expected, joined)
+						}
+					}
+					for _, arg := range args {
+						if strings.HasPrefix(arg, "type=bind,src=") {
+							mounted = strings.TrimSuffix(strings.TrimPrefix(arg, "type=bind,src="), ",dst=/data")
+						}
+					}
+					if fail {
+						return deploy.CommandResult{Stderr: "cleanup denied"}, errors.New("helper failed")
+					}
+					if err := os.Chmod(filepath.Join(mounted, "migration-backups"), 0o700); err != nil {
+						t.Fatal(err)
+					}
+					entries, err := os.ReadDir(mounted)
+					if err != nil {
+						t.Fatal(err)
+					}
+					for _, entry := range entries {
+						if err := os.RemoveAll(filepath.Join(mounted, entry.Name())); err != nil {
+							t.Fatal(err)
+						}
+					}
+					return deploy.CommandResult{}, nil
+				}
+				value, err := service.Uninstall(t.Context(), UninstallOptions{
+					CheckOptions: CheckOptions{Endpoint: record.Endpoint, EndpointSet: true}, PurgeData: true, Yes: true,
+				})
+				data := value.Data.(map[string]any)
+				if calls != 1 || data["project_removed"] != true {
+					t.Fatalf("calls=%d result=%#v err=%v", calls, data, err)
+				}
+				if fail {
+					if err == nil || result.AsError(err).Kind != "recovery_required" || data["data_purged"] != false || data["recovery_path"] != mounted || !strings.Contains(err.Error(), mounted) || !strings.Contains(err.Error(), "cleanup denied") {
+						t.Fatalf("result=%#v err=%v", data, err)
+					}
+					if _, statErr := os.Stat(mounted); statErr != nil {
+						t.Fatal(statErr)
+					}
+				} else if err != nil || data["data_purged"] != true {
+					t.Fatalf("result=%#v err=%v", data, err)
+				}
+			})
+		}
+	}
+}
+
+func TestUninstallDoesNotPurgeWhenDownFails(t *testing.T) {
+	service, runner, record, _ := uninstallFixture(t, true)
+	runner.downErr = errors.New("down failed")
+	runner.dockerCall = func(...string) (deploy.CommandResult, error) {
+		t.Fatal("cleanup must not run while containers remain")
+		return deploy.CommandResult{}, nil
+	}
+	_, err := service.Uninstall(t.Context(), UninstallOptions{
+		CheckOptions: CheckOptions{Endpoint: record.Endpoint, EndpointSet: true}, PurgeData: true, Yes: true,
+	})
+	if err == nil || !runner.containers {
+		t.Fatalf("err=%v containers=%v", err, runner.containers)
+	}
+	if _, err := os.Stat(filepath.Join(record.DataDir, "config.yaml")); err != nil {
+		t.Fatal(err)
 	}
 }
 

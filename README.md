@@ -221,6 +221,8 @@ lbctl install --driver docker --version <vX.Y.Z> --dir /absolute/path/second \
 
 Adapter mappings accept comma-separated `HOST:CONTAINER` pairs or equal-length ranges; container ports are limited to `2280-2285`. Publish only the ports you need, for example `--adapter-ports 12280:2280,12283:2283`. Preflight checks only the selected host ports and Compose project, and rejects overlapping mappings. Container-internal service ports stay unchanged. The generated debug URL follows the selected host debug port. Publication settings are saved with the deployment and preserved during upgrades; legacy deployment records continue to work.
 
+Docker `uninstall --purge-data --yes` removes the managed containers before cleaning data. If container-owned files cannot be removed by the host user, lbctl uses the deployment's Core image in a temporary root container with networking disabled. Backups outside `data/` are preserved. Cleanup failures report the retained path for inspection and manual removal with elevated permissions; data symlinks and custom Compose layouts are not automatically purged.
+
 `adopt` registers an existing Compose deployment for local management while preserving its service configuration:
 
 ```sh
