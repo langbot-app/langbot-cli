@@ -3,10 +3,17 @@
 package deploy
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"syscall"
 )
+
+func nativeStopWaiter(string) (func(context.Context) error, func(), error) {
+	return func(context.Context) error { return nil }, func() {}, nil
+}
+
+func nativeRemovalRetryable(error) bool { return false }
 
 func detachNative(command *exec.Cmd) { command.SysProcAttr = &syscall.SysProcAttr{Setsid: true} }
 

@@ -2,6 +2,7 @@ package deploy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -14,6 +15,111 @@ import (
 
 	"golang.org/x/sys/windows"
 )
+
+func TestNativeStopWaiterTracksChildAfterSupervisorExit(t *testing.T) {
+	dir := t.TempDir()
+	childPath := filepath.Join(dir, "child.pid")
+	command := exec.Command(os.Args[0], "-test.run=^TestNativeWindowsCancellationTree$")
+	command.Env = append(os.Environ(), "LBCTL_TREE_HELPER=parent", "LBCTL_TREE_PID="+childPath)
+	hideNativeConsole(command)
+	if err := command.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_ = command.Process.Kill()
+		_ = command.Wait()
+	}()
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	var childPID int
+	if err := waitNativeExit(ctx, func() (bool, error) {
+		data, _ := os.ReadFile(childPath)
+		childPID, _ = strconv.Atoi(strings.TrimSpace(string(data)))
+		return childPID > 0, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	child, err := os.FindProcess(childPID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer child.Release()
+	defer child.Kill()
+	pidPath := filepath.Join(dir, "native.pid")
+	if err := os.WriteFile(pidPath, []byte(strconv.Itoa(command.Process.Pid)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	wait, cleanup, err := nativeStopWaiter(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	if err := command.Process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(pidPath); err != nil {
+		t.Fatal(err)
+	}
+	short, stop := context.WithTimeout(ctx, 200*time.Millisecond)
+	defer stop()
+	if err := wait(short); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("wait returned while child was alive: %v", err)
+	}
+	if err := child.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	if err := wait(ctx); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestNativeRemovalRetryable(t *testing.T) {
+	for _, code := range []error{windows.ERROR_ACCESS_DENIED, windows.ERROR_SHARING_VIOLATION, windows.ERROR_LOCK_VIOLATION} {
+		if !nativeRemovalRetryable(&os.PathError{Op: "remove", Path: "parser.pyd", Err: code}) {
+			t.Fatalf("not retryable: %v", code)
+		}
+	}
+	if nativeRemovalRetryable(windows.ERROR_PATH_NOT_FOUND) {
+		t.Fatal("unexpected retry")
+	}
+}
+
+func TestRemoveNativeFilesRetriesSharingViolation(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "parser.pyd")
+	if err := os.WriteFile(path, []byte("loaded extension"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	name, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handle, err := windows.CreateFile(name, windows.GENERIC_READ, windows.FILE_SHARE_READ, nil, windows.OPEN_EXISTING, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if handle != 0 {
+			windows.CloseHandle(handle)
+		}
+	}()
+	calls := 0
+	err = removeNativeFiles(t.Context(), dir, func(path string) error {
+		calls++
+		err := os.RemoveAll(path)
+		if calls == 1 {
+			if !nativeRemovalRetryable(err) {
+				t.Fatalf("expected locked file: %v", err)
+			}
+			windows.CloseHandle(handle)
+			handle = 0
+		}
+		return err
+	}, nativeRemovalRetryable, time.Second)
+	if err != nil || calls != 2 {
+		t.Fatalf("calls=%d err=%v", calls, err)
+	}
+}
 
 func TestNativeWindowsConsole(t *testing.T) {
 	if mode := os.Getenv("LBCTL_CONSOLE_HELPER"); mode != "" {

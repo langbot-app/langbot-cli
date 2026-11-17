@@ -237,6 +237,16 @@ func NativeStart(ctx context.Context, dir string, record Record) error {
 }
 
 func NativeStop(ctx context.Context, dir string, record Record) error {
+	if runtime.GOOS == "windows" {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+	}
+	wait, closeHandles, err := nativeStopWaiter(dir)
+	if err != nil {
+		return err
+	}
+	defer closeHandles()
 	if record.ServiceManager == "windows-run" {
 		if err := removeNativeRun(record); err != nil {
 			return err
@@ -264,22 +274,16 @@ func NativeStop(ctx context.Context, dir string, record Record) error {
 		}
 	default:
 		if !NativeRunning(dir) {
-			return nil
+			return wait(ctx)
 		}
 		if err := writeAtomic(filepath.Join(dir, "native.stop"), []byte("stop"), 0o600); err != nil {
 			return err
 		}
 	}
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
-	for NativeRunning(dir) {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-ticker.C:
-		}
+	if err := waitNativeExit(ctx, func() (bool, error) { return !NativeRunning(dir), nil }); err != nil {
+		return err
 	}
-	return nil
+	return wait(ctx)
 }
 
 func RemoveNativeService(ctx context.Context, record Record) error {
