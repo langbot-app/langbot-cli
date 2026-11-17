@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"errors"
-	"os"
 	"path/filepath"
 	"time"
 
@@ -70,12 +69,12 @@ func (s *Service) Uninstall(ctx context.Context, options UninstallOptions) (Resu
 				if current.DataDir != filepath.Join(diagnostics.Dir, "data") {
 					return result.New("precondition", i18n.T("invalid data directory"))
 				}
-				if err := os.RemoveAll(current.DataDir); err != nil {
+				if err := deploy.RemoveNativeFiles(operationCtx, current.DataDir); err != nil {
 					return err
 				}
 			}
 			telemetry.SetStep(ctx, "remove_venvs")
-			if err := os.RemoveAll(filepath.Join(diagnostics.Dir, "venvs")); err != nil {
+			if err := deploy.RemoveNativeFiles(operationCtx, filepath.Join(diagnostics.Dir, "venvs")); err != nil {
 				return err
 			}
 			current.Uninstalled = true

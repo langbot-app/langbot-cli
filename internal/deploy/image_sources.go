@@ -32,8 +32,6 @@ func PublicImageRepositories() []string {
 		"docker.m.daocloud.io/rockchin/langbot",
 		"docker.1ms.run/rockchin/langbot",
 		"dockerproxy.net/rockchin/langbot",
-		"hub.rat.dev/rockchin/langbot",
-		"docker.xuanyuan.me/rockchin/langbot",
 	}
 }
 

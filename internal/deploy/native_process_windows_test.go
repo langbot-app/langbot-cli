@@ -2,6 +2,7 @@ package deploy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -14,6 +15,39 @@ import (
 
 	"golang.org/x/sys/windows"
 )
+
+func TestNativeWindowsRemovalWaitsForFileUnlock(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "_http_parser.pyd")
+	if err := os.WriteFile(path, []byte("library"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	name, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handle, err := windows.CreateFile(name, windows.GENERIC_READ, windows.FILE_SHARE_READ, nil, windows.OPEN_EXISTING, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	released := make(chan struct{})
+	go func() { time.Sleep(450 * time.Millisecond); windows.CloseHandle(handle); close(released) }()
+	defer func() { <-released }()
+	if err := RemoveNativeFiles(t.Context(), dir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	for _, code := range []error{windows.ERROR_ACCESS_DENIED, windows.ERROR_SHARING_VIOLATION} {
+		if !retryNativeRemoval(&os.PathError{Op: "remove", Path: path, Err: code}) {
+			t.Fatal(code)
+		}
+	}
+	if retryNativeRemoval(errors.New("unrelated")) {
+		t.Fatal("retried unrelated error")
+	}
+}
 
 func TestNativeWindowsConsole(t *testing.T) {
 	if mode := os.Getenv("LBCTL_CONSOLE_HELPER"); mode != "" {
@@ -107,9 +141,27 @@ func TestNativeWindowsCancellationTree(t *testing.T) {
 	if childPID == 0 {
 		t.Fatal("child did not start")
 	}
+	processes, err := nativeProcessTree(command.Process.Pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, pid := range processes {
+		if pid == childPID {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("child %d missing from %v", childPID, processes)
+	}
 	cancel()
 	_ = command.Wait()
 	waited = true
+	waitCtx, waitCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer waitCancel()
+	if err := waitNativeProcesses(waitCtx, processes); err != nil {
+		t.Fatal(err)
+	}
 	if nativePIDAlive(childPID) {
 		t.Fatal("Python-style subprocess tree survived cancellation")
 	}

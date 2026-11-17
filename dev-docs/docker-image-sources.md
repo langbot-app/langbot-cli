@@ -64,8 +64,11 @@ throughput or a guarantee of reachability from mainland China.
 | `docker.langbot.app/langbot-public/rockchin/langbot` | LangBot canonical registry | Available | 1209 ms |
 | `rockchin/langbot` | Docker Hub | Available | 1773 ms |
 
-Candidates that are unavailable in this snapshot remain probe candidates; their
-failures do not prevent the other sources from being selected.
+The automatic candidate list excludes `docker.xuanyuan.me`: its HTTP 403 browser
+challenge cannot be completed by the CLI. It also excludes `hub.rat.dev`: the
+redirect reaches `docker.1ms.run`, which is already probed directly, so the alias
+adds latency without an independent fallback. Existing stored repositories and
+explicit `--image-repository` values remain supported, including redirects.
 
 ## Regression coverage
 

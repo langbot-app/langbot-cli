@@ -119,6 +119,7 @@ func (s *Service) Doctor(ctx context.Context, options CheckOptions) (Result, err
 	}
 	localCtx, cancel := context.WithTimeout(ctx, resolved.Connection.Timeout)
 	defer cancel()
+	resolved.Diagnostics.Region = options.Region
 	localChecks, localErr := resolved.Diagnostics.Doctor(localCtx)
 	checks = append(checks, localChecks...)
 	data["checks"] = checks
@@ -273,6 +274,7 @@ func (s *Service) localPreflight(ctx context.Context, resolved environmentResolu
 	checks := environmentChecks(resolved.Environment)
 	localCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+	diagnostics.Region = options.Region
 	localChecks, localErr := diagnostics.Doctor(localCtx)
 	checks = append(checks, localChecks...)
 	data := map[string]any{"environment": resolved.Environment, "checks": checks}

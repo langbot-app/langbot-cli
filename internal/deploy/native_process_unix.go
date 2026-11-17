@@ -14,6 +14,10 @@ func releaseNativeConsole() error { return nil }
 
 func hideNativeConsole(command *exec.Cmd) {}
 
+func nativeProcessTree(pid int) ([]int, error) { return nil, nil }
+
+func retryNativeRemoval(err error) bool { return false }
+
 func nativePIDAlive(pid int) bool { return pid > 0 && syscall.Kill(pid, 0) == nil }
 
 func configureNativeChild(command *exec.Cmd) {

@@ -29,7 +29,21 @@ type UpgradeOptions struct {
 	Yes     bool
 }
 
-func (s *Service) Upgrade(ctx context.Context, options UpgradeOptions) (Result, error) {
+func (s *Service) Upgrade(ctx context.Context, options UpgradeOptions) (responseResult Result, responseErr error) {
+	var recoveryEndpoint string
+	defer func() {
+		if responseErr == nil {
+			return
+		}
+		data, _ := responseResult.Data.(map[string]any)
+		if data == nil {
+			data = map[string]any{}
+		}
+		data["action"], data["step"] = "upgrade", telemetry.CurrentStep(ctx)
+		data["local_name"], data["local_dir"] = options.LocalName, options.LocalDir
+		data["recovery_endpoint"] = recoveryEndpoint
+		responseResult.Data = data
+	}()
 	if !options.DryRun && !options.Yes {
 		return Result{}, result.New("precondition", i18n.T("Upgrade requires explicit --yes"))
 	}
@@ -51,10 +65,12 @@ func (s *Service) Upgrade(ctx context.Context, options UpgradeOptions) (Result, 
 	}
 	operationCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+	telemetry.SetStep(ctx, "validate_target")
 	record, diagnostics, err := s.lifecycleTarget(operationCtx, options.CheckOptions)
 	if err != nil {
 		return Result{}, err
 	}
+	recoveryEndpoint = record.Endpoint
 	var response Result
 	preview := record
 	preview.CoreVersion = targetVersion
@@ -83,6 +99,7 @@ func (s *Service) Upgrade(ctx context.Context, options UpgradeOptions) (Result, 
 	}
 	err = deploy.WithMutationLock(operationCtx, diagnostics.Dir, func() error {
 		if err := deploy.CheckUpgradeInterrupted(diagnostics.Dir); err != nil {
+			telemetry.SetStep(operationCtx, "interrupted")
 			return result.New("recovery_required", err.Error())
 		}
 		current, readErr := diagnostics.Store.Read()
@@ -121,7 +138,8 @@ func (s *Service) Upgrade(ctx context.Context, options UpgradeOptions) (Result, 
 		} else if before.HTTP["reachable"] == true {
 			return result.New("precondition", i18n.T("Deployment stopped but endpoint is occupied by another service"))
 		}
-		dataBytes, freeBytes, dataErr := deploy.InspectUpgradeData(current)
+		telemetry.SetStep(operationCtx, "backup_preflight")
+		dataBytes, freeBytes, dataErr := deploy.InspectDockerUpgradeData(operationCtx, diagnostics.Runner, current)
 		if dataErr != nil {
 			return result.New("precondition", dataErr.Error())
 		}
@@ -222,11 +240,11 @@ func (s *Service) Upgrade(ctx context.Context, options UpgradeOptions) (Result, 
 		if stoppedErr != nil || stoppedStatus.Status != "stopped" {
 			return fail("stop_readback", i18n.T("Unable to confirm all required services stopped"))
 		}
-		if _, _, err := deploy.InspectUpgradeData(current); err != nil {
+		if _, _, err := deploy.InspectDockerUpgradeData(operationCtx, diagnostics.Runner, current); err != nil {
 			return fail("backup_preflight", i18n.T("Data scope or space check failed after stopping services"))
 		}
 		telemetry.SetStep(operationCtx, "backup_data")
-		backupDir, backupErr := deploy.CreateUpgradeBackup(operationCtx, current, state, diagnostics.Dir)
+		backupDir, backupErr := deploy.CreateUpgradeBackup(operationCtx, current, state, diagnostics.Dir, diagnostics.Runner)
 		if backupErr != nil {
 			return fail("backup", i18n.T("Failed to create or verify a complete backup"))
 		}

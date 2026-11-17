@@ -20,6 +20,31 @@ type fakeRunner struct {
 	calls   [][]string
 }
 
+func TestDoctorRegionWithoutDeployment(t *testing.T) {
+	for _, test := range []struct {
+		name, flag, env string
+		canonical       bool
+	}{
+		{"environment", "", "cn", false}, {"flag", "cn", "global", false},
+		{"override", "global", "cn", true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("LANGBOT_REGION", test.env)
+			dir := t.TempDir()
+			checks, _ := (Diagnostics{Dir: dir, Store: Store{Dir: dir}, Runner: &fakeRunner{}, Region: test.flag, HTTP: testImageSources(t, registryResponse).HTTP}).Doctor(t.Context())
+			for _, check := range checks {
+				if detail, ok := check.Detail.(map[string]any); ok && detail["selected"] != nil {
+					if (detail["selected"] == DefaultImageRepository) != test.canonical {
+						t.Fatalf("selected: %v", detail["selected"])
+					}
+					return
+				}
+			}
+			t.Fatal("missing selected repository")
+		})
+	}
+}
+
 func (f *fakeRunner) Docker(_ context.Context, args ...string) (CommandResult, error) {
 	f.calls = append(f.calls, append([]string{"docker"}, args...))
 	key := strings.Join(args, " ")
@@ -179,7 +204,7 @@ func TestDoctorOnCleanNestedDirIsReadOnly(t *testing.T) {
 	found := false
 	for _, check := range checks {
 		if detail, ok := check.Detail.(map[string]any); ok && detail["selected"] == DefaultImageRepository {
-			found = len(detail["probes"].([]ImageProbe)) == 7
+			found = len(detail["probes"].([]ImageProbe)) == len(PublicImageRepositories())+2
 		}
 	}
 	if !found {
