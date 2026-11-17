@@ -27,9 +27,10 @@ const readAuthConfig = `import os, sys, importlib.resources
 path = sys.argv[1]
 if os.path.exists(path):
     with open(path, encoding='utf-8') as source:
-        sys.stdout.write(source.read())
+        text = source.read()
 else:
-    sys.stdout.write(importlib.resources.files('langbot.templates').joinpath('config.yaml').read_text(encoding='utf-8'))
+    text = importlib.resources.files('langbot.templates').joinpath('config.yaml').read_text(encoding='utf-8')
+sys.stdout.buffer.write(text.encode('utf-8'))
 `
 
 const writeAuthConfig = `import os, shutil

@@ -145,7 +145,7 @@ func (s *Service) repairDockerInstall(ctx context.Context, dir string, record de
 		}
 		return s.bindLocalAuth(ctx, record)
 	})
-	data := map[string]any{"action": "install", "record": record, "changed": err == nil, "url": record.Endpoint, "local_auth": deploy.SupportsLocalAuth(record.CoreVersion)}
+	data := map[string]any{"action": "install", "record": record, "changed": err == nil, "url": record.Endpoint, "instance_dir": dir, "local_auth": deploy.SupportsLocalAuth(record.CoreVersion)}
 	data["local_context"] = record.DeploymentID
 	if err == nil {
 		data["status"] = map[string]any{"status": "running"}

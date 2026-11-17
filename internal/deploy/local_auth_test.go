@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -11,6 +12,27 @@ import (
 
 	"go.yaml.in/yaml/v3"
 )
+
+func TestAuthConfigReaderUsesUTF8(t *testing.T) {
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		python, err = exec.LookPath("python")
+	}
+	if err != nil {
+		t.Skip("Python unavailable")
+	}
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	content := "api: {}\n# 本地配置\n"
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command(python, "-c", readAuthConfig, path)
+	command.Env = append(os.Environ(), "PYTHONIOENCODING=ascii", "PYTHONUTF8=0")
+	output, err := command.Output()
+	if err != nil || string(output) != content {
+		t.Fatalf("UTF-8 config transfer failed: %v", err)
+	}
+}
 
 func TestConfigureAPIKey(t *testing.T) {
 	input := []byte("# keep comment\napi:\n  webhook_prefix: https://example.org\nother: [one, two]\n")
