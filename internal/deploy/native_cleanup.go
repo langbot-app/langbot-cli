@@ -2,8 +2,11 @@ package deploy
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"time"
+
+	"github.com/langbot-app/langbot-cli/internal/i18n"
 )
 
 func waitNativeProcesses(ctx context.Context, processes []int) error {
@@ -11,7 +14,7 @@ func waitNativeProcesses(ctx context.Context, processes []int) error {
 		for nativePIDAlive(pid) {
 			select {
 			case <-ctx.Done():
-				return ctx.Err()
+				return fmt.Errorf(i18n.T("Waiting for native process %d to exit: %w"), pid, ctx.Err())
 			case <-time.After(100 * time.Millisecond):
 			}
 		}
