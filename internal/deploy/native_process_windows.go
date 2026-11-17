@@ -21,29 +21,9 @@ func nativeRemovalRetryable(err error) bool {
 }
 
 func nativeStopWaiter(dir string) (func(context.Context) error, func(), error) {
-	var handles []windows.Handle
-	closeHandles := func() {
-		for _, handle := range handles {
-			windows.CloseHandle(handle)
-		}
-	}
-	wait := func(ctx context.Context) error {
-		return waitNativeExit(ctx, func() (bool, error) {
-			for _, handle := range handles {
-				status, err := windows.WaitForSingleObject(handle, 0)
-				if err != nil {
-					return false, err
-				}
-				if status != windows.WAIT_OBJECT_0 {
-					return false, nil
-				}
-			}
-			return true, nil
-		})
-	}
 	data, err := os.ReadFile(filepath.Join(dir, "native.pid"))
 	if os.IsNotExist(err) {
-		return wait, closeHandles, nil
+		return func(context.Context) error { return nil }, func() {}, nil
 	}
 	if err != nil {
 		return nil, nil, err
@@ -65,17 +45,54 @@ func nativeStopWaiter(dir string) (func(context.Context) error, func(), error) {
 	if !errors.Is(err, windows.ERROR_NO_MORE_FILES) {
 		return nil, nil, err
 	}
-	pending := []uint32{uint32(pid)}
+	return nativeProcessWaiter(uint32(pid), children)
+}
+
+func nativeProcessWaiter(pid uint32, children map[uint32][]uint32) (func(context.Context) error, func(), error) {
+	type processHandle struct {
+		pid    uint32
+		handle windows.Handle
+	}
+	var handles []processHandle
+	closeHandles := func() {
+		for _, process := range handles {
+			windows.CloseHandle(process.handle)
+		}
+	}
+	wait := func(ctx context.Context) error {
+		var pendingPID uint32
+		err := waitNativeExit(ctx, func() (bool, error) {
+			for _, process := range handles {
+				status, err := windows.WaitForSingleObject(process.handle, 0)
+				if err != nil {
+					return false, err
+				}
+				if status != windows.WAIT_OBJECT_0 {
+					pendingPID = process.pid
+					return false, nil
+				}
+			}
+			return true, nil
+		})
+		if err != nil && pendingPID != 0 {
+			return fmt.Errorf(i18n.T("LangBot process %d has not exited: %w"), pendingPID, err)
+		}
+		return err
+	}
+	type candidate struct {
+		pid           uint32
+		parentStarted int64
+	}
+	pending := []candidate{{pid: pid}}
 	seen := make(map[uint32]bool)
 	for len(pending) > 0 {
 		current := pending[0]
 		pending = pending[1:]
-		if seen[current] {
+		if seen[current.pid] {
 			continue
 		}
-		seen[current] = true
-		pending = append(pending, children[current]...)
-		handle, err := windows.OpenProcess(windows.SYNCHRONIZE, false, current)
+		seen[current.pid] = true
+		handle, err := windows.OpenProcess(windows.SYNCHRONIZE|windows.PROCESS_QUERY_LIMITED_INFORMATION, false, current.pid)
 		if errors.Is(err, windows.ERROR_INVALID_PARAMETER) {
 			continue
 		}
@@ -83,7 +100,20 @@ func nativeStopWaiter(dir string) (func(context.Context) error, func(), error) {
 			closeHandles()
 			return nil, nil, err
 		}
-		handles = append(handles, handle)
+		var created, exited, kernel, user windows.Filetime
+		if err := windows.GetProcessTimes(handle, &created, &exited, &kernel, &user); err != nil {
+			windows.CloseHandle(handle)
+			closeHandles()
+			return nil, nil, err
+		}
+		if created.Nanoseconds() < current.parentStarted {
+			windows.CloseHandle(handle)
+			continue
+		}
+		handles = append(handles, processHandle{pid: current.pid, handle: handle})
+		for _, child := range children[current.pid] {
+			pending = append(pending, candidate{pid: child, parentStarted: created.Nanoseconds()})
+		}
 	}
 	return wait, closeHandles, nil
 }

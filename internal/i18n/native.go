@@ -2,6 +2,7 @@ package i18n
 
 func init() {
 	for key, value := range map[string]string{
+		"LangBot process %d has not exited: %w":                    "LangBot 进程 %d 尚未退出：%w",
 		"waiting for LangBot processes to exit: %w":                "等待 LangBot 进程退出：%w",
 		"cannot remove LangBot files; close LangBot and retry: %w": "无法删除 LangBot 文件；请关闭 LangBot 后重试：%w",
 		"invalid native supervisor PID: %s":                        "原生守护进程 PID 无效：%s",

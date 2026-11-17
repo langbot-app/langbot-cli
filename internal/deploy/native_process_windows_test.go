@@ -54,8 +54,18 @@ func TestNativeStopWaiterTracksChildAfterSupervisorExit(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer cleanup()
+	staleWait, staleCleanup, err := nativeProcessWaiter(uint32(command.Process.Pid), map[uint32][]uint32{
+		uint32(command.Process.Pid): {uint32(os.Getpid())},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer staleCleanup()
 	if err := command.Process.Kill(); err != nil {
 		t.Fatal(err)
+	}
+	if err := staleWait(ctx); err != nil {
+		t.Fatalf("waited for an older process with a reused parent PID: %v", err)
 	}
 	if err := os.Remove(pidPath); err != nil {
 		t.Fatal(err)
