@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 const purgeDockerData = `import os, shutil
@@ -42,10 +43,15 @@ func PurgeDockerData(ctx context.Context, runner Runner, dir string, record Reco
 	}
 	output, err := runner.Docker(ctx, "run", "--rm", "--network", "none", "--user", "0:0", "--mount", "type=bind,src="+target+",dst=/data", "--entrypoint", "python", image, "-c", purgeDockerData)
 	if err != nil {
-		return false, recoveryPath, fmt.Errorf("%w: %s", err, output.Stderr)
+		return false, recoveryPath, fmt.Errorf("%w: %s", err, lastLine(output.Stderr))
 	}
 	if err := os.Remove(target); err != nil {
 		return false, recoveryPath, err
 	}
 	return true, "", nil
+}
+
+func lastLine(text string) string {
+	lines := strings.Split(strings.TrimSpace(text), "\n")
+	return strings.TrimSpace(lines[len(lines)-1])
 }

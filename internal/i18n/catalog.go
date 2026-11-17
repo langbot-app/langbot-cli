@@ -539,6 +539,7 @@ var chinese = map[string]string{
 	"Switched to environment":                                                      "已切换到环境",
 	"Upgraded LangBot ":                                                            "已升级 LangBot ",
 	"Uninstalled managed local deployment and removed data; backups and deployment records preserved": "已卸载本机受管部署并清理数据；备份和部署记录已保留",
+	"Uninstalled managed local deployment, but data cleanup is incomplete; see preserved path above":  "已卸载本机受管部署，但数据清理未完成；请查看上方保留路径",
 	"Uninstalled managed local deployment; data and deployment records preserved":                     "已卸载本机受管部署；数据和部署记录已保留",
 	"Changed":                  "已变更",
 	"Local deployment started": "已启动本机部署",

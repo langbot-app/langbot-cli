@@ -458,7 +458,11 @@ func renderLocalAction(w io.Writer, data map[string]any) error {
 		if data["project_removed"] == true {
 			line = i18n.T("Uninstalled managed local deployment; data and deployment records preserved")
 			if data["purge_data"] == true {
-				line = i18n.T("Uninstalled managed local deployment and removed data; backups and deployment records preserved")
+				if data["data_purged"] == true {
+					line = i18n.T("Uninstalled managed local deployment and removed data; backups and deployment records preserved")
+				} else {
+					line = i18n.T("Uninstalled managed local deployment, but data cleanup is incomplete; see preserved path above")
+				}
 			}
 		} else {
 			line = i18n.T("Uninstall incomplete; run lbctl status and lbctl doctor")
