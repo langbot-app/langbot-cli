@@ -246,12 +246,16 @@ func PrepareNative(ctx context.Context, dir string, record Record, out io.Writer
 	if err != nil {
 		return err
 	}
+	telemetry.SetTools(ctx, uv, NativePython(dir, record.CoreVersion))
 	var lastOutput string
 	run := func(args ...string) error {
+		for _, arg := range args {
+			telemetry.RecordSource(ctx, arg)
+		}
 		command := exec.CommandContext(ctx, uv, args...)
 		command.Env = NativeEnvironment(record)
 		var err error
-		lastOutput, err = runNativeCommand(command, out)
+		lastOutput, err = runNativeCommand(ctx, command, out)
 		if err != nil {
 			if ctx.Err() != nil {
 				err = fmt.Errorf("%w: %w", ctx.Err(), err)
@@ -261,6 +265,14 @@ func PrepareNative(ctx context.Context, dir string, record Record, out io.Writer
 		return err
 	}
 	telemetry.SetStep(ctx, "install_python")
+	pythonSource := record.PythonMirror
+	if pythonSource == "" {
+		pythonSource = os.Getenv("UV_PYTHON_INSTALL_MIRROR")
+	}
+	if pythonSource == "" {
+		pythonSource = "https://github.com/astral-sh/python-build-standalone/releases"
+	}
+	telemetry.RecordSource(ctx, pythonSource)
 	if err := run("python", "install", "3.12"); err != nil {
 		return err
 	}

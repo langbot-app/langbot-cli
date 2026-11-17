@@ -42,7 +42,7 @@ func SelectNativeManager(ctx context.Context) string {
 	}
 	if runtime.GOOS == "darwin" {
 		if current, err := user.Current(); err == nil {
-			if _, err := runNativeCommand(exec.CommandContext(ctx, "launchctl", "print", "gui/"+current.Uid), nil); err == nil {
+			if _, err := runNativeCommand(ctx, exec.CommandContext(ctx, "launchctl", "print", "gui/"+current.Uid), nil); err == nil {
 				return "launchd"
 			}
 		}
@@ -52,7 +52,7 @@ func SelectNativeManager(ctx context.Context) string {
 		if !currentUserIsRoot() {
 			args = append([]string{"--user"}, args...)
 		}
-		if _, err := runNativeCommand(exec.CommandContext(ctx, "systemctl", args...), nil); err == nil {
+		if _, err := runNativeCommand(ctx, exec.CommandContext(ctx, "systemctl", args...), nil); err == nil {
 			if currentUserIsRoot() {
 				return "systemd"
 			}
@@ -119,7 +119,7 @@ func InstallNativeService(ctx context.Context, dir string, record Record) error 
 		case "launchd":
 			return RemoveNativeService(ctx, record)
 		case "schtasks":
-			_, err := runNativeCommand(nativeAutostartToggle(ctx, record, false), nil)
+			_, err := runNativeCommand(ctx, nativeAutostartToggle(ctx, record, false), nil)
 			return err
 		}
 	}
@@ -138,7 +138,7 @@ func InstallNativeService(ctx context.Context, dir string, record Record) error 
 	case "launchd":
 		content = `<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>Label</key><string>` + xmlText(nativeServiceName(record)) + `</string><key>ProgramArguments</key><array><string>` + xmlText(binary) + `</string><string>_native-run</string><string>` + xmlText(dir) + `</string></array><key>RunAtLoad</key><true/><key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict></dict></plist>`
 	case "schtasks":
-		_, err := runNativeCommand(exec.CommandContext(ctx, "schtasks.exe", "/Create", "/F", "/SC", "ONLOGON", "/TN", nativeServiceName(record), "/TR", `"`+binary+`" _native-run "`+dir+`"`), nil)
+		_, err := runNativeCommand(ctx, exec.CommandContext(ctx, "schtasks.exe", "/Create", "/F", "/SC", "ONLOGON", "/TN", nativeServiceName(record), "/TR", `"`+binary+`" _native-run "`+dir+`"`), nil)
 		return err
 	case "windows-run":
 		return installNativeRun(record, binary, dir)
@@ -157,7 +157,7 @@ func InstallNativeService(ctx context.Context, dir string, record Record) error 
 		if err := nativeSystemctl(ctx, record, "daemon-reload"); err != nil {
 			return err
 		}
-		_, err := runNativeCommand(nativeAutostartToggle(ctx, record, record.Autostart == nil || *record.Autostart), nil)
+		_, err := runNativeCommand(ctx, nativeAutostartToggle(ctx, record, record.Autostart == nil || *record.Autostart), nil)
 		return err
 	}
 	return nil
@@ -167,7 +167,7 @@ func nativeSystemctl(ctx context.Context, record Record, args ...string) error {
 	if record.ServiceManager == "systemd-user" {
 		args = append([]string{"--user"}, args...)
 	}
-	_, err := runNativeCommand(exec.CommandContext(ctx, "systemctl", args...), nil)
+	_, err := runNativeCommand(ctx, exec.CommandContext(ctx, "systemctl", args...), nil)
 	return err
 }
 
@@ -201,9 +201,9 @@ func NativeStart(ctx context.Context, dir string, record Record) error {
 		if pathErr != nil {
 			return pathErr
 		}
-		_, err = runNativeCommand(exec.CommandContext(ctx, "launchctl", "load", path), nil)
+		_, err = runNativeCommand(ctx, exec.CommandContext(ctx, "launchctl", "load", path), nil)
 	case "schtasks":
-		_, err = runNativeCommand(exec.CommandContext(ctx, "schtasks.exe", "/Run", "/TN", nativeServiceName(record)), nil)
+		_, err = runNativeCommand(ctx, exec.CommandContext(ctx, "schtasks.exe", "/Run", "/TN", nativeServiceName(record)), nil)
 	case "process", "windows-run":
 		binary, binaryErr := os.Executable()
 		if binaryErr != nil {
@@ -254,8 +254,8 @@ func NativeStop(ctx context.Context, dir string, record Record) error {
 		}
 		if NativeRunning(dir) {
 			target := "gui/" + current.Uid + "/" + nativeServiceName(record)
-			if _, err := runNativeCommand(exec.CommandContext(ctx, "launchctl", "print", target), nil); err == nil {
-				if _, err := runNativeCommand(exec.CommandContext(ctx, "launchctl", "bootout", target), nil); err != nil {
+			if _, err := runNativeCommand(ctx, exec.CommandContext(ctx, "launchctl", "print", target), nil); err == nil {
+				if _, err := runNativeCommand(ctx, exec.CommandContext(ctx, "launchctl", "bootout", target), nil); err != nil {
 					return err
 				}
 			} else if err := writeAtomic(filepath.Join(dir, "native.stop"), []byte("stop"), 0o600); err != nil {
@@ -295,7 +295,7 @@ func RemoveNativeService(ctx context.Context, record Record) error {
 		if NativeInstallManager(record) != "schtasks" {
 			return nil
 		}
-		_, err := runNativeCommand(exec.CommandContext(ctx, "schtasks.exe", "/Delete", "/F", "/TN", nativeServiceName(record)), nil)
+		_, err := runNativeCommand(ctx, exec.CommandContext(ctx, "schtasks.exe", "/Delete", "/F", "/TN", nativeServiceName(record)), nil)
 		return err
 	}
 	path, err := nativeServicePath(record)

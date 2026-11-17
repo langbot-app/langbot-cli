@@ -3,8 +3,11 @@ package deploy
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,6 +17,7 @@ import (
 	"time"
 
 	"github.com/gofrs/flock"
+	"github.com/langbot-app/langbot-cli/internal/telemetry"
 )
 
 type fakeNativeRunKey struct {
@@ -76,7 +80,7 @@ func TestNativeCommandOutput(t *testing.T) {
 	command := exec.CommandContext(context.Background(), os.Args[0], "-test.run=^TestNativeCommandOutput$")
 	command.Env = append(os.Environ(), "LBCTL_COMMAND_HELPER=1")
 	var output bytes.Buffer
-	tail, err := runNativeCommand(command, &output)
+	tail, err := runNativeCommand(context.Background(), command, &output)
 	if err == nil || !strings.Contains(err.Error(), filepath.Base(os.Args[0])) || !strings.HasSuffix(err.Error(), "Access is denied.") || len(tail) != 2048 {
 		t.Fatalf("tail=%d err=%v", len(tail), err)
 	}
@@ -90,9 +94,49 @@ func TestNativeCommandSignalIsInterrupted(t *testing.T) {
 		t.Skip("Unix signal termination")
 	}
 	command := exec.CommandContext(t.Context(), "sh", "-c", "kill -TERM $$")
-	_, err := runNativeCommand(command, nil)
+	_, err := runNativeCommand(context.Background(), command, nil)
 	if !errors.Is(err, ErrNativeInterrupted) {
 		t.Fatalf("signal termination not classified: %v", err)
+	}
+}
+
+func TestNativeCommandDiagnostics(t *testing.T) {
+	events := make(chan telemetry.Event, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		var event telemetry.Event
+		if err := json.NewDecoder(request.Body).Decode(&event); err != nil {
+			t.Error(err)
+		}
+		events <- event
+	}))
+	defer server.Close()
+	client := telemetry.New(telemetry.Options{Home: t.TempDir(), LookupEnv: func(key string) (string, bool) {
+		if key == "LBCTL_TELEMETRY_ENDPOINT" {
+			return server.URL, true
+		}
+		return "", false
+	}})
+	ctx, operation := client.Begin(t.Context(), "install")
+	telemetry.SetStep(ctx, "install_package")
+	command := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestNativeCommandOutput$")
+	command.Env = append(os.Environ(), "LBCTL_COMMAND_HELPER=1")
+	_, err := runNativeCommand(ctx, command, nil)
+	operation.Finish(err, "dependency")
+	client.Close()
+	close(events)
+	found := false
+	for event := range events {
+		if event.Outcome != "failed" {
+			continue
+		}
+		found = true
+		process, ok := event.Details["process"].(map[string]any)
+		if !ok || process["exit_code"] != float64(1) || process["stdout"] != "stdout preserved\n" || !strings.HasSuffix(process["stderr"].(string), "Access is denied.") {
+			t.Fatalf("subprocess details: %+v", event.Details)
+		}
+	}
+	if !found {
+		t.Fatal("missing failure")
 	}
 }
 
