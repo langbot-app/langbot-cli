@@ -3006,6 +3006,9 @@ func contextView(name string, ctx config.Context, current bool) map[string]any {
 		view["credential_source"] = "none"
 	} else {
 		view["credential_source"] = ctx.Credential.Type + ":" + ctx.Credential.Name
+		if ctx.Credential.Type == "local_deployment" {
+			view["credential_source"] = "local_deployment"
+		}
 	}
 	return view
 }
@@ -3045,6 +3048,12 @@ func (s *Service) connectionCredentialState(conn config.Connection) string {
 	}
 	if conn.CredentialSource == "stdin" {
 		return "stdin_required"
+	}
+	if conn.CredentialSource == "local_deployment" {
+		if _, err := conn.WithCredential(config.Options{}, s.deps.LookupEnv, nil); err != nil {
+			return "missing"
+		}
+		return "available"
 	}
 	return "not_configured"
 }

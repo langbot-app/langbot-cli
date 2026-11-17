@@ -24,7 +24,7 @@ var secretFlags = regexp.MustCompile(`(?i)(--?[a-z0-9_-]*(?:token|password|passw
 var yamlBlock = regexp.MustCompile(`^([ \t]*)(["']?[a-zA-Z0-9_.-]+["']?)[ \t]*:[ \t]*[|>][+-]?[ \t]*$`)
 var secrets = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)\b(?:bearer|basic)\s+[a-z0-9._~+/=\-]+`),
-	regexp.MustCompile(`\b(?:sk-|ghp_|github_pat_)[a-zA-Z0-9_\-]+`),
+	regexp.MustCompile(`\b(?:sk-|ghp_|github_pat_|lbg_)[a-zA-Z0-9_\-]+`),
 	regexp.MustCompile(`\beyJ[a-zA-Z0-9_\-]+\.[a-zA-Z0-9_\-]+\.[a-zA-Z0-9_\-]+`),
 }
 

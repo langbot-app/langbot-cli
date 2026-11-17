@@ -65,7 +65,10 @@ func Resolve(file File, opts Options, lookup func(string) (string, bool)) (Conne
 		connection.credentialType = "env"
 		connection.credentialRef = "LANGBOT_API_KEY"
 	} else if hasContext && !changedTarget && selected.Credential != nil {
-		connection.CredentialSource = "env:" + selected.Credential.Name
+		connection.CredentialSource = selected.Credential.Type
+		if selected.Credential.Type == "env" {
+			connection.CredentialSource += ":" + selected.Credential.Name
+		}
 		connection.credentialType = selected.Credential.Type
 		connection.credentialRef = selected.Credential.Name
 	}
@@ -95,6 +98,19 @@ func (c Connection) WithCredential(opts Options, lookup func(string) (string, bo
 		if copy.requiresExplicitCredential {
 			return copy, result.AuthSetupError("endpoint_changed", "LANGBOT_API_KEY")
 		}
+		return copy, nil
+	}
+	if copy.credentialType == "local_deployment" {
+		file, err := os.Open(copy.credentialRef)
+		if err != nil {
+			return copy, authError(i18n.T("Local API credential unavailable; run lbctl restart"))
+		}
+		defer file.Close()
+		value, err := readSecret(file)
+		if err != nil {
+			return copy, authError(i18n.T("Local API credential unavailable; run lbctl restart"))
+		}
+		copy.APIKey = value
 		return copy, nil
 	}
 	if copy.credentialType != "env" {

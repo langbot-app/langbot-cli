@@ -86,9 +86,17 @@ The Go baseline is 1.26. Run the compiled binary directly; deployment management
 
 ## Configure remote instances
 
-Provide the API Key through an environment variable or one-time stdin input. Configuration is selected in this order: `--config`, `LANGBOT_CONFIG`, then `~/.config/langbot/config.yaml`. It stores the variable name rather than the key itself. `context list`, `context show`, `status`, and `doctor` display the selected configuration path. Without a name, `context show` inspects the current context. Offline credential availability only means the variable is set; use `context check` or `whoami` to verify authentication.
+Local installations connect automatically: `lbctl install` creates a per-instance API key and a `local-…` context, so `lbctl whoami`, `lbctl bot list`, and `lbctl model list` work without WebUI setup. After startup, the authenticated Workspace is bound to the context so resource writes retain the usual permission and identity checks. The first context becomes current; use `lbctl context use <name>` to switch between instances. Active contexts, including Cloud connections, keep their selection and explicit credential settings. When a new local instance replaces an uninstalled one at the same endpoint, the new context becomes current without changing the retired context's key.
 
-Create a Workspace API Key in the target LangBot dashboard's API Key management after initial setup. Authenticated commands detect missing credentials and show the selected environment variable, hidden-input PowerShell/Bash examples, and a same-target `whoami` verification step. JSON/YAML includes `error.reason` and `error.guidance`; the error type remains `auth` with exit code 3. A rejected key is reported separately from an unset variable; the CLI never prompts automatically or saves the key.
+For remote services, provide the API Key through an environment variable or one-time stdin input. Configuration is selected in this order: `--config`, `LANGBOT_CONFIG`, then `~/.config/langbot/config.yaml`. It stores a credential reference rather than the key itself. `context list`, `context show`, `status`, and `doctor` display the selected configuration path. Without a name, `context show` inspects the current context. Offline credential availability does not verify authentication; use `context check` or `whoami`.
+
+Automatic local authentication requires Core **v4.10.3+**, the first release containing `api.global_api_key` (v4.10.2 lacks it). Keys use 32 cryptographically random bytes and are stored in Core's `data/config.yaml` and a separate owner-only `.api-key` file in the deployment directory (0600 on Unix; the user's directory ACL on Windows). The lbctl config stores only a `local_deployment` file reference. Existing nonempty global keys are reused. `start`, `restart`, and `upgrade` configure older installations when starting them; repeated installation also repairs authentication. `adopt` never restarts services: when it adds a key, run `lbctl restart` as prompted. Docker-owned configuration is accessed through a short-lived container without host sudo; adopted Compose files remain unchanged.
+
+Automatic connection is best-effort: a credential configuration or Workspace binding failure produces a warning (`local_auth_error` in JSON/YAML), without changing the deployment operation's outcome. Correct the local API configuration and run the instance-specific restart command in the warning to retry. Normal service health and upgrade backup checks still apply.
+
+To intentionally reveal the selected key for an MCP client or another local tool, run `lbctl auth show-key --yes`. This prints the raw key; do not share or capture it in public logs. Ordinary commands redact it. After manually rotating Core's key, restart with lbctl to refresh the local credential.
+
+For remote services, create a Workspace API Key in the target LangBot dashboard's API Key management after initial setup. Authenticated commands detect missing credentials and show the selected environment variable, hidden-input PowerShell/Bash examples, and a same-target `whoami` verification step. JSON/YAML includes `error.reason` and `error.guidance`; the error type remains `auth` with exit code 3. A rejected key is reported separately from an unset variable; the CLI never prompts automatically for a remote key.
 
 First discover the Workspace associated with the key:
 
@@ -134,7 +142,7 @@ Connection settings follow this precedence, with validation of the selected targ
 |---|---|
 | Context | `--context` → `LANGBOT_CONTEXT` → current context |
 | Endpoint | `--endpoint` → `LANGBOT_ENDPOINT` → context configuration |
-| Key | `--api-key-stdin` → `LANGBOT_API_KEY` → context environment variable reference |
+| Key | `--api-key-stdin` → `LANGBOT_API_KEY` → context credential (`--api-key-env` reference or automatic local deployment) |
 | Timeout | `--timeout` → `LANGBOT_TIMEOUT` → context configuration → 30s |
 
 Use `--api-key-stdin` for a single invocation and `--file -` separately for request-body input. Temporary endpoints support controlled reads; resource writes use a saved, Workspace-bound context.
@@ -662,7 +670,7 @@ lbctl op list --as-member
 lbctl auth logout
 ```
 
-Login requires a saved context. Password and TOTP/recovery-code prompts hide input; `--totp` completes Core's challenge, including when the password comes from stdin and a controlling terminal is available. Tokens are stored as the optional `user_token` field in the current context's credential-bearing configuration file, atomically written with mode `0600`. API keys remain environment references. `LANGBOT_USER_TOKEN` overrides the saved token. Tokens are masked in output; never pass passwords or tokens as command-line arguments.
+Login requires a saved context. Password and TOTP/recovery-code prompts hide input; `--totp` completes Core's challenge, including when the password comes from stdin and a controlling terminal is available. Tokens are stored as the optional `user_token` field in the current context's credential-bearing configuration file, atomically written with mode `0600`. API keys remain references to environment variables or private local deployment files. `LANGBOT_USER_TOKEN` overrides the saved token. Tokens are masked in output; never pass passwords or tokens as command-line arguments.
 
 Cloud disables password login (`password_login_disabled`). Sign into the target Workspace's WebUI, open browser developer tools → Application/Storage → Local Storage for that origin, and copy the `token` value. Paste it into `lbctl auth set-token --stdin` (finish stdin with EOF), or supply it through a protected stdin pipe. Treat it as a password and do not share it in logs or screenshots. The CLI does not refresh sessions: when the token expires or Core rejects a member request with 401/403, the error is `requires_member_session` (exit 3); log in again or import a fresh WebUI token. Missing tokens fail before any network request. `auth logout` removes the saved token; also unset `LANGBOT_USER_TOKEN` if exported. It does not revoke other browser sessions. Member permissions and Workspace binding are checked against `/api/v1/workspaces/current`; API-key-only system discovery endpoints are not used for member operation calls.
 

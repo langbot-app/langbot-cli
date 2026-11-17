@@ -129,6 +129,7 @@ func (s *Service) installNative(ctx context.Context, options InstallOptions) (Re
 		data["dry_run"] = true
 		return Result{Data: data}, nil
 	}
+	auth := localAuthAttempt{service: s, dir: dir}
 	locator := deploy.Locator{Path: s.deps.LocalLocatorPath}
 	telemetry.SetStep(ctx, "register")
 	logPath := filepath.Join(dir, "logs", "install.log")
@@ -148,7 +149,16 @@ func (s *Service) installNative(ctx context.Context, options InstallOptions) (Re
 					return result.New("precondition", i18n.T("deployment changed"))
 				}
 				if deploy.NativeRunning(dir) {
-					return nil
+					if !auth.configure(ctx, record) {
+						return nil
+					}
+					if err := deploy.NativeStop(ctx, dir, record); err != nil {
+						return err
+					}
+					if err := deploy.NativeStart(ctx, dir, record); err != nil {
+						return err
+					}
+					return deploy.WaitNativeHealth(ctx, record, s.deps.LocalHTTP)
 				}
 			} else if err := deploy.ValidateInstallTarget(dir, true); err != nil {
 				return err
@@ -176,6 +186,7 @@ func (s *Service) installNative(ctx context.Context, options InstallOptions) (Re
 			if err := deploy.PrepareNative(ctx, dir, record, io.MultiWriter(progress.Output(ctx, s.nativeOutput()), installLog)); err != nil {
 				return err
 			}
+			auth.configure(ctx, record)
 			telemetry.SetStep(ctx, "install_service")
 			if err := deploy.InstallNativeService(ctx, dir, record); err != nil {
 				return err
@@ -201,8 +212,13 @@ func (s *Service) installNative(ctx context.Context, options InstallOptions) (Re
 		data["record"] = saved
 	}
 	if err == nil {
+		auth.bind(ctx, record)
+	}
+	if err == nil {
 		data["changed"] = true
 		data["status"] = map[string]any{"status": "running"}
+		data["local_auth"] = deploy.SupportsLocalAuth(record.CoreVersion)
+		data["local_context"] = record.DeploymentID
 		installAutostartData(data, record, dir)
 	} else {
 		data["step"] = telemetry.CurrentStep(ctx)
@@ -216,7 +232,7 @@ func (s *Service) installNative(ctx context.Context, options InstallOptions) (Re
 			fmt.Fprintf(installLog, "%s: %v\n", telemetry.CurrentStep(ctx), err)
 		}
 	}
-	return Result{Data: data}, nativeMutationError(err)
+	return auth.result(Result{Data: data}), nativeMutationError(err)
 }
 
 func nativeInstallRecovery(data map[string]any, dir string, record deploy.Record, rollback bool) {
@@ -246,6 +262,8 @@ func (s *Service) nativeLifecycle(ctx context.Context, diagnostics deploy.Diagno
 	progress.Plan(ctx, map[string]int{"start": 4, "stop": 3, "restart": 5}[action])
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
+	auth := localAuthAttempt{service: s, dir: diagnostics.Dir}
+	var restartRequired bool
 	err := deploy.WithMutationLock(ctx, diagnostics.Dir, func() error {
 		current, err := diagnostics.Store.Read()
 		if err != nil {
@@ -261,6 +279,9 @@ func (s *Service) nativeLifecycle(ctx context.Context, diagnostics deploy.Diagno
 			}
 		}
 		if action != "stop" {
+			running := action == "start" && deploy.NativeRunning(diagnostics.Dir)
+			changed := auth.configure(ctx, current)
+			restartRequired = changed && running
 			telemetry.SetStep(ctx, "start_service")
 			if err := deploy.NativeStart(ctx, diagnostics.Dir, current); err != nil {
 				return err
@@ -270,7 +291,11 @@ func (s *Service) nativeLifecycle(ctx context.Context, diagnostics deploy.Diagno
 		}
 		return nil
 	})
-	data := map[string]any{"action": action, "record": record}
+	if err == nil && action != "stop" && !restartRequired {
+		auth.bind(ctx, record)
+	}
+	data := map[string]any{"action": action, "record": record, "restart_required": restartRequired}
+	data["restart_command"] = "lbctl restart --dir " + nativeShellQuote(diagnostics.Dir)
 	if err == nil {
 		state := "running"
 		if action == "stop" {
@@ -279,7 +304,7 @@ func (s *Service) nativeLifecycle(ctx context.Context, diagnostics deploy.Diagno
 		data["changed"] = true
 		data["status"] = map[string]any{"status": state}
 	}
-	return Result{Data: data}, nativeMutationError(err)
+	return auth.result(Result{Data: data}), nativeMutationError(err)
 }
 
 func nativeMutationError(err error) error {

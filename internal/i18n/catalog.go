@@ -168,7 +168,7 @@ var chinese = map[string]string{
 	"context check --all does not accept LANGBOT_CONTEXT":                                    "context check --all 不接受 LANGBOT_CONTEXT",
 	"context check --all does not accept LANGBOT_ENDPOINT":                                   "context check --all 不接受 LANGBOT_ENDPOINT",
 	"context check --all does not accept single-target overrides":                            "context check --all 不接受单目标覆盖参数",
-	"context credential must be a valid env reference":                                       "context credential 必须是有效的 env 引用",
+	"context credential must be a valid env or local_deployment reference":                   "context credential 必须是有效的 env 或 local_deployment 引用",
 	"context endpoint must not be empty":                                                     "context endpoint 不能为空",
 	"Invalid context endpoint":                                                               "context endpoint 无效",
 	"Invalid context timeout":                                                                "context timeout 无效",

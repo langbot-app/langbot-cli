@@ -134,6 +134,9 @@ func TestNativeUpgradeRestoresVersionAndData(t *testing.T) {
 				t.Fatal(err)
 			}
 			dataPath := filepath.Join(record.DataDir, "state.txt")
+			if err := os.WriteFile(filepath.Join(record.DataDir, "config.yaml"), []byte("api: {}\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
 			if err := os.WriteFile(dataPath, []byte("original"), 0o600); err != nil {
 				t.Fatal(err)
 			}

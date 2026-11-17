@@ -121,7 +121,7 @@ func (t upgradeTransport) RoundTrip(*http.Request) (*http.Response, error) {
 	if strings.Contains(image, "@sha256:") {
 		version = t.runner.pulledVersion
 	}
-	body := fmt.Sprintf(`{"code":0,"data":{"version":%q,"edition":"community"},"msg":"ok"}`, version)
+	body := fmt.Sprintf(`{"code":0,"data":{"version":%q,"edition":"community","instance_uuid":"instance-upgrade","workspace_uuid":"workspace-upgrade","api_key_id":"global","permissions":[],"schema_version":1,"operations":{}},"msg":"ok"}`, version)
 	return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
 }
 

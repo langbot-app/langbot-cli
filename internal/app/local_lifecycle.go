@@ -92,6 +92,15 @@ func (s *Service) Install(ctx context.Context, options InstallOptions) (Result, 
 		return Result{}, result.New("input", i18n.T("Invalid deployment directory"))
 	}
 	version := strings.TrimSpace(options.Version)
+	if existing, readErr := (deploy.Store{Dir: dir}).Read(); readErr == nil && existing.Driver == deploy.DriverDockerCompose {
+		if version != "" && version != existing.CoreVersion || options.Port != 0 && options.Port != existing.Port {
+			return Result{}, result.New("precondition", i18n.T("Reuse the existing installation options or use lbctl upgrade"))
+		}
+		if options.DryRun {
+			return Result{Data: map[string]any{"action": "install", "dry_run": true, "record": existing}}, nil
+		}
+		return s.repairDockerInstall(operationCtx, dir, existing)
+	}
 	telemetry.SetStep(ctx, "resolve_version")
 	if version == "" {
 		version, err = s.latestRelease(operationCtx)
@@ -141,6 +150,7 @@ func (s *Service) Install(ctx context.Context, options InstallOptions) (Result, 
 	}
 
 	var response Result
+	auth := localAuthAttempt{service: s, dir: assets.Dir}
 	locator := deploy.Locator{Path: s.deps.LocalLocatorPath}
 	err = locator.WithLock(operationCtx, func() error {
 		return deploy.WithMutationLock(operationCtx, assets.Dir, func() error {
@@ -183,6 +193,7 @@ func (s *Service) Install(ctx context.Context, options InstallOptions) (Result, 
 			if err := locator.Write(assets.Dir); err != nil {
 				return result.New("server", i18n.T("Failed to write local deployment locator"))
 			}
+			auth.configure(operationCtx, record)
 			telemetry.SetStep(ctx, "compose_up")
 			command, commandErr := runner.Compose(operationCtx, record, "up", "-d")
 			if commandErr != nil {
@@ -215,17 +226,20 @@ func (s *Service) Install(ctx context.Context, options InstallOptions) (Result, 
 		if response.Data == nil {
 			response.Data = plan
 		}
-		return response, normalizeLocalMutationError(err)
+		return auth.result(response), normalizeLocalMutationError(err)
 	}
 	if data, ok := response.Data.(map[string]any); ok {
 		if record, ok := data["record"].(deploy.Record); ok {
 			installAutostartData(data, record, assets.Dir)
+			data["local_auth"] = deploy.SupportsLocalAuth(record.CoreVersion)
+			data["local_context"] = record.DeploymentID
+			auth.bind(operationCtx, record)
 		}
 		for _, key := range []string{"url", "driver", "instance_dir", "version", "name", "region", "service_manager"} {
 			data[key] = plan[key]
 		}
 	}
-	return response, nil
+	return auth.result(response), nil
 }
 
 func (s *Service) Adopt(ctx context.Context, options AdoptOptions) (Result, error) {
@@ -307,7 +321,8 @@ func (s *Service) Adopt(ctx context.Context, options AdoptOptions) (Result, erro
 	sum := sha256.Sum256(composeData)
 	record.Asset = deploy.AssetInfo{Name: filepath.Base(composeFile), Digest: "sha256:" + hex.EncodeToString(sum[:])}
 
-	var changed bool
+	auth := localAuthAttempt{service: s, dir: dir}
+	var changed, restartRequired bool
 	locator := deploy.Locator{Path: s.deps.LocalLocatorPath}
 	err = locator.WithLock(operationCtx, func() error {
 		if err := deploy.WithMutationLock(operationCtx, dir, func() error {
@@ -331,6 +346,7 @@ func (s *Service) Adopt(ctx context.Context, options AdoptOptions) (Result, erro
 						changed = true
 					}
 					record = existing
+					restartRequired = auth.configure(operationCtx, record)
 					return nil
 				}
 				return result.New("precondition", i18n.T("Another lbctl-managed deployment already exists"))
@@ -356,6 +372,7 @@ func (s *Service) Adopt(ctx context.Context, options AdoptOptions) (Result, erro
 				return mapStoreWriteError(readErr)
 			}
 			changed = true
+			restartRequired = auth.configure(operationCtx, record)
 			return nil
 		}); err != nil {
 			return err
@@ -368,7 +385,11 @@ func (s *Service) Adopt(ctx context.Context, options AdoptOptions) (Result, erro
 	if err != nil {
 		return Result{}, normalizeLocalMutationError(err)
 	}
-	return Result{Data: map[string]any{"action": "adopt", "changed": changed, "record": record}}, nil
+	if !restartRequired {
+		auth.bind(operationCtx, record)
+	}
+	return auth.result(Result{Data: map[string]any{"action": "adopt", "changed": changed, "record": record, "restart_required": restartRequired,
+		"restart_command": "lbctl restart --dir " + nativeShellQuote(dir)}}), nil
 }
 
 func (s *Service) Start(ctx context.Context, options LifecycleOptions) (Result, error) {
@@ -400,14 +421,14 @@ func (s *Service) LocalLogs(ctx context.Context, options LocalLogsOptions) (Resu
 	if record.Driver == deploy.DriverNative {
 		var buffer strings.Builder
 		err := deploy.NativeLogs(operationCtx, diagnostics.Dir, &buffer, options.Tail, false)
-		return Result{Data: map[string]any{"lines": splitLogLines(buffer.String(), nil)}}, err
+		return Result{Data: map[string]any{"lines": splitLogLines(buffer.String(), readLogSecrets(record, diagnostics.Dir))}}, err
 	}
 	args := logArguments(options, false)
 	command, commandErr := diagnostics.Runner.Compose(operationCtx, record, args...)
 	if commandErr != nil {
 		return Result{}, mapDockerCommandError(command, commandErr, i18n.T("Failed to read logs"))
 	}
-	lines := splitLogLines(command.Stdout, readLogSecrets(record))
+	lines := splitLogLines(command.Stdout, readLogSecrets(record, diagnostics.Dir))
 	return Result{Data: map[string]any{"service": selectedLogService(options.Service), "lines": lines, "count": len(lines)}}, nil
 }
 
@@ -437,7 +458,7 @@ func (s *Service) FollowLocalLogs(ctx context.Context, options LocalLogsOptions)
 	if out == nil {
 		out = io.Discard
 	}
-	secrets := readLogSecrets(record)
+	secrets := readLogSecrets(record, diagnostics.Dir)
 	if options.Format == "json" {
 		out = newJSONLineWriter(out, selectedLogService(options.Service), secrets)
 	} else {
@@ -489,6 +510,7 @@ func (s *Service) runLifecycle(ctx context.Context, action string, options Lifec
 	operationCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	var response Result
+	auth := localAuthAttempt{service: s, dir: diagnostics.Dir}
 	err = deploy.WithMutationLock(operationCtx, diagnostics.Dir, func() error {
 		if err := deploy.CheckUpgradeInterrupted(diagnostics.Dir); err != nil {
 			return result.New("recovery_required", err.Error())
@@ -503,12 +525,20 @@ func (s *Service) runLifecycle(ctx context.Context, action string, options Lifec
 		}
 		if (action == "start" && before.Status == "running") || (action == "stop" && before.Status == "stopped") {
 			response = Result{Data: map[string]any{"action": action, "changed": false, "status": before}}
+			if action == "start" {
+				changed := auth.configure(operationCtx, current)
+				response.Data.(map[string]any)["restart_required"] = changed
+				response.Data.(map[string]any)["restart_command"] = "lbctl restart --dir " + nativeShellQuote(diagnostics.Dir)
+			}
 			return nil
 		}
 		if action == "restart" && before.Status == "stopped" {
 			return result.New("precondition", i18n.T("Deployment is not running; use start"))
 		}
 		args := map[string][]string{"start": {"up", "-d"}, "stop": {"stop"}, "restart": {"restart"}}[action]
+		if action != "stop" {
+			auth.configure(operationCtx, current)
+		}
 		telemetry.SetStep(ctx, "compose_"+action)
 		command, commandErr := diagnostics.Runner.Compose(operationCtx, current, args...)
 		var after deploy.StatusResult
@@ -543,7 +573,12 @@ func (s *Service) runLifecycle(ctx context.Context, action string, options Lifec
 		}
 		return result.New("result_unknown", i18n.T("Command executed but the expected state was not reached"))
 	})
-	return response, normalizeLocalMutationError(err)
+	if err == nil && action != "stop" {
+		if data, ok := response.Data.(map[string]any); ok && data["restart_required"] != true {
+			auth.bind(operationCtx, record)
+		}
+	}
+	return auth.result(response), normalizeLocalMutationError(err)
 }
 
 func (s *Service) lifecycleTarget(ctx context.Context, options CheckOptions) (deploy.Record, deploy.Diagnostics, error) {
@@ -571,6 +606,11 @@ func (s *Service) lifecycleTarget(ctx context.Context, options CheckOptions) (de
 		telemetry.SetDirectory(ctx, dir)
 		telemetry.SetStep(ctx, "preflight")
 		return record, diagnostics, nil
+	}
+	if localDir := s.automaticCredentialDeployment(options); localDir != "" {
+		options.LocalDir = localDir
+		options.ContextSet = false
+		return s.lifecycleTarget(ctx, options)
 	}
 	resolved, discoveryErr := s.discoverActiveEnvironment(ctx, options, false)
 	if discoveryErr != nil && result.AsError(discoveryErr).Kind != "network" {
@@ -960,15 +1000,20 @@ func sanitizeLogLine(line string, secrets []string) string {
 	return line
 }
 
-func readLogSecrets(record deploy.Record) []string {
+func readLogSecrets(record deploy.Record, directories ...string) []string {
+	secrets := make([]string, 0, 3)
+	for _, dir := range directories {
+		if key, err := os.ReadFile(deploy.LocalKeyPath(dir)); err == nil && len(key) > 0 {
+			secrets = append(secrets, string(key))
+		}
+	}
 	if strings.TrimSpace(record.EnvFile) == "" {
-		return nil
+		return secrets
 	}
 	data, err := os.ReadFile(record.EnvFile)
 	if err != nil {
-		return nil
+		return secrets
 	}
-	secrets := make([]string, 0, 2)
 	for _, line := range strings.Split(string(data), "\n") {
 		name, value, ok := strings.Cut(line, "=")
 		if !ok || !strings.HasSuffix(strings.TrimSpace(name), "_TOKEN") {

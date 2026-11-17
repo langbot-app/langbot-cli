@@ -21,10 +21,11 @@ import (
 )
 
 type lifecycleTestRunner struct {
-	mu    sync.Mutex
-	state string
-	port  int
-	calls []string
+	authConfig string
+	mu         sync.Mutex
+	state      string
+	port       int
+	calls      []string
 	// startingAfterUp makes ps report the runtime healthcheck as "starting"
 	// for this many polls after up/restart, like the official Compose file.
 	startingAfterUp int
@@ -37,6 +38,11 @@ func (r *lifecycleTestRunner) Docker(_ context.Context, args ...string) (deploy.
 	joined := strings.Join(args, " ")
 	r.calls = append(r.calls, "docker "+joined)
 	switch {
+	case strings.HasPrefix(joined, "run --rm --network none --user 0:0 --mount "):
+		if r.authConfig != "" {
+			return deploy.CommandResult{Stdout: r.authConfig}, nil
+		}
+		return deploy.CommandResult{Stdout: "api: {}\n"}, nil
 	case joined == "--version":
 		return deploy.CommandResult{Stdout: "Docker version 29"}, nil
 	case strings.HasPrefix(joined, "info "):
@@ -117,7 +123,7 @@ func (t lifecycleTransport) RoundTrip(*http.Request) (*http.Response, error) {
 	if edition == "" {
 		edition = "community"
 	}
-	body := fmt.Sprintf(`{"code":0,"data":{"version":"v4.10.10","edition":%q,"instance_uuid":"instance-local","workspace_uuid":"workspace-local","api_key_id":"key-local","permissions":[]},"msg":"ok"}`, edition)
+	body := fmt.Sprintf(`{"code":0,"data":{"version":"v4.10.10","edition":%q,"instance_uuid":"instance-local","workspace_uuid":"workspace-local","api_key_id":"key-local","permissions":[],"schema_version":1,"operations":{}},"msg":"ok"}`, edition)
 	return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
 }
 
@@ -298,7 +304,10 @@ func TestAdoptRequiresLocalEndpointAndMatchingPublishedPort(t *testing.T) {
 	port := freeLifecyclePort(t)
 	root := t.TempDir()
 	composeFile := filepath.Join(root, "compose.yaml")
-	if err := os.WriteFile(composeFile, []byte("services: {}\n"), 0o600); err != nil {
+	if err := os.WriteFile(composeFile, []byte("services:\n  langbot:\n    image: rockchin/langbot:v4.10.10\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "data"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	runner := &lifecycleTestRunner{state: "running", port: port}

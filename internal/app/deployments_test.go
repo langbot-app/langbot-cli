@@ -77,7 +77,14 @@ func TestMultipleAdoptionsAndLifecycleSelectCorrectDeployment(t *testing.T) {
 	ctx := context.Background()
 	ids := map[string]string{}
 	for _, project := range []string{"first", "second"} {
-		file := filepath.Join(root, project+".yaml")
+		source := filepath.Join(root, project+"-source")
+		if err := os.MkdirAll(filepath.Join(source, "data"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(source, "data", "config.yaml"), []byte("api: {}\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		file := filepath.Join(source, "compose.yaml")
 		if err := os.WriteFile(file, []byte("services: {}\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
