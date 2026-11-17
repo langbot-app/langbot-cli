@@ -1,7 +1,6 @@
 package telemetry
 
 import (
-	"path/filepath"
 	"regexp"
 	"strings"
 	"unicode/utf8"
@@ -12,7 +11,8 @@ import (
 func sanitizeIdentity(value, home string, usernames []string) string {
 	value = diagnostic.Text(value)
 	if home != "" {
-		value = strings.ReplaceAll(value, home, filepath.Join(filepath.Dir(home), "<user>"))
+		prefix := home[:strings.LastIndexAny(home, `/\`)+1]
+		value = strings.ReplaceAll(value, home, prefix+"<user>")
 	}
 	for _, username := range usernames {
 		if utf8.RuneCountInString(username) >= 3 && username != "redacted" && username != "user" {

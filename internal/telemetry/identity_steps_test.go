@@ -14,6 +14,7 @@ func TestIdentityRedaction(t *testing.T) {
 		{"alice malice alice2 [redacted]", "/home/alice", "<user> malice alice2 [redacted]", []string{"alice", "alice", "redacted"}},
 		{"native /home/pi/app", "/home/pi", "native /home/<user>/app", []string{"pi", "t"}},
 		{"alice /custom/alice/file", "/custom/alice", "<user> /custom/<user>/file", []string{"alice", "ali"}},
+		{`D:\Profiles\alice\file`, `D:\Profiles\alice`, `D:\Profiles\<user>\file`, []string{"alice"}},
 	} {
 		got := sanitizeIdentity(test.message, test.home, test.users)
 		if got != test.want || sanitizeIdentity(got, test.home, test.users) != got {
