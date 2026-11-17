@@ -91,3 +91,20 @@ func TestRootOverviewAndMachineOutput(t *testing.T) {
 		}
 	}
 }
+
+func TestHelpProbeDoesNotConsumeTermsNotice(t *testing.T) {
+	home := t.TempDir()
+	env := func(string) (string, bool) { return "", false }
+	for _, args := range [][]string{{"install", "--help"}, {"help", "install"}, {"-h"}} {
+		var out, diagnostic bytes.Buffer
+		Execute(context.Background(), args, Dependencies{NoticeHome: home, Out: &out, Err: &diagnostic, Version: "test", LookupEnv: env})
+		if strings.Contains(diagnostic.String()+out.String(), "https://langbot.app/terms") {
+			t.Fatalf("%v showed the notice", args)
+		}
+	}
+	var out, diagnostic bytes.Buffer
+	Execute(context.Background(), []string{"--lang", "en", "version"}, Dependencies{NoticeHome: home, Out: &out, Err: &diagnostic, Version: "test", LookupEnv: env})
+	if !strings.Contains(diagnostic.String(), "https://langbot.app/terms") {
+		t.Fatalf("notice was consumed by a help probe: %s", diagnostic.String())
+	}
+}
