@@ -159,7 +159,7 @@ lbctl update
 
 Core 4.11.x 原生部署需要独占运行时端口 5401（插件调试）和 5410（Box）；安装和启动会拒绝端口冲突，包括 HTTP 端口与运行时端口重叠。多个实例同时运行请使用 Docker。HTTP 端口由 lbctl 管理：安装时通过 `--port` 指定；已有部署先执行 `lbctl stop`，修改 `deployment.yaml` 中的 `port` 和 `endpoint`，再执行 `lbctl start`。仅修改 Core 配置中的 `api.port` 不会改变受管端口。Webhook 地址只在首次生成 `data/config.yaml` 前初始化；之后启动保留用户配置的公网 `api.webhook_prefix`。
 
-`--region auto|cn|global` 优先读取 `LANGBOT_REGION`，否则进行两秒超时的地区探测。`cn` 使用 npmmirror 下载 Python、阿里云 PyPI（备用清华）、同一 PyPI 源安装插件依赖，Docker 默认 `docker.langbot.app/rockchin/langbot`。镜像缺少 LangBot wheel 时可单独从 PyPI 获取，依赖仍走配置的镜像。`--pypi-index`、`--python-mirror`、`--image-repository` 可覆盖默认值，设置随记录保存并用于后续升级。大陆模式优先 uv 镜像，失败回退 GitHub。
+`--region auto|cn|global` 优先读取 `LANGBOT_REGION`，否则进行两秒超时的地区探测。`cn` 使用 npmmirror 下载 Python、阿里云 PyPI（备用清华）、同一 PyPI 源安装插件依赖。Docker 在大陆模式或 Docker Hub 不可用时并发探测公共镜像站，选择可用且延迟最低的源，最终回退到 `docker.langbot.app/langbot-public/rockchin/langbot`。自动拉取使用官方摘要，校验后将不可变镜像引用写入 Compose。升级沿用已保存的源，失败时重新选源；`doctor` 列出镜像源可用性。显式指定 `--image-repository` 后不会自动选源或回退，详见[镜像源说明](dev-docs/docker-image-sources.md)。镜像缺少 LangBot wheel 时可单独从 PyPI 获取，依赖仍走配置的镜像。`--pypi-index`、`--python-mirror` 可覆盖默认值，设置随记录保存并用于后续升级。大陆模式优先 uv 镜像，失败回退 GitHub。
 
 更新提示仅读取本地缓存，带超时的独立进程每日最多刷新一次；仅终端输出提示，JSON/YAML、`CI`、`LBCTL_NO_UPDATE_CHECK=1` 下不提示。`status` 使用缓存展示 lbctl/Core 当前及最新版本。`install --output json` 包含 `url`、`driver`、`instance_dir`、`version`、`name`、`region`、`service_manager`。
 

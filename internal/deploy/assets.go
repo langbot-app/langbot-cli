@@ -211,6 +211,13 @@ func (a *InstallAssets) SetPackageIndex(index string) {
 	a.Digest = fileDigest(a.Compose)
 }
 
+func (a *InstallAssets) SetImageReference(reference string) {
+	a.Image = reference
+	a.Compose = []byte(renderCompose(reference, a.Port, filepath.Join(a.Dir, "data", "box"), a.Ports))
+	a.Compose = composeAutostart(a.Compose, new(true))
+	a.Digest = fileDigest(a.Compose)
+}
+
 func composePackageIndex(content []byte, index string) []byte {
 	if index == "" {
 		return content

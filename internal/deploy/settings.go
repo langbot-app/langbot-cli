@@ -86,7 +86,7 @@ func ApplyRegion(record *Record) {
 	if record.ImageRepository == "" {
 		record.ImageRepository = DefaultImageRepository
 		if record.Region == "cn" {
-			record.ImageRepository = "docker.langbot.app/rockchin/langbot"
+			record.ImageRepository = CanonicalImageRepository
 		}
 	}
 }

@@ -20,6 +20,7 @@ type upgradeRunner struct {
 	running        bool
 	failUp         bool
 	failPull       bool
+	pulledVersion  string
 	resolvedConfig string
 	calls          []string
 }
@@ -34,9 +35,10 @@ func (r *upgradeRunner) Docker(_ context.Context, args ...string) (deploy.Comman
 		if r.failPull {
 			return deploy.CommandResult{}, errors.New("registry unavailable")
 		}
+		r.pulledVersion = strings.TrimPrefix(args[len(args)-1], "rockchin/langbot:")
 		return deploy.CommandResult{}, nil
 	case strings.HasPrefix(call, "image inspect "):
-		return deploy.CommandResult{Stdout: "rockchin/langbot@sha256:" + strings.Repeat("a", 64)}, nil
+		return deploy.CommandResult{Stdout: `["rockchin/langbot@sha256:` + strings.Repeat("a", 64) + `"]`}, nil
 	default:
 		return deploy.CommandResult{}, fmt.Errorf("unexpected Docker command: %s", call)
 	}
@@ -86,6 +88,9 @@ func (t upgradeTransport) RoundTrip(*http.Request) (*http.Response, error) {
 		return nil, err
 	}
 	version := strings.TrimPrefix(image, "rockchin/langbot:")
+	if strings.Contains(image, "@sha256:") {
+		version = t.runner.pulledVersion
+	}
 	body := fmt.Sprintf(`{"code":0,"data":{"version":%q,"edition":"community"},"msg":"ok"}`, version)
 	return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
 }
@@ -188,6 +193,7 @@ func upgradeServiceFixture(t *testing.T, failUp bool) (*Service, *upgradeRunner,
 		t.Fatal(err)
 	}
 	record := assets.Record("local-upgrade-test", "sha256:old")
+	record.ImageRepositoryExplicit = true
 	if err := (deploy.Store{Dir: dir}).Write(context.Background(), record); err != nil {
 		t.Fatal(err)
 	}

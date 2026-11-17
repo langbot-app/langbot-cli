@@ -43,7 +43,7 @@ func (r *lifecycleTestRunner) Docker(_ context.Context, args ...string) (deploy.
 	case strings.HasPrefix(joined, "ps -a --filter "), strings.HasPrefix(joined, "network ls --filter "):
 		return deploy.CommandResult{}, nil
 	case strings.HasPrefix(joined, "image inspect "):
-		return deploy.CommandResult{Stdout: "rockchin/langbot@sha256:abc\n"}, nil
+		return deploy.CommandResult{Stdout: `["rockchin/langbot@sha256:` + strings.Repeat("a", 64) + `"]`}, nil
 	default:
 		return deploy.CommandResult{}, fmt.Errorf("unexpected docker call: %s", joined)
 	}
@@ -121,12 +121,12 @@ func TestInstallAndLifecycleCommands(t *testing.T) {
 		LatestRelease:     func(context.Context) (string, error) { return "v4.10.10", nil },
 		DefaultConfigPath: func() (string, error) { return filepath.Join(root, "config.yaml"), nil },
 	})
-	installed, err := service.Install(context.Background(), InstallOptions{Profile: "basic", Port: port, PluginDebugPort: new(int), AdapterPorts: []string{"none"}})
+	installed, err := service.Install(context.Background(), InstallOptions{ImageRepository: deploy.DefaultImageRepository, Profile: "basic", Port: port, PluginDebugPort: new(int), AdapterPorts: []string{"none"}})
 	if err != nil {
 		t.Fatalf("Install() error = %v, data = %#v", err, installed.Data)
 	}
 	record, err := (deploy.Store{Dir: dir}).Read()
-	if err != nil || record.CoreVersion != "v4.10.10" || record.Asset.Digest != "sha256:abc" {
+	if err != nil || record.CoreVersion != "v4.10.10" || record.Asset.Digest != "sha256:"+strings.Repeat("a", 64) {
 		t.Fatalf("record = %+v, err = %v", record, err)
 	}
 	if data, _ := os.ReadFile(record.ComposeFile); strings.Contains(string(data), ":latest") {

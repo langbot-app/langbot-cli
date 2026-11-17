@@ -197,7 +197,7 @@ func TestRegionEnvironmentAndInstancePaths(t *testing.T) {
 	}
 	record := Record{Region: region}
 	ApplyRegion(&record)
-	if record.ImageRepository != "docker.langbot.app/rockchin/langbot" || record.PythonMirror == "" || !strings.Contains(record.PyPIIndex, "aliyun") {
+	if record.ImageRepository != CanonicalImageRepository || record.PythonMirror == "" || !strings.Contains(record.PyPIIndex, "aliyun") {
 		t.Fatal(record)
 	}
 	t.Setenv("LANGBOT_HOME", t.TempDir())

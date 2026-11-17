@@ -58,11 +58,50 @@ func TestOptOut(t *testing.T) {
 			t.Fatal("opt-out created client")
 		}
 		_, op := client.Begin(t.Context(), "install")
+		ImagePullFailed(t.Context())
 		op.Finish(errors.New("failure"), "server")
 		client.Close()
 		if _, err := os.Stat(filepath.Join(home, ".langbot")); !os.IsNotExist(err) {
 			t.Fatal("opt-out wrote identity")
 		}
+	}
+}
+
+func TestRecoveredImagePullFailureIsReportedSeparately(t *testing.T) {
+	var mutex sync.Mutex
+	var events []Event
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		var event Event
+		if err := json.NewDecoder(request.Body).Decode(&event); err != nil {
+			t.Error(err)
+		}
+		mutex.Lock()
+		events = append(events, event)
+		mutex.Unlock()
+		writer.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	client := New(Options{Home: t.TempDir(), Version: "0.5.5", LookupEnv: lookup(map[string]string{"LBCTL_TELEMETRY_ENDPOINT": server.URL})})
+	ctx, operation := client.Begin(t.Context(), "install")
+	SetEnvironment(ctx, "docker", "docker_compose", "cn", "v4.11.8")
+	SetStep(ctx, "image_pull")
+	ImagePullFailed(ctx)
+	SetStep(ctx, "health_check")
+	operation.Finish(nil, "")
+	client.Close()
+	mutex.Lock()
+	defer mutex.Unlock()
+	var failed, succeeded int
+	for _, event := range events {
+		if event.Command == "image_pull" && event.Step == "image_pull" && event.Outcome == "failed" && event.ErrorCode == "image_pull" && event.Region == "cn" {
+			failed++
+		}
+		if event.Command == "install" && event.Outcome == "succeeded" {
+			succeeded++
+		}
+	}
+	if failed != 1 || succeeded != 1 {
+		t.Fatalf("events=%+v", events)
 	}
 }
 

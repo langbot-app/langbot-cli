@@ -57,6 +57,7 @@ func StepTitle(step string) string {
 }
 
 var stepTitles = map[string]string{
+	"image_pull":   "Pull images",
 	"prepare_logs": "Prepare logs",
 	"register":     "Register deployment",
 	"stopping":     "Stop service", "stopped": "Verify stopped services", "backup_verified": "Verify backup",
