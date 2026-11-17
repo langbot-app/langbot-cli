@@ -2,8 +2,11 @@ package i18n
 
 func init() {
 	for key, value := range map[string]string{
-		"Waiting for native process %d to exit: %w": "等待原生进程 %d 退出：%w",
-		"deployment changed":                        "部署已变更", "invalid instance name: %s": "实例名称无效：%s",
+		"LangBot process %d has not exited: %w":                    "LangBot 进程 %d 尚未退出：%w",
+		"waiting for LangBot processes to exit: %w":                "等待 LangBot 进程退出：%w",
+		"cannot remove LangBot files; close LangBot and retry: %w": "无法删除 LangBot 文件；请关闭 LangBot 后重试：%w",
+		"invalid native supervisor PID: %s":                        "原生守护进程 PID 无效：%s",
+		"deployment changed":                                       "部署已变更", "invalid instance name: %s": "实例名称无效：%s",
 		"region must be auto, cn or global":                                               "区域必须为 auto、cn 或 global",
 		"windows-run requires Windows":                                                    "windows-run 仅支持 Windows",
 		"HKCU Run command exceeds 260 characters; use shorter lbctl and deployment paths": "HKCU Run 命令超过 260 个字符；请缩短 lbctl 和部署路径",
