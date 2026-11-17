@@ -16,6 +16,32 @@ import (
 	"github.com/langbot-app/langbot-cli/internal/diagnostic"
 )
 
+func TestEnvironmentProxyPresence(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	for _, test := range []struct {
+		name string
+		env  map[string]string
+		want bool
+	}{
+		{"absent", nil, false},
+		{"empty uppercase", map[string]string{"HTTP_PROXY": "", "HTTPS_PROXY": ""}, false},
+		{"empty lowercase", map[string]string{"http_proxy": "", "https_proxy": ""}, false},
+		{"uppercase", map[string]string{"HTTP_PROXY": "http://proxy", "HTTPS_PROXY": "http://proxy"}, true},
+		{"lowercase with empty uppercase", map[string]string{"HTTP_PROXY": "", "HTTPS_PROXY": "", "http_proxy": "http://proxy", "https_proxy": "http://proxy"}, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := New(Options{Home: t.TempDir(), LookupEnv: lookup(test.env)})
+			operation := &Operation{client: client}
+			environment := operation.environment(t.Context())
+			for _, key := range []string{"http_proxy_set", "https_proxy_set"} {
+				if environment[key] != test.want {
+					t.Fatalf("%s = %v, want %v", key, environment[key], test.want)
+				}
+			}
+		})
+	}
+}
+
 func TestFailureDiagnostics(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	home := t.TempDir()

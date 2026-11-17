@@ -236,7 +236,23 @@ func NativeStart(ctx context.Context, dir string, record Record) error {
 	return nil
 }
 
-func NativeStop(ctx context.Context, dir string, record Record) error {
+func NativeStop(ctx context.Context, dir string, record Record) (stopErr error) {
+	var processes []int
+	if data, err := os.ReadFile(filepath.Join(dir, "native.pid")); err == nil {
+		pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+		if err != nil {
+			return err
+		}
+		processes, err = nativeProcessTree(pid)
+		if err != nil {
+			return err
+		}
+	}
+	defer func() {
+		if stopErr == nil {
+			stopErr = waitNativeProcesses(ctx, processes)
+		}
+	}()
 	if record.ServiceManager == "windows-run" {
 		if err := removeNativeRun(record); err != nil {
 			return err

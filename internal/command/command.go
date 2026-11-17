@@ -1328,18 +1328,21 @@ func newStatusCommand(service *app.Service, deps Dependencies, flags *globalFlag
 }
 
 func newDoctorCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
-	return &cobra.Command{
+	var region string
+	cmd := &cobra.Command{
 		Use: "doctor", Short: i18n.T("Diagnose the current environment"), Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return emitCall(deps, flags, func() (app.Result, error) {
 				return service.Doctor(cmd.Context(), app.CheckOptions{
 					Context: flags.context, Endpoint: flags.endpoint, Timeout: flags.timeout,
 					ContextSet: flags.contextSet, EndpointSet: flags.endpointSet, TimeoutSet: flags.timeoutSet,
-					APIKeyStdin: flags.apiKeyStdin,
+					APIKeyStdin: flags.apiKeyStdin, Region: region,
 				})
 			})
 		},
 	}
+	cmd.Flags().StringVar(&region, "region", "", i18n.T("Region: auto, cn or global"))
+	return cmd
 }
 
 func newInstallCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
@@ -1450,6 +1453,7 @@ func newLifecycleCommand(service *app.Service, deps Dependencies, flags *globalF
 }
 
 func newUpgradeCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
+	var name, dir string
 	var version string
 	var dryRun, yes bool
 	cmd := &cobra.Command{
@@ -1459,8 +1463,10 @@ func newUpgradeCommand(service *app.Service, deps Dependencies, flags *globalFla
 				return emitCommand(deps, flags, app.Result{}, result.New("precondition", i18n.T("Upgrade stops and modifies the local deployment; explicitly pass --yes")))
 			}
 			return emitCall(deps, flags, func() (app.Result, error) {
+				options := connectionOptions(flags)
+				options.LocalName, options.LocalDir = name, dir
 				return service.Upgrade(cmd.Context(), app.UpgradeOptions{
-					CheckOptions: connectionOptions(flags), Version: version, DryRun: dryRun, Yes: yes,
+					CheckOptions: options, Version: version, DryRun: dryRun, Yes: yes,
 				})
 			})
 		},
@@ -1468,6 +1474,8 @@ func newUpgradeCommand(service *app.Service, deps Dependencies, flags *globalFla
 	cmd.Flags().StringVar(&version, "version", "", i18n.T("Target LangBot stable Release tag"))
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, i18n.T("Check prerequisites and print the upgrade plan only"))
 	cmd.Flags().BoolVar(&yes, "yes", false, i18n.T("Confirm shutdown, backup and upgrade"))
+	cmd.Flags().StringVar(&name, "name", "", i18n.T("Local instance name"))
+	cmd.Flags().StringVar(&dir, "dir", "", i18n.T("Local deployment directory"))
 	return cmd
 }
 
@@ -1900,6 +1908,20 @@ func enrichResult(deps Dependencies, flags *globalFlags, value app.Result, err e
 			if rollback, ok := data["rollback_argv"].([]string); ok {
 				add(i18n.T("Uninstall services and preserve data"), base, rollback...)
 			}
+		}
+		if flags.commandPath == "upgrade" {
+			steps = nil
+			step, _ := data["step"].(string)
+			label, command := upgradeRecovery(step)
+			args := []string{command}
+			prefix := base
+			if endpoint, ok := data["recovery_endpoint"].(string); ok && endpoint != "" && command != "upgrade" {
+				prefix = append(append([]string(nil), base...), "--endpoint", endpoint)
+			}
+			if command == "upgrade" {
+				args = append(args, "--help")
+			}
+			add(i18n.T(label), prefix, args...)
 		}
 	} else {
 		switch flags.commandPath {

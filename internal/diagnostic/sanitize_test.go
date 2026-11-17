@@ -11,6 +11,7 @@ func TestText(t *testing.T) {
 	for _, test := range []struct{ raw, want string }{
 		{`https://u:p@mirrors.aliyun.com/pypi/simple?token=x&other=y`, `https://mirrors.aliyun.com/pypi/simple?token=[redacted]&other=[redacted]`},
 		{"Failed to fetch: `https://127.0.0.1:9/simple/langbot/`", "Failed to fetch: `https://127.0.0.1:9/simple/langbot/`"},
+		{"Failed to fetch: `https://user:pass@example.org/simple/?token=secret`", "Failed to fetch: `https://example.org/simple/?token=[redacted]`"},
 		{`Access denied: C:\Users\10105\AppData\Local\LangBot\config.yaml`, `Access denied: C:\Users\<user>\AppData\Local\LangBot\config.yaml`},
 		{`launchctl: /Users/alice/Library/LaunchAgents/langbot.plist: Input/output error`, `launchctl: /Users/<user>/Library/LaunchAgents/langbot.plist: Input/output error`},
 		{`Permission denied: /home/alice/.langbot/default/logs/install.log`, `Permission denied: /home/<user>/.langbot/default/logs/install.log`},

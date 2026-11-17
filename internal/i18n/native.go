@@ -2,7 +2,8 @@ package i18n
 
 func init() {
 	for key, value := range map[string]string{
-		"deployment changed": "部署已变更", "invalid instance name: %s": "实例名称无效：%s",
+		"Waiting for native process %d to exit: %w": "等待原生进程 %d 退出：%w",
+		"deployment changed":                        "部署已变更", "invalid instance name: %s": "实例名称无效：%s",
 		"region must be auto, cn or global":                                               "区域必须为 auto、cn 或 global",
 		"windows-run requires Windows":                                                    "windows-run 仅支持 Windows",
 		"HKCU Run command exceeds 260 characters; use shorter lbctl and deployment paths": "HKCU Run 命令超过 260 个字符；请缩短 lbctl 和部署路径",

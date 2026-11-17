@@ -19,7 +19,7 @@ var spacedHomes = regexp.MustCompile(`(?i)((?:[a-z]:[\\/]+Users[\\/]+)|/(?:home|
 var ipv4 = regexp.MustCompile(`\b[0-9]{1,3}(?:\.[0-9]{1,3}){3}\b`)
 var ipv6 = regexp.MustCompile(`[a-fA-F0-9:]*:[a-fA-F0-9:]+(?:%[a-zA-Z0-9]+)?`)
 var sensitive = regexp.MustCompile(`(?i)(?:token|password|passwd|secret|api[_-]?key|authorization|credential|username|^user$)`)
-var assignments = regexp.MustCompile(`(?im)((?:["']?[a-z0-9_.-]*(?:token|password|passwd|secret|api[_-]?key|credential)[a-z0-9_.-]*["']?|["']?(?:authorization|username|user)["']?)[ \t]*[:=][ \t]*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,;&]+)`)
+var assignments = regexp.MustCompile(`(?im)((?:["']?[a-z0-9_.-]*(?:token|password|passwd|secret|api[_-]?key|credential)[a-z0-9_.-]*["']?|["']?(?:authorization|username|user)["']?)[ \t]*[:=][ \t]*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,;&\x60]+)`)
 var secretFlags = regexp.MustCompile(`(?i)(--?[a-z0-9_-]*(?:token|password|passwd|secret|api[_-]?key|credential)[a-z0-9_-]*[ \t]+)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,;]+)`)
 var yamlBlock = regexp.MustCompile(`^([ \t]*)(["']?[a-zA-Z0-9_.-]+["']?)[ \t]*:[ \t]*[|>][+-]?[ \t]*$`)
 var secrets = []*regexp.Regexp{

@@ -39,6 +39,7 @@ type StatusResult struct {
 }
 
 type Diagnostics struct {
+	Region string
 	Dir    string
 	Store  Store
 	Runner Runner
@@ -143,6 +144,13 @@ func (d Diagnostics) Doctor(ctx context.Context) ([]Check, error) {
 	}
 	checks := make([]Check, 0, 12)
 	imageRecord, _ := d.Store.Read()
+	if imageRecord.Region == "" {
+		region, err := ResolveRegion(ctx, d.Region, d.HTTP)
+		if err != nil {
+			return nil, err
+		}
+		imageRecord.Region = region
+	}
 	tag := imageRecord.CoreVersion
 	if tag == "" {
 		tag = "latest"

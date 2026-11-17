@@ -29,6 +29,27 @@ func (r *upgradeRunner) Docker(_ context.Context, args ...string) (deploy.Comman
 	call := strings.Join(args, " ")
 	r.calls = append(r.calls, "docker "+call)
 	switch {
+	case len(args) > 0 && args[0] == "run":
+		var dataDir, backupDir string
+		for _, argument := range args {
+			if strings.HasPrefix(argument, "type=bind,src=") {
+				parts := strings.Split(strings.TrimPrefix(argument, "type=bind,src="), ",dst=")
+				if strings.HasPrefix(parts[1], "/data") {
+					dataDir = parts[0]
+				} else {
+					backupDir = parts[0]
+				}
+			}
+		}
+		if backupDir != "" {
+			return deploy.CommandResult{}, os.CopyFS(filepath.Join(backupDir, "data"), os.DirFS(dataDir))
+		}
+		config, err := os.ReadFile(filepath.Join(dataDir, "config.yaml"))
+		if err != nil {
+			return deploy.CommandResult{}, err
+		}
+		encoded, _ := json.Marshal(map[string]any{"config": string(config), "size": 100, "free": 10 << 30})
+		return deploy.CommandResult{Stdout: string(encoded)}, nil
 	case strings.HasPrefix(call, "info "):
 		return deploy.CommandResult{Stdout: "29"}, nil
 	case strings.HasPrefix(call, "pull "):

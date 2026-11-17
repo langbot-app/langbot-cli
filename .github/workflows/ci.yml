@@ -85,13 +85,44 @@ jobs:
       - if: runner.os == 'Windows'
         shell: pwsh
         run: ./scripts/test-native-e2e.ps1
+      - name: Repeat Windows native lifecycle
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:LANGBOT_HOME = "$env:RUNNER_TEMP/lang546-native-repeat"
+          $env:APPDATA = Join-Path $env:LANGBOT_HOME 'config'
+          New-Item -ItemType Directory -Force $env:APPDATA | Out-Null
+          ./scripts/test-native-e2e.ps1
       - if: failure() && runner.os != 'Windows'
         run: lbctl uninstall --yes --output json
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: native-logs-${{ matrix.os }}-${{ matrix.locale }}
-          path: ${{ runner.temp }}/lang517-native/instances/*/logs/
+          path: |
+            ${{ runner.temp }}/lang517-native/instances/*/logs/
+            ${{ runner.temp }}/lang546-native-repeat/instances/*/logs/
+  docker-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      LANGBOT_HOME: ${{ github.workspace }}/.docker-e2e
+      LANGBOT_TELEMETRY: '0'
+      LBCTL_NO_UPDATE_CHECK: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.8'
+          cache: true
+      - run: |
+          go build -o "$RUNNER_TEMP/bin/lbctl" ./cmd/lbctl
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - run: sh scripts/test-docker-e2e.sh
+      - name: Non-root backup and restore
+        env:
+          LBCTL_DOCKER_TEST_IMAGE: rockchin/langbot:v4.11.8
+        run: go test -v ./internal/deploy -run '^TestDockerBackupNonRootRoundTrip$'
   build:
     runs-on: ubuntu-latest
     steps:
