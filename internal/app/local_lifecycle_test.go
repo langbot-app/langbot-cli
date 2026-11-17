@@ -113,6 +113,7 @@ func (r *lifecycleTestRunner) isRunning() bool {
 type lifecycleTransport struct {
 	runner  *lifecycleTestRunner
 	edition string
+	version string
 }
 
 func (t lifecycleTransport) RoundTrip(*http.Request) (*http.Response, error) {
@@ -123,7 +124,11 @@ func (t lifecycleTransport) RoundTrip(*http.Request) (*http.Response, error) {
 	if edition == "" {
 		edition = "community"
 	}
-	body := fmt.Sprintf(`{"code":0,"data":{"version":"v4.10.10","edition":%q,"instance_uuid":"instance-local","workspace_uuid":"workspace-local","api_key_id":"key-local","permissions":[],"schema_version":1,"operations":{}},"msg":"ok"}`, edition)
+	version := t.version
+	if version == "" {
+		version = "v4.10.10"
+	}
+	body := fmt.Sprintf(`{"code":0,"data":{"version":%q,"edition":%q,"instance_uuid":"instance-local","workspace_uuid":"workspace-local","api_key_id":"key-local","permissions":[],"schema_version":1,"operations":{}},"msg":"ok"}`, version, edition)
 	return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
 }
 

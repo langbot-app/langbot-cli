@@ -14,7 +14,7 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
-const GlobalAPIKeyMinVersion = "v4.10.3"
+const GlobalAPIKeyMinVersion = "v4.10.11"
 
 func SupportsLocalAuth(version string) bool {
 	comparison, err := CompareReleaseVersions(version, GlobalAPIKeyMinVersion)

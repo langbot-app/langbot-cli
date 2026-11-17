@@ -214,11 +214,15 @@ func TestAdoptedUpgradeRegistryFailureLeavesDeploymentRunning(t *testing.T) {
 	}
 }
 
-func upgradeServiceFixture(t *testing.T, failUp bool) (*Service, *upgradeRunner, deploy.Record, string) {
+func upgradeServiceFixture(t *testing.T, failUp bool, versions ...string) (*Service, *upgradeRunner, deploy.Record, string) {
 	t.Helper()
 	root := t.TempDir()
 	dir := filepath.Join(root, "deployment")
-	assets, err := deploy.NewInstallAssets(dir, "v4.10.9", "basic", 15300, deploy.InstallNetworkOptions{})
+	version := "v4.10.9"
+	if len(versions) > 0 {
+		version = versions[0]
+	}
+	assets, err := deploy.NewInstallAssets(dir, version, "basic", 15300, deploy.InstallNetworkOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

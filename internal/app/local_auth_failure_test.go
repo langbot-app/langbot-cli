@@ -21,9 +21,10 @@ import (
 )
 
 var invalidLocalAuthConfigs = map[string]string{
-	"key_type": "api:\n  global_api_key: 12345\n",
-	"yaml":     "api: [\n",
-	"timeout":  "api: {}\n",
+	"key_type":    "api:\n  global_api_key: 12345\n",
+	"yaml":        "api: [\n",
+	"timeout":     "api: {}\n",
+	"context_404": "api: {}\n",
 }
 
 func assertLocalAuthWarning(t *testing.T, response Result, err error, action string) {
@@ -47,10 +48,17 @@ func assertLocalAuthWarning(t *testing.T, response Result, err error, action str
 	}
 }
 
-func localAuthTimeoutTransport(base http.RoundTripper) http.RoundTripper {
+func localAuthFailureTransport(base http.RoundTripper, failure string) http.RoundTripper {
 	return taskRoundTripFunc(func(request *http.Request) (*http.Response, error) {
 		if request.Header.Get("X-API-Key") != "" {
-			return nil, context.DeadlineExceeded
+			if failure == "timeout" {
+				return nil, context.DeadlineExceeded
+			}
+			if failure == "context_404" && request.URL.Path == "/api/v1/system/context" {
+				response := taskResponse(`{"detail":"Not Found"}`)
+				response.StatusCode = http.StatusNotFound
+				return response, nil
+			}
 		}
 		return base.RoundTrip(request)
 	})
@@ -64,9 +72,7 @@ func TestDockerLocalAuthFailuresDoNotFailInstallOrLifecycle(t *testing.T) {
 			dir := filepath.Join(root, "deployment")
 			runner := &lifecycleTestRunner{state: "stopped", port: freeLifecyclePort(t), authConfig: content}
 			transport := http.RoundTripper(lifecycleTransport{runner: runner})
-			if failure == "timeout" {
-				transport = localAuthTimeoutTransport(transport)
-			}
+			transport = localAuthFailureTransport(transport, failure)
 			service := New(Dependencies{LocalDir: dir, LocalLocatorPath: filepath.Join(root, "locator.yaml"), LocalRunner: runner,
 				Transport: transport, LocalHTTP: &http.Client{Transport: lifecycleTransport{runner: runner}},
 				DefaultConfigPath: func() (string, error) { return filepath.Join(root, "cli.yaml"), nil },
@@ -77,7 +83,7 @@ func TestDockerLocalAuthFailuresDoNotFailInstallOrLifecycle(t *testing.T) {
 			if !runner.isRunning() {
 				t.Fatal("installation did not start deployment")
 			}
-			if failure != "timeout" {
+			if failure == "key_type" || failure == "yaml" {
 				if err := os.WriteFile(filepath.Join(dir, "data", "config.yaml"), []byte(content), 0o600); err != nil {
 					t.Fatal(err)
 				}
@@ -92,6 +98,56 @@ func TestDockerLocalAuthFailuresDoNotFailInstallOrLifecycle(t *testing.T) {
 				if !runner.isRunning() {
 					t.Fatalf("%s stopped deployment", action)
 				}
+			}
+		})
+	}
+}
+
+func TestOlderCoreSkipsLocalAuthWithoutFailingLifecycle(t *testing.T) {
+	for _, language := range []string{i18n.English, i18n.Chinese} {
+		t.Run(language, func(t *testing.T) {
+			defer i18n.Use(language)()
+			for _, version := range []string{"v4.10.3", "v4.10.10"} {
+				t.Run(version, func(t *testing.T) {
+					root := t.TempDir()
+					dir := filepath.Join(root, "deployment")
+					runner := &lifecycleTestRunner{state: "stopped", port: freeLifecyclePort(t)}
+					transport := taskRoundTripFunc(func(request *http.Request) (*http.Response, error) {
+						if request.URL.Path == "/api/v1/system/context" || request.Header.Get("X-API-Key") != "" {
+							t.Fatal("older Core attempted automatic authentication")
+						}
+						return (lifecycleTransport{runner: runner, version: version}).RoundTrip(request)
+					})
+					service := New(Dependencies{LocalDir: dir, LocalLocatorPath: filepath.Join(root, "locator.yaml"), LocalRunner: runner,
+						Transport: transport, LocalHTTP: &http.Client{Transport: transport},
+						DefaultConfigPath: func() (string, error) { return filepath.Join(root, "cli.yaml"), nil },
+					})
+					for _, action := range []string{"install", "restart", "start"} {
+						var rendered bytes.Buffer
+						display := progress.New(&rendered, func(string) (string, bool) { return "", false }, false, false)
+						ctx := progress.WithContext(context.Background(), display)
+						var response Result
+						var err error
+						if action == "install" {
+							response, err = service.Install(ctx, InstallOptions{Version: version, ImageRepository: deploy.DefaultImageRepository, Profile: "basic", Port: runner.port, PluginDebugPort: new(int), AdapterPorts: []string{"none"}})
+						} else {
+							response, err = service.runLifecycle(ctx, action, LifecycleOptions{CheckOptions: CheckOptions{LocalDir: dir}})
+						}
+						if err != nil || !runner.isRunning() {
+							t.Fatalf("%s failed: %v", action, err)
+						}
+						data := response.Data.(map[string]any)
+						if data["local_auth"] == true || data["local_auth_error"] != nil {
+							t.Fatalf("unexpected authentication result: %+v", data)
+						}
+						if !strings.Contains(rendered.String(), i18n.T("Automatic API authentication requires Core v4.10.11 or newer; skipped")) {
+							t.Fatalf("missing version notice: %s", rendered.String())
+						}
+						if _, err := os.Stat(deploy.LocalKeyPath(dir)); !os.IsNotExist(err) {
+							t.Fatal("older Core wrote an automatic credential")
+						}
+					}
+				})
 			}
 		})
 	}
@@ -120,14 +176,12 @@ func TestDockerLocalAuthFailuresDoNotRequireUpgradeRecovery(t *testing.T) {
 		t.Run(failure, func(t *testing.T) {
 			service, runner, record, dir := upgradeServiceFixture(t, false)
 			service.deps.LocalRunner = authFailureUpgradeRunner{upgradeRunner: runner, content: content}
-			if failure == "timeout" {
-				service.deps.Transport = localAuthTimeoutTransport(service.deps.Transport)
-			}
-			response, err := service.Upgrade(context.Background(), UpgradeOptions{CheckOptions: CheckOptions{LocalDir: dir}, Version: "v4.10.10", Yes: true})
+			service.deps.Transport = localAuthFailureTransport(service.deps.Transport, failure)
+			response, err := service.Upgrade(context.Background(), UpgradeOptions{CheckOptions: CheckOptions{LocalDir: dir}, Version: "v4.10.11", Yes: true})
 			assertLocalAuthWarning(t, response, err, "upgrade")
 			state, err := deploy.ReadUpgradeState(dir)
 			updated, readErr := (deploy.Store{Dir: dir}).Read()
-			if err != nil || state.Phase != "completed" || readErr != nil || updated.CoreVersion != "v4.10.10" || !runner.running || response.Data.(map[string]any)["completed"] != true {
+			if err != nil || state.Phase != "completed" || readErr != nil || updated.CoreVersion != "v4.10.11" || !runner.running || response.Data.(map[string]any)["completed"] != true {
 				t.Fatalf("upgrade did not complete: %+v, %+v, %v, %v", state, updated, err, readErr)
 			}
 			if updated.DeploymentID != record.DeploymentID {
@@ -192,9 +246,7 @@ func TestNativeLocalAuthFailuresDoNotStopLifecycle(t *testing.T) {
 		for _, action := range []string{"install", "repair", "start", "restart", "upgrade"} {
 			t.Run(failure+"/"+action, func(t *testing.T) {
 				service, record, dir := nativeAuthFailureFixture(t, content)
-				if failure == "timeout" {
-					service.deps.Transport = localAuthTimeoutTransport(service.deps.Transport)
-				}
+				service.deps.Transport = localAuthFailureTransport(service.deps.Transport, failure)
 				if action != "install" && action != "start" {
 					if err := os.WriteFile(filepath.Join(dir, "native.pid"), []byte(fmt.Sprint(os.Getpid())), 0o600); err != nil {
 						t.Fatal(err)
@@ -226,7 +278,7 @@ func TestNativeLocalAuthFailuresDoNotStopLifecycle(t *testing.T) {
 }
 
 func TestLocalAuthBindingMismatchIsOnlyAWarning(t *testing.T) {
-	service, _, record, dir := upgradeServiceFixture(t, false)
+	service, _, record, dir := upgradeServiceFixture(t, false, "v4.10.11")
 	auth := localAuthAttempt{service: service, dir: dir}
 	auth.configure(context.Background(), record)
 	if err := service.update(func(file *config.File) error {
@@ -242,7 +294,7 @@ func TestLocalAuthBindingMismatchIsOnlyAWarning(t *testing.T) {
 }
 
 func TestLocalAuthBindingTimeoutLeavesOperationContextUsable(t *testing.T) {
-	service, _, record, dir := upgradeServiceFixture(t, false)
+	service, _, record, dir := upgradeServiceFixture(t, false, "v4.10.11")
 	service.deps.Transport = taskRoundTripFunc(func(request *http.Request) (*http.Response, error) {
 		<-request.Context().Done()
 		return nil, request.Context().Err()
@@ -259,7 +311,7 @@ func TestLocalAuthBindingTimeoutLeavesOperationContextUsable(t *testing.T) {
 }
 
 func TestUpgradeDryRunDoesNotBindLocalAuth(t *testing.T) {
-	service, _, record, dir := upgradeServiceFixture(t, false)
+	service, _, record, dir := upgradeServiceFixture(t, false, "v4.10.11")
 	if _, err := service.configureLocalAuth(context.Background(), dir, record); err != nil {
 		t.Fatal(err)
 	}
@@ -270,7 +322,7 @@ func TestUpgradeDryRunDoesNotBindLocalAuth(t *testing.T) {
 		}
 		return base.RoundTrip(request)
 	})
-	if _, err := service.Upgrade(context.Background(), UpgradeOptions{CheckOptions: CheckOptions{LocalDir: dir}, Version: "v4.10.10", DryRun: true}); err != nil {
+	if _, err := service.Upgrade(context.Background(), UpgradeOptions{CheckOptions: CheckOptions{LocalDir: dir}, Version: "v4.11.7", DryRun: true}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -282,7 +334,7 @@ func TestAdoptLocalAuthWarningAndRestartHintAppearOnce(t *testing.T) {
 			for _, content := range []string{"api: {}\n", invalidLocalAuthConfigs["key_type"], invalidLocalAuthConfigs["yaml"]} {
 				root := t.TempDir()
 				composeFile := filepath.Join(root, "compose.yaml")
-				if err := os.WriteFile(composeFile, []byte("services:\n  langbot:\n    image: rockchin/langbot:v4.10.10\n"), 0o600); err != nil {
+				if err := os.WriteFile(composeFile, []byte("services:\n  langbot:\n    image: rockchin/langbot:v4.10.11\n"), 0o600); err != nil {
 					t.Fatal(err)
 				}
 				if err := os.MkdirAll(filepath.Join(root, "data"), 0o700); err != nil {
@@ -290,7 +342,7 @@ func TestAdoptLocalAuthWarningAndRestartHintAppearOnce(t *testing.T) {
 				}
 				runner := &lifecycleTestRunner{state: "running", port: freeLifecyclePort(t), authConfig: content}
 				service := New(Dependencies{LocalDir: filepath.Join(root, "record"), LocalLocatorPath: filepath.Join(root, "locator.yaml"), LocalRunner: runner,
-					Transport: lifecycleTransport{runner: runner}, DefaultConfigPath: func() (string, error) { return filepath.Join(root, "cli.yaml"), nil },
+					Transport: lifecycleTransport{runner: runner, version: "v4.10.11"}, DefaultConfigPath: func() (string, error) { return filepath.Join(root, "cli.yaml"), nil },
 				})
 				var rendered bytes.Buffer
 				display := progress.New(&rendered, func(string) (string, bool) { return "", false }, false, false)

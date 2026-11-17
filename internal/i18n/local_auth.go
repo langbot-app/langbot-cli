@@ -8,7 +8,7 @@ func init() {
 		"Local context changed during authentication":                                                  "鉴权期间本地 context 已发生变化",
 		"Unable to configure local API authentication":                                                 "无法配置本地 API 鉴权",
 		"Local API credential unavailable; run lbctl restart":                                          "本地 API 凭据不可用；请运行 lbctl restart",
-		"Automatic API authentication requires Core v4.10.3 or newer; skipped":                         "自动 API 鉴权需要 Core v4.10.3 或更新版本；已跳过",
+		"Automatic API authentication requires Core v4.10.11 or newer; skipped":                        "自动 API 鉴权需要 Core v4.10.11 或更新版本；已跳过",
 		"Local API key configured; run lbctl restart to activate it":                                   "本地 API Key 已配置，重启后生效：lbctl restart",
 		"Local context endpoint differs from deployment":                                               "本地 context 的地址与部署实例不一致",
 		"No API key configured":                                                                        "未配置 API Key",
