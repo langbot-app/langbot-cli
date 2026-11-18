@@ -243,8 +243,9 @@ func TestNativeEnvironmentAndPinnedUVPlatforms(t *testing.T) {
 			t.Fatal(platform)
 		}
 	}
+	t.Setenv("DOCKER_ENV", "true")
 	env := strings.Join(NativeEnvironment(Record{ToolsDir: "/managed/tools", DataDir: "/managed/data", Port: 5310, PyPIIndex: "https://example.test/simple"}), "\n")
-	for _, value := range []string{"API__PORT=5310", "LANGBOT_DATA_ROOT=/managed/data", "UV_PYTHON_PREFERENCE=only-managed", "LANGBOT_PLUGIN_PYPI_INDEX_URL=https://example.test/simple"} {
+	for _, value := range []string{"API__PORT=5310", "LANGBOT_DATA_ROOT=/managed/data", "UV_PYTHON_PREFERENCE=only-managed", "LANGBOT_PLUGIN_PYPI_INDEX_URL=https://example.test/simple", "DOCKER_ENV=false"} {
 		if !strings.Contains(env, value) {
 			t.Fatalf("missing %s", value)
 		}
