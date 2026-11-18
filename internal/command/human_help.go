@@ -299,7 +299,7 @@ func flagEnum(command, flag string) []string {
 }
 
 var commandExamples = map[string]string{
-	"agent.debug":    "  lbctl agent debug <agent-uuid> --message 'Hello' --yes\n  lbctl agent debug <agent-uuid> --file debug.json --yes",
+	"agent.debug":    "  lbctl agent debug <agent-uuid> --message 'Hello' --yes\n  lbctl agent debug <agent-uuid> --file debug.json --yes\n  lbctl agent debug <agent-uuid> --message 'Summarize the attachments' --attach ./report.pdf --attach ./image.png --yes\n  lbctl agent debug <agent-uuid> --file debug.json --attach ./report.pdf --yes",
 	"context.list":   "  lbctl context list\n  lbctl context list --discover\n  lbctl --config ./config.yaml context list",
 	"context.show":   "  lbctl context show\n  lbctl context show production",
 	"context.add":    "  lbctl context add local --endpoint http://127.0.0.1:5300 --api-key-env LANGBOT_API_KEY\n  lbctl --context local whoami\n  lbctl context update local --expect-workspace <workspace-id>\n  lbctl context use local",

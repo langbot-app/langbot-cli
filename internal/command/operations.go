@@ -230,6 +230,7 @@ func confirmOperation(deps Dependencies, yes bool, stdinUsed bool) error {
 func addOperationCommand(parent *cobra.Command, spec operationCommand, service *app.Service, deps Dependencies, flags *globalFlags) {
 	var decodeField, destination string
 	var file, message string
+	var attachmentPaths []string
 	var yes bool
 	fields := strings.Fields(spec.arguments)
 	use := spec.path
@@ -244,6 +245,7 @@ func addOperationCommand(parent *cobra.Command, spec operationCommand, service *
 	cmd.Flags().BoolVar(&yes, "yes", false, i18n.T("Confirm write"))
 	if spec.id == "agent.debug.stream" {
 		cmd.Flags().StringVar(&message, "message", "", i18n.T("Agent debug message text"))
+		cmd.Flags().StringArrayVar(&attachmentPaths, "attach", nil, i18n.T("Local attachment; repeat for more files (10 MiB per file, 20 total references)"))
 	}
 	if spec.id == "" && !spec.stream {
 		cmd.Flags().StringVar(&decodeField, "decode-binary", "", i18n.T("Decode the specified base64 output field to a file"))
@@ -300,9 +302,18 @@ func addOperationCommand(parent *cobra.Command, spec operationCommand, service *
 					body[field] = args[index]
 				}
 			}
-			session, err := service.OpenOperations(cmd.Context(), connectionOptions(flags), spec.stream)
+			attachments, err := prepareDebugAttachments(body, attachmentPaths)
 			if err != nil {
 				return app.Result{}, err
+			}
+			defer attachments.close()
+			var beforeDebug any
+			if len(attachments) > 0 {
+				beforeDebug = attachments.report("not_started")
+			}
+			session, err := service.OpenOperations(cmd.Context(), connectionOptions(flags), spec.stream)
+			if err != nil {
+				return app.Result{Data: beforeDebug}, err
 			}
 			var description map[string]any
 			if spec.id != "" {
@@ -323,14 +334,29 @@ func addOperationCommand(parent *cobra.Command, spec operationCommand, service *
 				return session.Result(nil), result.New("input", i18n.T("Operation execution mode mismatch; use op call or op stream"))
 			}
 			if err := session.Authorize(description); err != nil {
-				return session.Result(nil), err
+				return session.Result(beforeDebug), err
+			}
+			if len(attachments) > 0 {
+				for _, permission := range []string{"resource.manage", "resource.view"} {
+					if err := session.Authorize(map[string]any{"permission": permission}); err != nil {
+						return session.Result(beforeDebug), err
+					}
+				}
 			}
 			if app.OperationWrites(description) {
 				if err := confirmOperation(deps, yes, file == "-" || flags.apiKeyStdin); err != nil {
-					return session.Result(nil), err
+					return session.Result(beforeDebug), err
 				}
 			}
 			if spec.stream {
+				if len(attachments) > 0 {
+					if err := attachments.upload(cmd.Context(), session, body["payload"].(map[string]any)); err != nil {
+						return session.Result(beforeDebug), err
+					}
+					if cmd.Context().Err() != nil {
+						return session.Result(beforeDebug), result.New("network", i18n.T("Request cancelled"))
+					}
+				}
 				err = session.Client.OperationStream(cmd.Context(), session.Target, identifier, body, func(event any) error {
 					if flags.output == "yaml" || flags.output == "yml" {
 						fmt.Fprintln(deps.Out, "---")
@@ -339,6 +365,13 @@ func addOperationCommand(parent *cobra.Command, spec operationCommand, service *
 				})
 				if flags.output == "yaml" || flags.output == "yml" {
 					fmt.Fprintln(deps.Out, "---")
+				}
+				if len(attachments) > 0 {
+					status := "completed"
+					if err != nil {
+						status = debugFailureStatus(err)
+					}
+					return session.Result(attachments.report(status)), err
 				}
 				return session.Result(map[string]any{"completed": err == nil}), err
 			}

@@ -619,7 +619,10 @@ lbctl monitoring executions --file filters.json
 lbctl op stream <streaming-operation-id> --file input.json --yes
 lbctl agent debug <agent-uuid> --file debug.json --yes
 lbctl agent debug <agent-uuid> --message 'Hello' --yes
+lbctl agent debug <agent-uuid> --message 'Summarize the attachments' --attach ./report.pdf --attach ./image.png --yes
 ```
+
+Repeat `--attach` to upload local files with the same caller identity used for debugging. It also works with `--file`, merging uploaded IDs into `payload.artifact_ids`. Each local file is limited to 10 MiB, with at most 20 distinct references in total. An upload failure prevents the debug run. Timeouts do not trigger an automatic rerun. Debug events stream as they arrive. Core authorizes the attachments and supplies their references to the Runner. The Runner and model determine how their content is read and interpreted.
 
 `agent debug --message` sends text as `payload.text`. Choose one of `--message` and `--file`.
 

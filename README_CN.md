@@ -592,7 +592,10 @@ lbctl monitoring executions --file filters.json
 lbctl op stream <streaming-operation-id> --file input.json --yes
 lbctl agent debug <agent-uuid> --file debug.json --yes
 lbctl agent debug <agent-uuid> --message '你好' --yes
+lbctl agent debug <agent-uuid> --message '请概括附件' --attach ./report.pdf --attach ./image.png --yes
 ```
+
+重复使用 `--attach` 可上传多个本地文件，上传与调试使用同一调用者身份。它也可与 `--file` 合用，将上传 ID 合并到 `payload.artifact_ids`。每个本地文件最多 10 MiB，总计最多 20 个不同引用。上传失败时不启动调试，超时后不自动重跑，调试事件逐条流式输出。Core 授权附件并向 Runner 提供引用，实际内容读取和理解取决于 Runner 与模型。
 
 `agent debug --message` 将文本作为 `payload.text` 发送。`--message` 和 `--file` 选择其中一项。
 

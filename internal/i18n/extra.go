@@ -44,6 +44,17 @@ func init() {
 		"Show full subprocess output":                               "显示完整子进程输出",
 		"Resolve version":                                           "确定版本", "Validate target": "检查目标", "Check ports": "检查端口",
 		"Prepare logs": "准备日志", "Save deployment record": "保存部署记录", "Download uv": "下载 uv", "Install Python 3.12": "安装 Python 3.12",
+
+		"Local attachment; repeat for more files (10 MiB per file, 20 total references)": "本地附件，可重复指定（单文件最多 10 MiB，合计最多 20 个引用）",
+		"Artifact upload returned no ID":                                                 "附件上传未返回 ID",
+		"Artifact upload returned a duplicate ID":                                        "附件上传返回了重复的 ID",
+		"Debug payload must be an object":                                                "调试请求的 payload 必须为对象",
+		"artifact_ids must be a list of distinct non-empty strings":                      "artifact_ids 必须是不含重复项的非空字符串列表",
+		"Agent debug accepts at most 20 attachment references":                           "Agent 调试最多接受 20 个附件引用",
+		"Invalid attachment filename":                                                    "附件文件名无效",
+		"Attachment must be a readable regular file: ":                                   "附件必须是可读的普通文件：",
+		"Attachment must be a regular file of at most 10 MiB: ":                          "附件必须是 10 MiB 以内的普通文件：",
+
 		"Create virtual environment": "创建虚拟环境", "Install LangBot packages": "安装 LangBot 依赖",
 		"Register startup": "注册自启", "Start service": "启动服务", "Stop service": "停止服务",
 		"Check service health": "检查服务健康", "Remove startup": "删除自启", "Remove data": "清理数据",

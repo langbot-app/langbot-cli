@@ -217,6 +217,411 @@ func (body cancelAfterResponseRead) Read(data []byte) (int, error) {
 	return n, err
 }
 
+type agentDebugAttachment struct {
+	path, mime, id string
+	content        []byte
+}
+
+func agentDebugAttachmentFiles(t *testing.T) []agentDebugAttachment {
+	t.Helper()
+	png, err := base64.StdEncoding.DecodeString("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jL1sAAAAASUVORK5CYII=")
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := []agentDebugAttachment{
+		{path: filepath.Join(t.TempDir(), "图片🙂.png"), mime: "image/png", id: "art_00000000000000000000000000000001", content: png},
+		{path: filepath.Join(t.TempDir(), "说明.pdf"), mime: "application/pdf", id: "art_00000000000000000000000000000002", content: []byte("%PDF-1.7\n1 0 obj\n<< /Type /Catalog >>\nendobj\n%%EOF\n")},
+	}
+	for _, file := range files {
+		if err := os.WriteFile(file.path, file.content, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return files
+}
+
+type agentDebugAttachmentFixture struct {
+	t                          *testing.T
+	files                      []agentDebugAttachment
+	want                       map[string]any
+	member                     bool
+	unfinishedStream           bool
+	rejectUpload, streamStatus int
+	requests, uploads, streams atomic.Int32
+}
+
+func (fixture *agentDebugAttachmentFixture) server() *httptest.Server {
+	fixture.t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		fixture.requests.Add(1)
+		credentialOK := request.Header.Get("X-API-Key") == "test-secret" && request.Header.Get("Authorization") == ""
+		if fixture.member {
+			credentialOK = request.Header.Get("Authorization") == "Bearer member-secret" && request.Header.Get("X-API-Key") == ""
+		}
+		if !credentialOK || request.Header.Get("X-LangBot-Client-Command") != "agent.debug" {
+			fixture.t.Error("attachment debug lost its credential or command identity")
+		}
+		if operationPreflight(writer, request, true) {
+			return
+		}
+		switch {
+		case request.Method == http.MethodPost && request.URL.Path == "/api/v1/artifacts":
+			index := int(fixture.uploads.Add(1)) - 1
+			if index >= len(fixture.files) {
+				fixture.t.Error("attachment upload was repeated")
+				writer.WriteHeader(500)
+				return
+			}
+			file, header, err := request.FormFile("file")
+			if err != nil {
+				fixture.t.Error(err)
+				writer.WriteHeader(400)
+				return
+			}
+			defer file.Close()
+			defer request.MultipartForm.RemoveAll()
+			content, err := io.ReadAll(file)
+			want := fixture.files[index]
+			if err != nil || !bytes.Equal(content, want.content) || header.Filename != filepath.Base(want.path) || header.Header.Get("Content-Type") != want.mime || len(request.MultipartForm.File) != 1 || len(request.MultipartForm.File["file"]) != 1 {
+				fixture.t.Errorf("attachment %d name=%q mime=%q bytes=%d, want name=%q mime=%q bytes=%d read=%v", index, header.Filename, header.Header.Get("Content-Type"), len(content), filepath.Base(want.path), want.mime, len(want.content), err)
+			}
+			if fixture.rejectUpload == index+1 {
+				writer.WriteHeader(http.StatusForbidden)
+				fmt.Fprint(writer, `{"code":"permission_denied","data":null}`)
+				return
+			}
+			json.NewEncoder(writer).Encode(map[string]any{"code": 0, "data": map[string]any{"id": want.id, "expires_at": 1893456000.25}})
+		case request.Method == http.MethodPost && request.URL.Path == "/api/v1/operations/agent.debug.stream/stream":
+			fixture.streams.Add(1)
+			var body map[string]any
+			if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+				fixture.t.Error(err)
+			}
+			if !reflect.DeepEqual(body, fixture.want) {
+				fixture.t.Errorf("attachment debug body=%#v, want %#v", body, fixture.want)
+			}
+			if fixture.streamStatus != 0 {
+				writer.WriteHeader(fixture.streamStatus)
+				fmt.Fprint(writer, `{"code":"permission_denied","data":null}`)
+				return
+			}
+			writer.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprint(writer, "data: {\"kind\":\"result\",\"data\":{\"text\":\"回应🙂\"}}\n\n")
+			if !fixture.unfinishedStream {
+				fmt.Fprint(writer, "event: done\ndata: {}\n\n")
+			}
+		default:
+			fixture.t.Errorf("unexpected attachment debug request %s %s", request.Method, request.URL.Path)
+			writer.WriteHeader(500)
+		}
+	}))
+}
+
+func agentDebugAttachmentArgs(files []agentDebugAttachment) []string {
+	args := []string{"agent", "debug", "agent", "--yes"}
+	for _, file := range files {
+		args = append(args, "--attach", file.path)
+	}
+	return args
+}
+
+func agentDebugAttachmentSummary(t *testing.T, output, format string) map[string]any {
+	t.Helper()
+	envelopes := decodeOperationStream(t, output, format)
+	if len(envelopes) == 0 {
+		t.Fatalf("attachment debug produced no output %s", output)
+	}
+	data, ok := envelopes[len(envelopes)-1]["data"].(map[string]any)
+	if !ok {
+		t.Fatalf("attachment debug lost its final result %s", output)
+	}
+	return data
+}
+
+func assertAgentDebugAttachments(t *testing.T, data map[string]any, files []agentDebugAttachment, statuses ...string) {
+	t.Helper()
+	items, ok := data["attachments"].([]any)
+	if !ok || len(items) != len(statuses) {
+		t.Fatalf("attachment outcomes=%#v, want %v", data, statuses)
+	}
+	for index, status := range statuses {
+		item := items[index].(map[string]any)
+		if item["name"] != filepath.Base(files[index].path) || item["status"] != status {
+			t.Fatalf("attachment %d=%#v, want status=%s", index, item, status)
+		}
+		if status == "uploaded" {
+			expires, _ := json.Marshal(item["expires_at"])
+			if item["artifact_id"] != files[index].id || string(expires) != "1893456000.25" {
+				t.Fatalf("uploaded attachment identity or expiry lost %#v", item)
+			}
+		} else if item["artifact_id"] != nil {
+			t.Fatalf("unconfirmed attachment claimed an Artifact ID %#v", item)
+		}
+	}
+}
+
+func TestAgentDebugAttachmentsUploadBinaryAndMergePayload(t *testing.T) {
+	for _, test := range []struct {
+		source, format string
+		member         bool
+	}{
+		{source: "message", format: "json"}, {source: "file", format: "yaml"}, {source: "empty-payload", format: "json", member: true},
+	} {
+		t.Run(fmt.Sprint(test.source, "/", test.format, "/member=", test.member), func(t *testing.T) {
+			files := agentDebugAttachmentFiles(t)
+			payload := map[string]any{"text": " 你好🙂\n第二行 "}
+			input := ""
+			args := agentDebugAttachmentArgs(files)
+			if test.source == "message" {
+				args = append(args, "--message", payload["text"].(string))
+			} else {
+				payload = map[string]any{"artifact_ids": []any{"art_00000000000000000000000000000099"}, "event_type": "custom.event", "event_data": map[string]any{"count": float64(2)}}
+				if test.source == "empty-payload" {
+					payload = map[string]any{}
+				}
+				encoded, _ := json.Marshal(map[string]any{"payload": payload})
+				input = string(encoded)
+				args = append(args, "--file", "-")
+			}
+			ids, _ := payload["artifact_ids"].([]any)
+			for _, file := range files {
+				ids = append(ids, file.id)
+			}
+			payload["artifact_ids"] = ids
+			fixture := &agentDebugAttachmentFixture{t: t, files: files, member: test.member, want: map[string]any{"agent_uuid": "agent", "payload": payload}}
+			server := fixture.server()
+			defer server.Close()
+			args = append(args, "-o", test.format)
+			var code int
+			var output string
+			if test.member {
+				code, output = memberCLI(t, memberConfig(t, server.URL, "member-secret"), input, nil, append(args, "--as-member")...)
+			} else {
+				code, output = operationCLI(t, server, input, args...)
+			}
+			if code != 0 || fixture.uploads.Load() != 2 || fixture.streams.Load() != 1 || strings.Contains(output, "test-secret") || strings.Contains(output, "member-secret") {
+				t.Fatalf("code=%d uploads=%d streams=%d output=%s", code, fixture.uploads.Load(), fixture.streams.Load(), output)
+			}
+			data := agentDebugAttachmentSummary(t, output, test.format)
+			if data["debug_status"] != "completed" || data["completed"] != true {
+				t.Fatalf("successful debug outcome %#v", data)
+			}
+			assertAgentDebugAttachments(t, data, files, "uploaded", "uploaded")
+		})
+	}
+}
+
+func TestAgentDebugAttachmentsValidateAllFilesAndCombinedLimitBeforeHTTP(t *testing.T) {
+	files := agentDebugAttachmentFiles(t)
+	oversized := filepath.Join(t.TempDir(), "oversized.png")
+	large, err := os.Create(oversized)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := large.Truncate((10 << 20) + 1); err != nil {
+		t.Fatal(err)
+	}
+	large.Close()
+	existing := []string{}
+	for index := 0; index < 20; index++ {
+		existing = append(existing, fmt.Sprintf("art_%032x", index+100))
+	}
+	combined, _ := json.Marshal(map[string]any{"payload": map[string]any{"artifact_ids": existing}})
+	for _, test := range []struct {
+		name, input string
+		flags       []string
+	}{
+		{name: "later missing file", flags: []string{"--message", "hello", "--attach", files[0].path, "--attach", filepath.Join(t.TempDir(), "missing.png")}},
+		{name: "later oversized file", flags: []string{"--message", "hello", "--attach", files[0].path, "--attach", oversized}},
+		{name: "directory", flags: []string{"--message", "hello", "--attach", t.TempDir()}},
+		{name: "blank path", flags: []string{"--message", "hello", "--attach", ""}},
+		{name: "combined artifact limit", input: string(combined), flags: []string{"--file", "-", "--attach", files[0].path}},
+		{name: "invalid artifact list", input: `{"payload":{"artifact_ids":"bad"}}`, flags: []string{"--file", "-", "--attach", files[0].path}},
+		{name: "duplicate artifact IDs", input: `{"payload":{"artifact_ids":["art_00000000000000000000000000000099","art_00000000000000000000000000000099"]}}`, flags: []string{"--file", "-", "--attach", files[0].path}},
+		{name: "missing text or event source", flags: []string{"--attach", files[0].path}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := &agentDebugAttachmentFixture{t: t}
+			server := fixture.server()
+			defer server.Close()
+			code, output := operationCLI(t, server, test.input, append([]string{"agent", "debug", "agent", "--yes"}, test.flags...)...)
+			if code != 2 || fixture.requests.Load() != 0 {
+				t.Fatalf("invalid attachments reached Core code=%d requests=%d output=%s", code, fixture.requests.Load(), output)
+			}
+		})
+	}
+	t.Run("21 new attachments", func(t *testing.T) {
+		fixture := &agentDebugAttachmentFixture{t: t}
+		server := fixture.server()
+		defer server.Close()
+		args := []string{"agent", "debug", "agent", "--message", "hello", "--yes"}
+		for index := 0; index < 21; index++ {
+			args = append(args, "--attach", files[0].path)
+		}
+		code, output := operationCLI(t, server, "", args...)
+		if code != 2 || fixture.requests.Load() != 0 {
+			t.Fatalf("oversized attachment count reached Core code=%d output=%s", code, output)
+		}
+	})
+}
+
+func TestAgentDebugAttachmentsAcceptExactSizeAndCombinedCountBoundaries(t *testing.T) {
+	files := agentDebugAttachmentFiles(t)[:1]
+	content := make([]byte, 10<<20)
+	copy(content, files[0].content)
+	content[len(content)-1] = 0x7f
+	files[0].content = content
+	if err := os.WriteFile(files[0].path, content, 0600); err != nil {
+		t.Fatal(err)
+	}
+	ids := []any{}
+	for index := 0; index < 19; index++ {
+		ids = append(ids, fmt.Sprintf("art_%032x", index+100))
+	}
+	input, _ := json.Marshal(map[string]any{"payload": map[string]any{"artifact_ids": ids}})
+	want := map[string]any{"agent_uuid": "agent", "payload": map[string]any{"artifact_ids": append(ids, files[0].id)}}
+	fixture := &agentDebugAttachmentFixture{t: t, files: files, want: want}
+	server := fixture.server()
+	defer server.Close()
+	transport := operationTransport(func(request *http.Request) (*http.Response, error) {
+		if request.URL.Path == "/api/v1/artifacts" {
+			response := httptest.NewRecorder()
+			server.Config.Handler.ServeHTTP(response, request)
+			return response.Result(), nil
+		}
+		return http.DefaultTransport.RoundTrip(request)
+	})
+	code, output := operationCLITransport(t, server, string(input), transport, append(agentDebugAttachmentArgs(files), "--file", "-")...)
+	if code != 0 || fixture.uploads.Load() != 1 || fixture.streams.Load() != 1 {
+		t.Fatalf("valid limit boundary failed code=%d output=%s", code, output)
+	}
+	assertAgentDebugAttachments(t, agentDebugAttachmentSummary(t, output, "json"), files, "uploaded")
+}
+
+func TestAgentDebugAttachmentsRequirePermissionsAndConfirmationBeforeUpload(t *testing.T) {
+	file := agentDebugAttachmentFiles(t)[0]
+	for _, permission := range []string{"resource.view", "resource.manage", "runtime.operate", "confirmation"} {
+		t.Run(permission, func(t *testing.T) {
+			var writes atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				if request.URL.Path == "/api/v1/system/context" && permission != "confirmation" {
+					allowed := []string{}
+					for _, value := range []string{"resource.view", "resource.manage", "runtime.operate"} {
+						if value != permission {
+							allowed = append(allowed, value)
+						}
+					}
+					json.NewEncoder(writer).Encode(map[string]any{"code": 0, "data": map[string]any{"instance_uuid": "instance", "workspace_uuid": "workspace", "api_key_id": "key", "permissions": allowed}})
+					return
+				}
+				if operationPreflight(writer, request, true) {
+					return
+				}
+				writes.Add(1)
+				writer.WriteHeader(500)
+			}))
+			defer server.Close()
+			args := []string{"agent", "debug", "agent", "--message", "hello", "--attach", file.path}
+			want := 6
+			if permission != "confirmation" {
+				args = append(args, "--yes")
+				want = 4
+			}
+			code, output := operationCLI(t, server, "", args...)
+			if code != want || writes.Load() != 0 {
+				t.Fatalf("attachment write was not gated code=%d writes=%d output=%s", code, writes.Load(), output)
+			}
+			data := agentDebugAttachmentSummary(t, output, "json")
+			if data["debug_status"] != "not_started" {
+				t.Fatalf("permission or confirmation failure lost its debug stage %#v", data)
+			}
+			assertAgentDebugAttachments(t, data, []agentDebugAttachment{file}, "pending")
+		})
+	}
+}
+
+type agentDebugBrokenStream struct{ io.ReadCloser }
+
+func (body agentDebugBrokenStream) Read(data []byte) (int, error) {
+	n, err := body.ReadCloser.Read(data)
+	if err == io.EOF {
+		err = io.ErrUnexpectedEOF
+	}
+	return n, err
+}
+
+func TestAgentDebugAttachmentsPreservePartialAndUnknownResultsWithoutRetry(t *testing.T) {
+	for _, scenario := range []string{"upload-rejected", "upload-unknown", "stream-rejected", "stream-unknown"} {
+		t.Run(scenario, func(t *testing.T) {
+			files := agentDebugAttachmentFiles(t)
+			if strings.HasPrefix(scenario, "upload-") {
+				third := files[0]
+				third.path = filepath.Join(t.TempDir(), "pending.png")
+				third.id = "art_00000000000000000000000000000003"
+				if err := os.WriteFile(third.path, third.content, 0600); err != nil {
+					t.Fatal(err)
+				}
+				files = append(files, third)
+			}
+			ids := []any{}
+			for _, file := range files {
+				ids = append(ids, file.id)
+			}
+			fixture := &agentDebugAttachmentFixture{t: t, files: files, want: map[string]any{"agent_uuid": "agent", "payload": map[string]any{"text": "hello", "artifact_ids": ids}}}
+			if scenario == "upload-rejected" {
+				fixture.rejectUpload = 2
+			} else if scenario == "stream-rejected" {
+				fixture.streamStatus = http.StatusForbidden
+			} else if scenario == "stream-unknown" {
+				fixture.unfinishedStream = true
+			}
+			server := fixture.server()
+			defer server.Close()
+			var attempts atomic.Int32
+			transport := operationTransport(func(request *http.Request) (*http.Response, error) {
+				if request.URL.Path == "/api/v1/artifacts" && attempts.Add(1) == 2 && scenario == "upload-unknown" {
+					io.Copy(io.Discard, request.Body)
+					request.Body.Close()
+					return nil, io.ErrUnexpectedEOF
+				}
+				response, err := http.DefaultTransport.RoundTrip(request)
+				if err == nil && strings.HasSuffix(request.URL.Path, "/stream") && scenario == "stream-unknown" {
+					response.Body = agentDebugBrokenStream{ReadCloser: response.Body}
+				}
+				return response, err
+			})
+			code, output := operationCLITransport(t, server, "", transport, append(agentDebugAttachmentArgs(files), "--message", "hello")...)
+			data := agentDebugAttachmentSummary(t, output, "json")
+			wantCode := 4
+			if strings.HasSuffix(scenario, "unknown") {
+				wantCode = 7
+			}
+			if code != wantCode || attempts.Load() != 2 {
+				t.Fatalf("attachment side effect retried code=%d attempts=%d output=%s", code, attempts.Load(), output)
+			}
+			if strings.HasPrefix(scenario, "upload-") {
+				status := "failed"
+				if scenario == "upload-unknown" {
+					status = "unknown"
+				}
+				if data["debug_status"] != "not_started" || fixture.streams.Load() != 0 {
+					t.Fatalf("debug started after a partial upload %#v", data)
+				}
+				assertAgentDebugAttachments(t, data, files, "uploaded", status, "pending")
+			} else {
+				status := "failed"
+				if scenario == "stream-unknown" {
+					status = "unknown"
+				}
+				if data["debug_status"] != status || fixture.streams.Load() != 1 {
+					t.Fatalf("debug execution outcome lost %#v", data)
+				}
+				assertAgentDebugAttachments(t, data, files, "uploaded", "uploaded")
+			}
+		})
+	}
+}
+
 func TestAgentDebugCancellationAndTimeoutDoNotRetry(t *testing.T) {
 	for _, mode := range []string{"cancel", "timeout"} {
 		t.Run(mode, func(t *testing.T) {
