@@ -1481,7 +1481,9 @@ func (c Client) doWithContentType(ctx context.Context, target Target, method, pa
 	requestID := responseRequestID(resp.Header, parsed, target.secret())
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		if target.UserToken != "" && (resp.StatusCode == 401 || resp.StatusCode == 403) {
-			return response{}, result.RequiresMemberSession()
+			failure := result.RequiresMemberSession()
+			failure.HTTPStatus, failure.RequestID = resp.StatusCode, requestID
+			return response{}, failure
 		}
 		failure := httpError(resp.StatusCode, parsed.Code, requestID, target.secret())
 		if strings.HasPrefix(path, workspaceSandboxPath) {

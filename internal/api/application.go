@@ -75,7 +75,10 @@ func applicationResponse(response *http.Response, target Target, bare bool) (any
 	parsed, parseErr := parseEnvelope(data)
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		if target.UserToken != "" && (response.StatusCode == 401 || response.StatusCode == 403) {
-			return nil, result.RequiresMemberSession()
+			failure := result.RequiresMemberSession()
+			failure.HTTPStatus = response.StatusCode
+			failure.RequestID = responseRequestID(response.Header, parsed, target.secret())
+			return nil, failure
 		}
 		return nil, httpError(response.StatusCode, parsed.Code, responseRequestID(response.Header, parsed, target.secret()), target.secret())
 	}

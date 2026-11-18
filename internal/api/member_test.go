@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/langbot-app/langbot-cli/internal/result"
@@ -117,5 +118,24 @@ func TestMemberCapabilitiesRecognizesKnowledgeCatalogNames(t *testing.T) {
 				t.Fatal("catalog inferred unadvertised knowledge operations")
 			}
 		})
+	}
+}
+
+func TestMemberRejectionRetainsStatusForResumingWrites(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Request-ID", "upload-denied")
+		w.WriteHeader(http.StatusForbidden)
+		fmt.Fprint(w, `{"code":"permission_denied","data":null}`)
+	}))
+	defer server.Close()
+	client := Client{}
+	target := Target{Endpoint: server.URL, UserToken: "member"}
+	_, nativeErr := client.UploadDocument(context.Background(), target, "note.md", strings.NewReader("example"))
+	_, opErr := client.OperationCall(context.Background(), target, "plugin.permissions.update", nil)
+	for _, err := range []error{nativeErr, opErr} {
+		failure := result.AsError(err)
+		if failure == nil || failure.Type != "requires_member_session" || failure.HTTPStatus != 403 || failure.RequestID != "upload-denied" {
+			t.Fatalf("authorization response: %+v", failure)
+		}
 	}
 }
