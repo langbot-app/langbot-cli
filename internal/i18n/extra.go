@@ -3,7 +3,7 @@ package i18n
 func init() {
 	for key, value := range map[string]string{
 		"Metadata ID": "元数据 ID", "Received SHA-256": "接收内容 SHA-256", "Received bytes": "接收字节数",
-		"Manifest occurrences": "清单出现次数",
+		"Manifest occurrences":                                                                 "清单出现次数",
 		"Collect explicitly listed Artifacts into a directory":                                 "将清单明示的 Artifact 收取到目录",
 		"Artifact ID manifest JSON/YAML file (- reads stdin)":                                  "Artifact ID 清单 JSON/YAML 文件，- 读取标准输入",
 		"Output directory for verified Artifact files":                                         "已验证 Artifact 文件的输出目录",
@@ -22,7 +22,7 @@ func init() {
 		"Unable to save Artifact content":                                                      "无法保存 Artifact 内容",
 		"Artifact content size or SHA-256 does not match metadata":                             "Artifact 内容大小或 SHA-256 与元数据不符",
 		"Artifact destination exists with different content or cannot be published atomically": "Artifact 目标已存在不同内容，或无法原子发布",
-		"Ingestion journal": "入库进度记录", "Uploaded": "已上传",
+		"Ingestion journal":                                                                    "入库进度记录", "Uploaded": "已上传",
 		"Durable local ingestion progress journal":                                                             "持久化本地入库进度记录",
 		"Resume the same input group with --journal":                                                           "配合 --journal 恢复同一组入库文件",
 		"Resume requires the same journal and input group":                                                     "恢复需要相同的进度记录和完整文件组",
