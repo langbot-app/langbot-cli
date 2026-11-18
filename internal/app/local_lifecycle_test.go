@@ -157,6 +157,17 @@ func TestInstallAndLifecycleCommands(t *testing.T) {
 	if data, _ := os.ReadFile(record.ComposeFile); strings.Contains(string(data), ":latest") {
 		t.Fatal("compose 不应该使用 latest")
 	}
+	t.Run("Docker backend selection boundaries", func(t *testing.T) {
+		for _, tc := range []struct{ dir, backend, message string }{{t.TempDir(), "host", "host"}, {dir, "off", "LANGBOT_BOX_ENABLED"}} {
+			for _, dryRun := range []bool{false, true} {
+				start := len(runner.calls)
+				_, err := service.Install(context.Background(), InstallOptions{Dir: tc.dir, Driver: deploy.DriverDockerCompose, BoxBackend: tc.backend, DryRun: dryRun})
+				if err == nil || !strings.Contains(err.Error(), tc.message) || len(runner.calls) != start {
+					t.Fatalf("backend=%s dry_run=%t: err=%v calls=%v", tc.backend, dryRun, err, runner.calls[start:])
+				}
+			}
+		}
+	})
 	t.Run("configuration restart receipt", func(t *testing.T) {
 		if err := os.MkdirAll(record.DataDir, 0700); err != nil {
 			t.Fatal(err)
@@ -182,6 +193,34 @@ func TestInstallAndLifecycleCommands(t *testing.T) {
 			}
 			if actual != tc.restart || data["restart_required"] != !tc.restart || data["restarted"] != tc.restart {
 				t.Fatalf("restart=%v calls=%v result=%v", tc.restart, runner.calls[start:], data)
+			}
+		}
+	})
+	t.Run("unchanged Core-formatted settings preserve backup", func(t *testing.T) {
+		path := filepath.Join(record.DataDir, "config.yaml")
+		files := map[string]string{path: "api:\n    port: 5300\nbox:\n    backend: 'local'\n    runtime:\n        endpoint: \"\"\n", path + ".bak": "box: {backend: host}\n"}
+		if err := os.MkdirAll(record.DataDir, 0700); err != nil {
+			t.Fatal(err)
+		}
+		for name, content := range files {
+			if err := os.WriteFile(name, []byte(content), 0600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for key, value := range map[string]string{"box.backend": "local", "box.runtime.endpoint": ""} {
+			reply, err := service.SystemConfig(context.Background(), SystemConfigOptions{CheckOptions: CheckOptions{LocalDir: dir}, Action: "set", Key: key, Value: value, Restart: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			data := reply.Data.(map[string]any)
+			if data["restart_required"] != false || data["restarted"] != false {
+				t.Fatalf("%s: %v", key, data)
+			}
+			for name, content := range files {
+				got, err := os.ReadFile(name)
+				if err != nil || string(got) != content {
+					t.Fatalf("%s changed after setting %s: %v", name, key, err)
+				}
 			}
 		}
 	})

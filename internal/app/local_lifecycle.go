@@ -84,6 +84,9 @@ func (s *Service) Install(ctx context.Context, options InstallOptions) (Result, 
 	if options.Driver == deploy.DriverNative {
 		return s.installNative(ctx, options)
 	}
+	if options.BoxBackend == "host" {
+		return Result{}, result.New("input", i18n.T("The host Box backend is only supported for native installations."))
+	}
 	progress.Plan(ctx, 6)
 	timeout, err := operationTimeout(options.Timeout, options.TimeoutSet, 10*time.Minute)
 	if err != nil {
@@ -97,13 +100,16 @@ func (s *Service) Install(ctx context.Context, options InstallOptions) (Result, 
 	}
 	version := strings.TrimSpace(options.Version)
 	if existing, readErr := (deploy.Store{Dir: dir}).Read(); readErr == nil && existing.Driver == deploy.DriverDockerCompose {
+		if options.BoxBackend != "" {
+			return Result{}, result.New("input", i18n.T("Cannot use --box-backend on an existing Docker installation.")+" "+i18n.T("For Compose, set LANGBOT_BOX_ENABLED in .env, select the matching Box profile, and recreate the services with docker compose up -d."))
+		}
 		if version != "" && version != existing.CoreVersion || options.Port != 0 && options.Port != existing.Port {
 			return Result{}, result.New("precondition", i18n.T("Reuse the existing installation options or use lbctl upgrade"))
 		}
 		if options.DryRun {
 			return Result{Data: map[string]any{"action": "install", "dry_run": true, "record": existing}}, nil
 		}
-		return s.repairDockerInstall(operationCtx, dir, existing, options.BoxBackend)
+		return s.repairDockerInstall(operationCtx, dir, existing)
 	}
 	telemetry.SetStep(ctx, "resolve_version")
 	if version == "" {

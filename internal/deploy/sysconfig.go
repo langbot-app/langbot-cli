@@ -157,6 +157,9 @@ func (config *SystemConfig) Set(key, value string) error {
 		parent = child
 	}
 	if previous != nil {
+		if previous.Kind == yaml.ScalarNode && node.Kind == previous.Kind && previous.Tag == node.Tag && previous.Value == node.Value {
+			return nil
+		}
 		node.HeadComment, node.LineComment, node.FootComment = previous.HeadComment, previous.LineComment, previous.FootComment
 		*previous = *node
 	} else {

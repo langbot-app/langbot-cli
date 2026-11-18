@@ -1,6 +1,14 @@
 package i18n
 
 var chinese = map[string]string{
+	"Switching modes:": "切换方式：",
+	"Use container isolation after installing Docker:":               "安装 Docker 后使用容器隔离：",
+	"Automatically select Docker or nsjail:":                         "自动选择 Docker 或 nsjail：",
+	"Disable Box entirely (execution features will be unavailable):": "完全关闭 Box（执行类功能将不可用）：",
+	"Box is disabled.":                  "Box 已关闭。",
+	"Host mode does not use a sandbox.": "host 模式不使用沙箱。",
+	"The host Box backend is only supported for native installations.":                                "只有原生安装支持 host Box 后端。",
+	"Cannot use --box-backend on an existing Docker installation.":                                    "已有 Docker 部署不支持 --box-backend。",
 	"Select Box backend: host, local, docker, nsjail, e2b or off":                                     "选择 Box 后端：host、local、docker、nsjail、e2b 或 off",
 	"This Windows Core version does not support host Box. Box is unavailable until Core is upgraded.": "当前 Core 版本在 Windows 上尚不支持 host Box。升级 Core 后生效，在此之前 Box 不可用。",
 	"WARNING: Host Box has no sandbox. Agent commands, skills and stdio MCP run as your system user, with access to your files and network. Untrusted users in a group chat can use prompt injection to trigger dangerous commands.": "警告：host Box 没有沙箱隔离。Agent 命令、技能和 stdio MCP 会以当前系统用户的权限执行，可以读写该用户的文件并访问网络。群聊中的不可信用户可能通过提示词注入触发危险命令。",

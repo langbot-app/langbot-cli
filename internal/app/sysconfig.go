@@ -56,6 +56,13 @@ func (service *Service) SystemConfig(ctx context.Context, options SystemConfigOp
 		existing := config.Node(options.Key) != nil
 		warnings := []string{}
 		var updated []byte
+		before := raw
+		if options.Action != "edit" {
+			before, err = config.Bytes()
+			if err != nil {
+				return err
+			}
+		}
 		switch options.Action {
 		case "set":
 			err = config.Set(options.Key, options.Value)
@@ -91,7 +98,7 @@ func (service *Service) SystemConfig(ctx context.Context, options SystemConfigOp
 				warnings = append(warnings, i18n.T("For Compose, set LANGBOT_BOX_ENABLED in .env, select the matching Box profile, and recreate the services with docker compose up -d."))
 			}
 		}
-		changed := missing || !bytes.Equal(raw, updated)
+		changed := missing || !bytes.Equal(before, updated)
 		data := map[string]any{"path": path, "key": options.Key, "old": old, "new": config.Value(options.Key, false), "restart_required": changed, "restarted": false, "overridden_by_env": len(overrides) > 0, "warnings": warnings}
 		response.Data = data
 		if options.DryRun {
