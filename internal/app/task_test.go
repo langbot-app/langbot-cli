@@ -9,8 +9,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -23,6 +25,461 @@ type taskRoundTripFunc func(*http.Request) (*http.Response, error)
 
 func (fn taskRoundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
 	return fn(request)
+}
+
+type knowledgeJournalFixture struct {
+	t                  *testing.T
+	mu                 sync.Mutex
+	server             *httptest.Server
+	service            *Service
+	config, file, path string
+	instance           string
+	workspace          string
+	uploads, stores    int
+	tasks              int
+	storeStatus        int
+	documentStatus     string
+	unknownUpload      bool
+	unknownStore       bool
+	omitDocument       bool
+	documents          []any
+	blockStore         chan struct{}
+}
+
+func newKnowledgeJournalFixture(t *testing.T) *knowledgeJournalFixture {
+	t.Helper()
+	dir := t.TempDir()
+	fixture := &knowledgeJournalFixture{t: t, config: filepath.Join(dir, "config.yaml"),
+		file: filepath.Join(dir, "documents", "a.txt"), path: filepath.Join(dir, "progress.json"),
+		instance: "instance-a", workspace: "workspace-a", documentStatus: "completed", documents: []any{}}
+	if err := os.MkdirAll(filepath.Dir(fixture.file), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(fixture.file, []byte("journal document"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fixture.server = httptest.NewServer(http.HandlerFunc(fixture.serveHTTP))
+	t.Cleanup(fixture.server.Close)
+	fixture.service = New(Dependencies{
+		LookupEnv:         func(name string) (string, bool) { return "journal-api-secret", name == "KEY" },
+		DefaultConfigPath: func() (string, error) { return fixture.config, nil },
+	})
+	if _, err := fixture.service.ContextAdd("production", fixture.server.URL, "KEY", "workspace-a", ""); err != nil {
+		t.Fatal(err)
+	}
+	return fixture
+}
+
+func (fixture *knowledgeJournalFixture) serveHTTP(w http.ResponseWriter, request *http.Request) {
+	fixture.mu.Lock()
+	defer fixture.mu.Unlock()
+	w.Header().Set("Content-Type", "application/json")
+	write := func(data any) { _ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": data}) }
+	switch request.URL.Path {
+	case "/api/v1/system/context":
+		write(map[string]any{"instance_uuid": fixture.instance, "workspace_uuid": fixture.workspace, "api_key_id": "key-a", "permissions": []string{"resource.manage", "resource.view"}})
+	case "/api/v1/system/capabilities":
+		fmt.Fprint(w, `{"code":0,"data":{"schema_version":1,"operations":{"knowledge_base.file.store":{"supported":true},"knowledge_base.get":{"supported":true},"file.document.upload":{"supported":true},"knowledge_base.file.list":{"supported":true},"task.get":{"supported":true}}}}`)
+	case "/api/v1/knowledge/bases/kb-a":
+		write(map[string]any{"base": map[string]any{"uuid": "kb-a", "name": "KB"}})
+	case "/api/v1/files/documents":
+		fixture.uploads++
+		fixture.assertIntent("upload_intent")
+		if fixture.unknownUpload {
+			w.WriteHeader(http.StatusInternalServerError)
+			fmt.Fprint(w, `{"code":"fixture_failure","data":null}`)
+			return
+		}
+		file, header, err := request.FormFile("file")
+		if err != nil {
+			fixture.t.Errorf("upload multipart: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		content, err := io.ReadAll(file)
+		_ = file.Close()
+		if err != nil || string(content) != "journal document" || header.Filename != filepath.Base(fixture.file) {
+			fixture.t.Errorf("upload content=%q name=%s err=%v", content, header.Filename, err)
+		}
+		write(map[string]any{"file_id": fmt.Sprintf("upload-%d", fixture.uploads)})
+	case "/api/v1/knowledge/bases/kb-a/files":
+		if request.Method == http.MethodGet {
+			write(map[string]any{"files": fixture.documents})
+			return
+		}
+		fixture.stores++
+		fixture.assertIntent("store_intent")
+		if fixture.storeStatus != 0 {
+			w.WriteHeader(fixture.storeStatus)
+			fmt.Fprint(w, `{"code":"fixture_rejected","data":null}`)
+			return
+		}
+		var body map[string]any
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			fixture.t.Errorf("store body: %v", err)
+		}
+		if body["parser_plugin_id"] != "parser-a" {
+			fixture.t.Errorf("store parser=%v", body["parser_plugin_id"])
+		}
+		if !fixture.omitDocument {
+			fixture.documents = append(fixture.documents, map[string]any{"uuid": fmt.Sprintf("document-%d", fixture.stores),
+				"file_name": body["file_id"], "kb_id": "kb-a", "workspace_uuid": fixture.workspace, "status": fixture.documentStatus})
+		}
+		if fixture.blockStore != nil {
+			close(fixture.blockStore)
+			fixture.blockStore = nil
+			fixture.mu.Unlock()
+			<-request.Context().Done()
+			fixture.mu.Lock()
+			return
+		}
+		if fixture.unknownStore {
+			w.WriteHeader(http.StatusInternalServerError)
+			fmt.Fprint(w, `{"code":"fixture_failure","data":null}`)
+			return
+		}
+		// A restarted Core may reuse this task ID for another document.
+		write(map[string]any{"task_id": 1})
+	default:
+		if strings.HasPrefix(request.URL.Path, "/api/v1/system/tasks/") {
+			fixture.tasks++
+			fmt.Fprint(w, `{"code":0,"data":{"id":1,"task_type":"user","kind":"knowledge_base.store","status":"succeeded","error":null,"result":{"file_id":"unrelated-upload"},"created_at":1}}`)
+			return
+		}
+		fixture.t.Errorf("unexpected journal request %s %s", request.Method, request.URL.Path)
+		w.WriteHeader(http.StatusNotFound)
+	}
+}
+
+func (fixture *knowledgeJournalFixture) assertIntent(phase string) {
+	fixture.t.Helper()
+	journal, err := readIngestJournal(fixture.path, true)
+	if err != nil || len(journal.Files) != 1 || journal.Files[0].Phase != phase {
+		fixture.t.Errorf("side effect before durable %s intent: %+v, %v", phase, journal, err)
+	}
+}
+
+func (fixture *knowledgeJournalFixture) run(resume bool, wait WaitOptions) (Result, error) {
+	fixture.t.Helper()
+	return fixture.service.KnowledgeBaseIngestJournal(context.Background(), "kb-a", []string{fixture.file}, "", "parser-a", fixture.path, resume, false, wait, CheckOptions{ContextSet: true, Context: "production"})
+}
+
+func (fixture *knowledgeJournalFixture) journal() ingestJournal {
+	fixture.t.Helper()
+	journal, err := readIngestJournal(fixture.path, true)
+	if err != nil {
+		fixture.t.Fatal(err)
+	}
+	return journal
+}
+
+func TestKnowledgeJournalRecordsEvidenceAndSkipsCompletedWrites(t *testing.T) {
+	fixture := newKnowledgeJournalFixture(t)
+	value, err := fixture.run(false, WaitOptions{Wait: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	journal := fixture.journal()
+	row := journal.Files[0]
+	if journal.Version != 1 || journal.InstanceUUID != "instance-a" || journal.WorkspaceUUID != "workspace-a" || journal.KnowledgeBase != "kb-a" || journal.Parser != "parser-a" || row.Path != "documents/a.txt" || row.Size != 16 || row.SHA256 != ingestContentHash([]byte("journal document")) || row.FileID != "upload-1" || row.TaskID != "1" || row.DocumentUUID != "document-1" || row.Phase != "completed" {
+		t.Fatalf("journal=%+v row=%+v", journal, row)
+	}
+	content, _ := os.ReadFile(fixture.path)
+	output, _ := json.Marshal(value)
+	if strings.Contains(string(content), "journal-api-secret") || strings.Contains(string(output), "journal-api-secret") {
+		t.Fatal("journal or output contains credential")
+	}
+	if _, err := fixture.run(true, WaitOptions{Wait: true}); err != nil || fixture.uploads != 1 || fixture.stores != 1 || fixture.tasks != 0 {
+		t.Fatalf("resume err=%v upload/store/task=%d/%d/%d", err, fixture.uploads, fixture.stores, fixture.tasks)
+	}
+	if _, err := fixture.run(false, WaitOptions{}); result.AsError(err).Kind != "precondition" {
+		t.Fatalf("existing journal overwritten: %v", err)
+	}
+}
+
+func TestKnowledgeJournalReusesConfirmedUpload(t *testing.T) {
+	fixture := newKnowledgeJournalFixture(t)
+	fixture.storeStatus = http.StatusBadRequest
+	if _, err := fixture.run(false, WaitOptions{}); err == nil {
+		t.Fatal("expected store rejection")
+	}
+	row := fixture.journal().Files[0]
+	if row.Phase != "uploaded" || row.FileID != "upload-1" || row.TaskID != "" {
+		t.Fatalf("lost upload evidence: %+v", row)
+	}
+	fixture.storeStatus = 0
+	if _, err := fixture.run(true, WaitOptions{}); err != nil || fixture.uploads != 1 || fixture.stores != 2 || fixture.journal().Files[0].Phase != "completed" {
+		t.Fatalf("resume err=%v upload/store=%d/%d", err, fixture.uploads, fixture.stores)
+	}
+}
+
+func TestKnowledgeJournalReconcilesUnknownSubmission(t *testing.T) {
+	for _, missing := range []bool{false, true} {
+		t.Run(fmt.Sprintf("missing_document_%t", missing), func(t *testing.T) {
+			fixture := newKnowledgeJournalFixture(t)
+			fixture.unknownStore, fixture.omitDocument = true, missing
+			if _, err := fixture.run(false, WaitOptions{}); err == nil || fixture.journal().Files[0].Phase != "store_intent" {
+				t.Fatalf("unknown submission was lost: %v %+v", err, fixture.journal())
+			}
+			value, err := fixture.run(true, WaitOptions{})
+			if missing && result.AsError(err).Type != "journal_unresolved" || !missing && err != nil {
+				t.Fatalf("reconciliation=%+v err=%v", value, err)
+			}
+			if fixture.uploads != 1 || fixture.stores != 1 || fixture.tasks != 0 {
+				t.Fatalf("uncertain submission repeated: %d/%d/%d", fixture.uploads, fixture.stores, fixture.tasks)
+			}
+			row := fixture.journal().Files[0]
+			if !missing && (row.DocumentUUID != "document-1" || row.Phase != "completed") {
+				t.Fatalf("missing stable evidence: %+v", row)
+			}
+		})
+	}
+}
+
+func TestKnowledgeJournalUnknownUploadNeverRepeats(t *testing.T) {
+	fixture := newKnowledgeJournalFixture(t)
+	fixture.unknownUpload = true
+	if _, err := fixture.run(false, WaitOptions{}); err == nil {
+		t.Fatal("expected unknown upload")
+	}
+	if _, err := fixture.run(true, WaitOptions{}); result.AsError(err).Type != "journal_unresolved" || fixture.uploads != 1 || fixture.stores != 0 {
+		t.Fatalf("repeated uncertain upload: %v %d/%d", err, fixture.uploads, fixture.stores)
+	}
+}
+
+func TestKnowledgeJournalUsesDocumentIdentityAcrossTaskReuse(t *testing.T) {
+	fixture := newKnowledgeJournalFixture(t)
+	fixture.documentStatus = "processing"
+	_, err := fixture.run(false, WaitOptions{Wait: true, PollInterval: 5 * time.Millisecond, WaitTimeout: 75 * time.Millisecond})
+	if result.AsError(err).Type != "wait_timeout" || fixture.journal().Files[0].Phase != "submitted" || fixture.tasks != 0 {
+		t.Fatalf("unrelated succeeded task completed this document: %v %+v tasks=%d", err, fixture.journal(), fixture.tasks)
+	}
+	fixture.mu.Lock()
+	fixture.documents[0].(map[string]any)["status"] = "completed"
+	fixture.mu.Unlock()
+	if _, err := fixture.run(true, WaitOptions{}); err != nil || fixture.uploads != 1 || fixture.stores != 1 || fixture.tasks != 0 {
+		t.Fatalf("stable document resume: %v %d/%d/%d", err, fixture.uploads, fixture.stores, fixture.tasks)
+	}
+	fixture.mu.Lock()
+	fixture.documents[0].(map[string]any)["uuid"] = "replacement-document"
+	fixture.mu.Unlock()
+	if _, err := fixture.run(true, WaitOptions{}); result.AsError(err).Type != "journal_unresolved" || fixture.journal().Files[0].DocumentUUID != "document-1" {
+		t.Fatalf("bound identity silently replaced: %v %+v", err, fixture.journal())
+	}
+}
+
+func TestKnowledgeJournalRefusesAmbiguousOrForeignDocuments(t *testing.T) {
+	for _, kind := range []string{"duplicate", "workspace", "knowledge-base", "upload"} {
+		t.Run(kind, func(t *testing.T) {
+			fixture := newKnowledgeJournalFixture(t)
+			fixture.unknownStore = true
+			_, _ = fixture.run(false, WaitOptions{})
+			fixture.mu.Lock()
+			document := fixture.documents[0].(map[string]any)
+			switch kind {
+			case "duplicate":
+				fixture.documents = append(fixture.documents, map[string]any{"uuid": "document-other", "file_name": "upload-1", "status": "completed"})
+			case "workspace":
+				document["workspace_uuid"] = "workspace-other"
+			case "knowledge-base":
+				document["kb_id"] = "kb-other"
+			case "upload":
+				document["file_name"] = "upload-other"
+			}
+			fixture.mu.Unlock()
+			if _, err := fixture.run(true, WaitOptions{}); result.AsError(err).Type != "journal_unresolved" || fixture.uploads != 1 || fixture.stores != 1 {
+				t.Fatalf("accepted wrong document: %v %+v", err, fixture.journal())
+			}
+		})
+	}
+}
+
+func TestKnowledgeJournalValidatesWholeGroupAndTargetBeforeWrites(t *testing.T) {
+	for _, drift := range []string{"hash", "size", "path", "parser", "knowledge-base", "instance", "workspace", "phase", "missing-input"} {
+		t.Run(drift, func(t *testing.T) {
+			fixture := newKnowledgeJournalFixture(t)
+			fixture.storeStatus = http.StatusBadRequest
+			_, _ = fixture.run(false, WaitOptions{})
+			journal := fixture.journal()
+			switch drift {
+			case "hash":
+				if err := os.WriteFile(fixture.file, []byte("changed document"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			case "size":
+				journal.Files[0].Size++
+			case "path":
+				journal.Files[0].Path = "other.txt"
+			case "parser":
+				journal.Parser = "other-parser"
+			case "knowledge-base":
+				journal.KnowledgeBase = "other-kb"
+			case "instance":
+				journal.InstanceUUID = "other-instance"
+			case "workspace":
+				journal.WorkspaceUUID = "other-workspace"
+			case "phase":
+				journal.Files[0].Phase = "planned"
+			case "missing-input":
+				journal.Files = append(journal.Files, ingestJournalFile{Path: "missing.txt", Phase: "planned"})
+			}
+			if err := (&ingestJournalRun{journal: journal, path: fixture.path}).save(); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := fixture.run(true, WaitOptions{}); err == nil || fixture.uploads != 1 || fixture.stores != 1 {
+				t.Fatalf("drift reached server writes: %v %d/%d", err, fixture.uploads, fixture.stores)
+			}
+		})
+	}
+}
+
+func TestKnowledgeJournalChecksEveryInputBeforeResumingFirstFile(t *testing.T) {
+	fixture := newKnowledgeJournalFixture(t)
+	second := filepath.Join(filepath.Dir(fixture.file), "b.txt")
+	if err := os.WriteFile(second, []byte("second document"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	journal := ingestJournal{Version: 1, InstanceUUID: "instance-a", WorkspaceUUID: "workspace-a", KnowledgeBase: "kb-a", Parser: "parser-a", Files: []ingestJournalFile{
+		{Path: "documents/a.txt", Size: 16, SHA256: ingestContentHash([]byte("journal document")), Phase: "planned"},
+		{Path: "documents/b.txt", Size: 15, SHA256: ingestContentHash([]byte("second document")), Phase: "planned"},
+	}}
+	if err := (&ingestJournalRun{journal: journal, path: fixture.path}).save(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(second, []byte("changed content"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := fixture.service.KnowledgeBaseIngestJournal(context.Background(), "kb-a", []string{fixture.file, second}, "", "parser-a", fixture.path, true, false, WaitOptions{}, CheckOptions{ContextSet: true, Context: "production"})
+	if result.AsError(err).Kind != "precondition" || fixture.uploads != 0 || fixture.stores != 0 {
+		t.Fatalf("later changed input allowed earlier write: %v %d/%d", err, fixture.uploads, fixture.stores)
+	}
+}
+
+func TestKnowledgeJournalCancellationPreservesUploadedEvidence(t *testing.T) {
+	fixture := newKnowledgeJournalFixture(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	service := New(Dependencies{
+		LookupEnv:         func(name string) (string, bool) { return "journal-api-secret", name == "KEY" },
+		DefaultConfigPath: func() (string, error) { return fixture.config, nil },
+		Transport: taskRoundTripFunc(func(request *http.Request) (*http.Response, error) {
+			response, err := http.DefaultTransport.RoundTrip(request)
+			if err == nil && request.URL.Path == "/api/v1/files/documents" {
+				body, readErr := io.ReadAll(response.Body)
+				_ = response.Body.Close()
+				if readErr != nil {
+					return nil, readErr
+				}
+				response.Body = io.NopCloser(strings.NewReader(string(body)))
+				cancel()
+			}
+			return response, err
+		}),
+	})
+	_, err := service.KnowledgeBaseIngestJournal(ctx, "kb-a", []string{fixture.file}, "", "parser-a", fixture.path, false, false, WaitOptions{}, CheckOptions{ContextSet: true, Context: "production"})
+	if result.AsError(err).Type != "wait_cancelled" || fixture.uploads != 1 || fixture.stores != 0 || fixture.journal().Files[0].Phase != "uploaded" {
+		t.Fatalf("cancellation lost confirmed upload: %v %+v %d/%d", err, fixture.journal(), fixture.uploads, fixture.stores)
+	}
+	if _, err := fixture.run(true, WaitOptions{}); err != nil || fixture.uploads != 1 || fixture.stores != 1 || fixture.journal().Files[0].Phase != "completed" {
+		t.Fatalf("cancelled upload was repeated: %v %+v", err, fixture.journal())
+	}
+}
+
+func TestKnowledgeJournalConfirmedDocumentFailureRemainsBound(t *testing.T) {
+	fixture := newKnowledgeJournalFixture(t)
+	fixture.documentStatus = "failed"
+	if _, err := fixture.run(false, WaitOptions{Wait: true}); result.AsError(err).Type != "document_failed" || fixture.journal().Files[0].Phase != "failed" {
+		t.Fatalf("failed document accepted: %v %+v", err, fixture.journal())
+	}
+	if _, err := fixture.run(true, WaitOptions{}); result.AsError(err).Type != "document_failed" || fixture.uploads != 1 || fixture.stores != 1 {
+		t.Fatalf("failed document resubmitted: %v %d/%d", err, fixture.uploads, fixture.stores)
+	}
+}
+
+func TestKnowledgeJournalDryRunAndDirectoryJournalExclusion(t *testing.T) {
+	fixture := newKnowledgeJournalFixture(t)
+	fixture.path = filepath.Join(filepath.Dir(fixture.file), "progress.json")
+	value, err := fixture.service.KnowledgeBaseIngestJournal(context.Background(), "kb-a", nil, filepath.Dir(fixture.file), "parser-a", fixture.path, false, true, WaitOptions{}, CheckOptions{ContextSet: true, Context: "production"})
+	if err != nil || fixture.uploads != 0 || fixture.stores != 0 || value.Data.(map[string]any)["server_write"] != false {
+		t.Fatalf("dry-run wrote server: %+v %v", value, err)
+	}
+	if _, err := os.Stat(fixture.path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("dry-run wrote journal: %v", err)
+	}
+	for _, resume := range []bool{false, true} {
+		if _, err := fixture.service.KnowledgeBaseIngestJournal(context.Background(), "kb-a", nil, filepath.Dir(fixture.file), "parser-a", fixture.path, resume, false, WaitOptions{}, CheckOptions{ContextSet: true, Context: "production"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if fixture.uploads != 1 || len(fixture.journal().Files) != 1 {
+		t.Fatalf("included own journal/lock: %d %+v", fixture.uploads, fixture.journal())
+	}
+}
+
+func TestKnowledgeJournalRejectsZipAndMalformedJournal(t *testing.T) {
+	fixture := newKnowledgeJournalFixture(t)
+	zip := filepath.Join(filepath.Dir(fixture.file), "archive.zip")
+	if err := os.WriteFile(zip, []byte("archive"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fixture.service.KnowledgeBaseIngestJournal(context.Background(), "kb-a", []string{fixture.file, zip}, "", "parser-a", fixture.path, false, false, WaitOptions{}, CheckOptions{}); result.AsError(err).Kind != "input" || fixture.uploads != 0 {
+		t.Fatalf("ZIP accepted in journal mode: %v", err)
+	}
+	for _, content := range []string{`{`, `{"unknown":true}`, `{"version":1} {}`} {
+		if err := os.WriteFile(fixture.path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := fixture.run(true, WaitOptions{}); result.AsError(err).Kind != "input" || fixture.uploads != 0 {
+			t.Fatalf("malformed journal accepted: %v", err)
+		}
+	}
+}
+
+func TestKnowledgeJournalProcessHelper(t *testing.T) {
+	if os.Getenv("LBCTL_JOURNAL_TEST_CHILD") != "1" {
+		return
+	}
+	service := New(Dependencies{
+		LookupEnv:         func(name string) (string, bool) { return "journal-api-secret", name == "KEY" },
+		DefaultConfigPath: func() (string, error) { return os.Getenv("LBCTL_JOURNAL_TEST_CONFIG"), nil },
+	})
+	_, err := service.KnowledgeBaseIngestJournal(context.Background(), "kb-a", []string{os.Getenv("LBCTL_JOURNAL_TEST_FILE")}, "", "parser-a", os.Getenv("LBCTL_JOURNAL_TEST_PATH"), false, false, WaitOptions{}, CheckOptions{ContextSet: true, Context: "production"})
+	t.Fatalf("child returned before simulated interruption: %v", err)
+}
+
+func TestKnowledgeJournalSurvivesProcessInterruptionAndLocksAcrossProcesses(t *testing.T) {
+	fixture := newKnowledgeJournalFixture(t)
+	entered := make(chan struct{})
+	fixture.blockStore = entered
+	command := exec.Command(os.Args[0], "-test.run=^TestKnowledgeJournalProcessHelper$")
+	command.Env = append(os.Environ(), "LBCTL_JOURNAL_TEST_CHILD=1", "LBCTL_JOURNAL_TEST_CONFIG="+fixture.config,
+		"LBCTL_JOURNAL_TEST_FILE="+fixture.file, "LBCTL_JOURNAL_TEST_PATH="+fixture.path)
+	var output strings.Builder
+	command.Stdout, command.Stderr = &output, &output
+	if err := command.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = command.Process.Kill() })
+	select {
+	case <-entered:
+	case <-time.After(15 * time.Second):
+		_ = command.Process.Kill()
+		_ = command.Wait()
+		t.Fatalf("child did not submit: %s", output.String())
+	}
+	if _, err := fixture.run(true, WaitOptions{}); result.AsError(err).Kind != "precondition" || fixture.uploads != 1 || fixture.stores != 1 {
+		t.Fatalf("concurrent process acquired same journal: %v %d/%d", err, fixture.uploads, fixture.stores)
+	}
+	if err := command.Process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	_ = command.Wait()
+	if row := fixture.journal().Files[0]; row.Phase != "store_intent" || row.FileID != "upload-1" || row.TaskID != "" {
+		t.Fatalf("interrupted submission lost intent: %+v", row)
+	}
+	if _, err := fixture.run(true, WaitOptions{}); err != nil || fixture.uploads != 1 || fixture.stores != 1 || fixture.journal().Files[0].Phase != "completed" {
+		t.Fatalf("restart duplicated interrupted write: %v %d/%d %+v", err, fixture.uploads, fixture.stores, fixture.journal())
+	}
 }
 
 func taskResponse(body string) *http.Response {

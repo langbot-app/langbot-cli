@@ -334,7 +334,18 @@ lbctl knowledge-base ingest <uuid> --dir ./documents --wait
 
 Directory scans skip dot-prefixed files/directories and symbolic links. Each file remains subject to the existing 10 MiB upload limit, including request metadata. The CLI checks all local paths before uploading and submitting files sequentially. `--wait` follows each task, with `--wait-timeout` applied separately to each file. Batch JSON/YAML output retains per-file status, file IDs, task IDs, and errors in `files`, with counts in `summary`; human output shows the same per-file outcomes. Without `--wait`, success means tasks were submitted.
 
-Confirmed file-specific failures allow the remaining files to proceed. An unknown submission, incomplete wait, authentication/permission failure, or incompatible target stops further submissions, preserves completed and unstarted items, and exits nonzero. Re-running uploads again; there is no cross-run deduplication or automatic retry. Single-file ZIP submission remains supported, but Core returns only one child task ID. Batch `--wait` rejects ZIP inputs before uploading: extract the archive and use `--dir` instead.
+Confirmed file-specific failures allow the remaining files to proceed. An unknown submission, incomplete wait, authentication/permission failure, or incompatible target stops further submissions, preserves completed and unstarted items, and exits nonzero. A default invocation uploads again when repeated. Single-file ZIP submission remains supported, but Core returns only one child task ID. Batch `--wait` rejects ZIP inputs before uploading. Extract the archive and use `--dir` instead.
+
+Use a durable journal to continue the same input group across CLI restarts.
+
+```sh
+lbctl knowledge-base ingest <uuid> --dir ./documents --journal ./ingest.json --wait
+lbctl knowledge-base ingest <uuid> --dir ./documents --journal ./ingest.json --resume --wait
+```
+
+The journal records the instance, Workspace, knowledge base, parser, relative input paths, sizes, SHA-256 hashes, upload IDs, stable document UUIDs, task IDs and confirmation phases. It stores progress without credentials. Each upload and submission has a durable intent recorded before the request, followed by confirmed evidence. Atomic replacement and a cross-process lock protect the journal. An existing journal requires `--resume`, which requires the original complete input group, content, parser and target.
+
+Resume preserves completed documents and reuses confirmed uploads. Submitted and uncertain submissions are checked against knowledge-base documents using the original upload ID stored in `file_name`, then the bound stable document UUID. Journal waiting polls these document records. Task IDs can be reused after a Core restart. An upload without a confirmed ID, missing document or ambiguous submission remains unresolved and exits nonzero with its journal preserved. Journal mode requires `knowledge_base.file.list` and individual documents. Extract ZIP archives before using it. The journal and lock are excluded when stored inside `--dir`. `--dry-run` validates the plan without creating a journal or uploading.
 
 #### Retrieval evaluation
 

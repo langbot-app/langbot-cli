@@ -166,6 +166,19 @@ func TestSchemaIsOfflineStableAndDescribesCommands(t *testing.T) {
 	if !ingest.Mutating || !ingest.SupportsDryRun || !ingest.SupportsWait || len(ingest.Operations) < 3 {
 		t.Fatalf("knowledge-base.ingest metadata is incomplete: %#v", ingest)
 	}
+	resume, resumeExists := findFlag(ingest.Flags, "resume")
+	if !hasFlag(ingest.Flags, "journal", "local", false) || !resumeExists || resume.Applicability == nil || resume.Applicability.When == nil || resume.Applicability.When.Flag != "journal" || resume.Applicability.When.NotEquals != "" {
+		t.Fatalf("journal resume schema is incomplete: %#v", ingest.Flags)
+	}
+	foundJournalReadback := false
+	for _, operation := range ingest.Operations {
+		if operation.ID == "knowledge_base.file.list" && operation.When != nil && operation.When.Flag == "journal" && operation.When.NotEquals == "" {
+			foundJournalReadback = true
+		}
+	}
+	if !foundJournalReadback {
+		t.Fatalf("journal document verification operation is missing: %#v", ingest.Operations)
+	}
 	if len(ingest.InputConflicts) != 1 || !hasConflictOperand(ingest.InputConflicts[0].Operands, "dry-run", true) || !hasConflictOperand(ingest.InputConflicts[0].Operands, "wait", true) {
 		t.Fatalf("dry-run and wait conflict is missing: %#v", ingest.InputConflicts)
 	}

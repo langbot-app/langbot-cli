@@ -266,8 +266,11 @@ var schemaMetaByName = map[string]schemaCommandMeta{
 	"knowledge-base.file.list":   readMeta(operationIDs("knowledge_base.file.list")...),
 	"knowledge-base.file.delete": writeMeta(operationIDs("knowledge_base.file.delete"), schemaWriteOptions{SupportsDryRun: true, Destructive: true, RequiresYes: true, Readbacks: []schemaOperation{readbackID("knowledge_base.file.list")}}),
 	"knowledge-base.ingest": func() schemaCommandMeta {
-		meta := writeMeta(operationIDs("knowledge_base.file.store", "file.document.upload", "knowledge_base.get", conditionalID("task.get", flagEquals("wait", true))), schemaWriteOptions{SupportsDryRun: true, SupportsWait: true})
+		meta := writeMeta(operationIDs("knowledge_base.file.store", "file.document.upload", "knowledge_base.get", conditionalID("task.get", flagEquals("wait", true)), conditionalID("knowledge_base.file.list", &schemaCondition{Flag: "journal", NotEquals: ""})), schemaWriteOptions{SupportsDryRun: true, SupportsWait: true})
 		meta.RequiredOneOf = [][]string{{"file", "dir"}}
+		meta.FlagApplicability = map[string]schemaFlagApplicability{"resume": {
+			Status: "conditional", When: &schemaCondition{Flag: "journal", NotEquals: ""}, Reason: i18n.Source("Resume requires the same journal and input group"),
+		}}
 		return meta
 	}(),
 

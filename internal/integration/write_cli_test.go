@@ -415,6 +415,65 @@ func TestKnowledgeBaseIngestAndTaskGetCommands(t *testing.T) {
 	}
 }
 
+func TestKnowledgeJournalCLIFlagsAndResume(t *testing.T) {
+	directory := t.TempDir()
+	configPath := filepath.Join(directory, "config.yaml")
+	filePath := filepath.Join(directory, "document.txt")
+	journalPath := filepath.Join(directory, "progress.json")
+	if err := os.WriteFile(filePath, []byte("document"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var uploads, submissions atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/api/v1/system/context":
+			fmt.Fprint(w, `{"code":0,"data":{"instance_uuid":"instance-a","workspace_uuid":"workspace-a","api_key_id":"key-a","permissions":["resource.manage","resource.view"]}}`)
+		case "/api/v1/system/capabilities":
+			// Journal waiting requires document reads, with no task.get capability.
+			fmt.Fprint(w, capabilitiesJSON("knowledge_base.file.store", "knowledge_base.get", "file.document.upload", "knowledge_base.file.list"))
+		case "/api/v1/knowledge/bases/kb-a":
+			fmt.Fprint(w, `{"code":0,"data":{"base":{"uuid":"kb-a","name":"KB"}}}`)
+		case "/api/v1/files/documents":
+			uploads.Add(1)
+			fmt.Fprint(w, `{"code":0,"data":{"file_id":"upload-a"}}`)
+		case "/api/v1/knowledge/bases/kb-a/files":
+			if request.Method == http.MethodGet {
+				fmt.Fprint(w, `{"code":0,"data":{"files":[{"uuid":"document-a","file_name":"upload-a","kb_id":"kb-a","workspace_uuid":"workspace-a","status":"completed"}]}}`)
+				return
+			}
+			submissions.Add(1)
+			fmt.Fprint(w, `{"code":0,"data":{"task_id":1}}`)
+		default:
+			t.Errorf("unexpected journal request %s", request.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	configureWriteContext(t, configPath, server.URL, "JOURNAL_KEY")
+	env := map[string]string{"JOURNAL_KEY": "journal-credential"}
+	args := []string{"knowledge-base", "ingest", "kb-a", "--file", filePath, "--journal", journalPath, "--wait"}
+	for _, resume := range []bool{false, true} {
+		call := append([]string(nil), args...)
+		if resume {
+			call = append(call, "--resume")
+		}
+		got := run(t, configPath, env, "", call...)
+		requireSuccess(t, got)
+		data := got.data["data"].(map[string]any)
+		row := data["files"].([]any)[0].(map[string]any)
+		if data["resumed"] != resume || data["journal"] != journalPath || row["phase"] != "completed" || row["document_uuid"] != "document-a" || row["file_id"] != "upload-a" {
+			t.Fatalf("journal output=%s", got.out)
+		}
+	}
+	if uploads.Load() != 1 || submissions.Load() != 1 {
+		t.Fatalf("CLI resume repeated writes: %d/%d", uploads.Load(), submissions.Load())
+	}
+	missingJournal := run(t, configPath, env, "", "knowledge-base", "ingest", "kb-a", "--file", filePath, "--resume")
+	if missingJournal.code != 2 || uploads.Load() != 1 {
+		t.Fatalf("--resume accepted without --journal: %s", missingJournal.out)
+	}
+}
+
 func TestKnowledgeBatchIngestDirectoryAndRepeatedFileFlags(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(t.TempDir(), "config.yaml")

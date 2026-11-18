@@ -6,6 +6,28 @@ import (
 	"testing"
 )
 
+func TestJournalIngestOutputShowsConfirmationPhases(t *testing.T) {
+	var out bytes.Buffer
+	value := map[string]any{"ok": false, "error": map[string]any{"type": "journal_unresolved", "message": "保留进度记录"}, "data": map[string]any{
+		"batch": true, "operation": "knowledge_base.ingest", "journal": "progress.json",
+		"summary": map[string]int{"total": 4, "completed": 1, "submitted": 0, "uploaded": 1, "planned": 1, "failed": 0, "unresolved": 1},
+		"files": []map[string]any{
+			{"path": "docs/a.txt", "phase": "completed", "document_uuid": "document-a", "task_id": "1"},
+			{"path": "docs/b.txt", "phase": "uploaded"},
+			{"path": "docs/c.txt", "phase": "planned"},
+			{"path": "docs/d.txt", "phase": "store_intent", "problem": "submission_unresolved"},
+		},
+	}}
+	if err := RenderCommand(&out, value, FormatDefault, "knowledge-base.ingest"); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"progress.json", "已完成", "已上传", "待上传", "结果未知", "docs/a.txt", "docs/d.txt"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("missing journal phase %q: %s", want, out.String())
+		}
+	}
+}
+
 func TestBatchIngestOutputKeepsPartialResultsVisible(t *testing.T) {
 	var out bytes.Buffer
 	value := map[string]any{"ok": false, "error": map[string]any{"type": "batch_incomplete", "message": "批量入库未全部成功"}, "data": map[string]any{

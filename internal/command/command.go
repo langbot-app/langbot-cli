@@ -702,6 +702,8 @@ func newKnowledgeBaseCommand(service *app.Service, deps Dependencies, flags *glo
 	var filenames []string
 	var directory string
 	var parserPluginID string
+	var journalPath string
+	var resume bool
 	var dryRun bool
 	var wait bool
 	var pollInterval time.Duration
@@ -717,6 +719,11 @@ func newKnowledgeBaseCommand(service *app.Service, deps Dependencies, flags *glo
 				return emitCommand(deps, flags, app.Result{}, result.New("input", i18n.T("Polling interval and wait timeout must be positive")))
 			}
 			return emitCall(deps, flags, func() (app.Result, error) {
+				if journalPath != "" || resume {
+					return service.KnowledgeBaseIngestJournal(cmd.Context(), args[0], filenames, directory, parserPluginID, journalPath, resume, dryRun, app.WaitOptions{
+						Wait: wait, PollInterval: pollInterval, WaitTimeout: waitTimeout,
+					}, connectionOptions(flags))
+				}
 				return service.KnowledgeBaseIngestFiles(cmd.Context(), args[0], filenames, directory, parserPluginID, dryRun, app.WaitOptions{
 					Wait: wait, PollInterval: pollInterval, WaitTimeout: waitTimeout,
 				}, connectionOptions(flags))
@@ -726,6 +733,8 @@ func newKnowledgeBaseCommand(service *app.Service, deps Dependencies, flags *glo
 	ingest.Flags().StringArrayVar(&filenames, "file", nil, i18n.T("Local file; repeatable; provide this or --dir; stdin not supported"))
 	ingest.Flags().StringVar(&directory, "dir", "", i18n.T("Recursively import a directory, skipping dotfiles and symbolic links; can combine with --file"))
 	ingest.Flags().StringVar(&parserPluginID, "parser-plugin-id", "", i18n.T("Optional parser plugin ID"))
+	ingest.Flags().StringVar(&journalPath, "journal", "", i18n.T("Durable local ingestion progress journal"))
+	ingest.Flags().BoolVar(&resume, "resume", false, i18n.T("Resume the same input group with --journal"))
 	ingest.Flags().BoolVar(&dryRun, "dry-run", false, i18n.T("Check prerequisites without uploading or submitting"))
 	ingest.Flags().BoolVar(&wait, "wait", false, i18n.T("Wait for each input file ingestion task; batch wait does not support ZIP, extract first"))
 	ingest.Flags().DurationVar(&pollInterval, "poll-interval", time.Second, i18n.T("Task polling interval"))
