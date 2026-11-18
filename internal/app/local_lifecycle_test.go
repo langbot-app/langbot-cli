@@ -68,6 +68,8 @@ func (r *lifecycleTestRunner) Compose(_ context.Context, _ deploy.Record, args .
 	switch {
 	case joined == "config --services":
 		return deploy.CommandResult{Stdout: "langbot\nlangbot_plugin_runtime\nlangbot_box\n"}, nil
+	case joined == "config --format json":
+		return deploy.CommandResult{Stdout: `{"services":{"langbot":{"environment":{}}}}`}, nil
 	case joined == "port langbot 5300":
 		return deploy.CommandResult{Stdout: fmt.Sprintf("0.0.0.0:%d\n", r.port)}, nil
 	case joined == "up -d":
@@ -155,6 +157,34 @@ func TestInstallAndLifecycleCommands(t *testing.T) {
 	if data, _ := os.ReadFile(record.ComposeFile); strings.Contains(string(data), ":latest") {
 		t.Fatal("compose 不应该使用 latest")
 	}
+	t.Run("configuration restart receipt", func(t *testing.T) {
+		if err := os.MkdirAll(record.DataDir, 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(record.DataDir, "config.yaml"), []byte("box: {backend: local}\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		for _, tc := range []struct {
+			backend string
+			restart bool
+		}{{"docker", false}, {"local", true}} {
+			start := len(runner.calls)
+			reply, err := service.SystemConfig(context.Background(), SystemConfigOptions{CheckOptions: CheckOptions{LocalDir: dir}, Action: "set", Key: "box.backend", Value: tc.backend, Restart: tc.restart})
+			if err != nil {
+				t.Fatal(err)
+			}
+			data := reply.Data.(map[string]any)
+			actual := false
+			for _, call := range runner.calls[start:] {
+				if call == "compose restart" {
+					actual = true
+				}
+			}
+			if actual != tc.restart || data["restart_required"] != !tc.restart || data["restarted"] != tc.restart {
+				t.Fatalf("restart=%v calls=%v result=%v", tc.restart, runner.calls[start:], data)
+			}
+		}
+	})
 	environment, err := os.ReadFile(record.EnvFile)
 	if err != nil || !strings.Contains(string(environment), "LANGBOT_DEPLOY_SOURCE=lbctl\nLANGBOT_DEPLOY_TOOL_VERSION=0.4.1\n") {
 		t.Fatalf("install environment = %s, %v", environment, err)
