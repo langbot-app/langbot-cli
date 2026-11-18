@@ -109,20 +109,22 @@ func (s *Service) KnowledgeBaseIngestJournal(ctx context.Context, identifier str
 	if err := checkIngestJournalPath(path + ".lock"); err != nil {
 		return Result{}, err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return Result{}, result.New("input", i18n.T("Unable to create ingestion journal directory"))
-	}
-	lock := flock.New(path + ".lock")
-	locked, err := lock.TryLock()
-	if err != nil {
-		return Result{}, result.New("input", i18n.T("Unable to acquire ingestion journal lock"))
-	}
-	if !locked {
-		return Result{}, result.New("precondition", i18n.T("Another process is using this ingestion journal"))
-	}
-	defer func() { _ = lock.Unlock() }()
-	if err := checkIngestJournalPath(path); err != nil {
-		return Result{}, err
+	if !dryRun {
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			return Result{}, result.New("input", i18n.T("Unable to create ingestion journal directory"))
+		}
+		lock := flock.New(path + ".lock")
+		locked, err := lock.TryLock()
+		if err != nil {
+			return Result{}, result.New("input", i18n.T("Unable to acquire ingestion journal lock"))
+		}
+		if !locked {
+			return Result{}, result.New("precondition", i18n.T("Another process is using this ingestion journal"))
+		}
+		defer func() { _ = lock.Unlock() }()
+		if err := checkIngestJournalPath(path); err != nil {
+			return Result{}, err
+		}
 	}
 	journal, err := readIngestJournal(path, resume)
 	if err != nil {
@@ -615,17 +617,23 @@ func (s *Service) prepareKnowledgeBaseIngest(ctx context.Context, identifier str
 	if err != nil {
 		return preflight, nil, err
 	}
-	for _, capability := range []string{"file.document.upload", "knowledge_base.get"} {
-		if err := requireCapability(preflight, capability); err != nil {
-			return preflight, nil, err
-		}
+	client, target := s.writeClient(preflight)
+	if err := requireCapability(preflight, "knowledge_base.get"); err != nil {
+		return preflight, nil, err
+	}
+	if _, listed := preflight.Capabilities.Operations["file.document.upload"]; !listed && target.UserToken != "" {
+		err = client.CheckDocumentUpload(ctx, target)
+	} else {
+		err = requireCapability(preflight, "file.document.upload")
+	}
+	if err != nil {
+		return preflight, nil, err
 	}
 	if wait {
 		if err := requireCapability(preflight, "task.get"); err != nil {
 			return preflight, nil, err
 		}
 	}
-	client, target := s.writeClient(preflight)
 	base, err := client.KnowledgeBase(ctx, target, identifier)
 	return preflight, base, err
 }

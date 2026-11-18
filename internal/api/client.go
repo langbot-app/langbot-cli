@@ -470,6 +470,28 @@ func (c Client) KnowledgeBaseRetrieve(ctx context.Context, target Target, identi
 	return redactConnectionSecret(resp.Data, target.secret()), nil
 }
 
+// CheckDocumentUpload checks the native multipart route. Core omits file upload
+// operations from the member catalog, but advertises POST on the native route.
+func (c Client) CheckDocumentUpload(ctx context.Context, target Target) error {
+	response, cancel, err := c.applicationRequest(ctx, target, http.MethodOptions, documentUploadPath, nil, "")
+	if err != nil {
+		return err
+	}
+	defer cancel()
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return httpError(response.StatusCode, nil, "", target.secret())
+	}
+	for _, methods := range response.Header.Values("Allow") {
+		for _, method := range strings.Split(methods, ",") {
+			if strings.TrimSpace(method) == http.MethodPost {
+				return nil
+			}
+		}
+	}
+	return result.New("precondition", i18n.T("Server has not explicitly confirmed support for this operation"))
+}
+
 // UploadDocument 上传文件并返回服务端文件 ID。
 func (c Client) UploadDocument(ctx context.Context, target Target, filename string, file io.Reader) (string, error) {
 	if strings.TrimSpace(filename) == "" || file == nil {

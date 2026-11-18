@@ -29,6 +29,7 @@ func (fn taskRoundTripFunc) RoundTrip(request *http.Request) (*http.Response, er
 }
 
 type knowledgeJournalFixture struct {
+	noUploadRoute      bool
 	t                  *testing.T
 	mu                 sync.Mutex
 	server             *httptest.Server
@@ -93,7 +94,7 @@ func (fixture *knowledgeJournalFixture) serveHTTP(w http.ResponseWriter, request
 		}
 		write(map[string]any{"workspace": workspace, "permissions": []string{"resource.manage", "resource.view"}})
 	case "/api/v1/operations":
-		fmt.Fprint(w, `{"operations":[{"id":"knowledge.file.store"},{"id":"knowledge.base.get"},{"id":"file.document.upload"},{"id":"knowledge.file.list"}]}`)
+		fmt.Fprint(w, `{"operations":[{"id":"knowledge.file.store"},{"id":"knowledge.base.get"},{"id":"knowledge.file.list"}]}`)
 	case "/api/v1/system/context":
 		write(map[string]any{"instance_uuid": fixture.instance, "workspace_uuid": fixture.workspace, "api_key_id": "key-a", "permissions": []string{"resource.manage", "resource.view"}})
 	case "/api/v1/system/capabilities":
@@ -101,6 +102,13 @@ func (fixture *knowledgeJournalFixture) serveHTTP(w http.ResponseWriter, request
 	case "/api/v1/knowledge/bases/kb-a":
 		write(map[string]any{"base": map[string]any{"uuid": "kb-a", "name": "KB"}})
 	case "/api/v1/files/documents":
+		if request.Method == http.MethodOptions {
+			if !fixture.noUploadRoute {
+				w.Header().Set("Allow", "OPTIONS, POST")
+			}
+			w.WriteHeader(200)
+			return
+		}
 		fixture.uploads++
 		fixture.assertIntent("upload_intent")
 		if fixture.unknownUpload {
@@ -212,6 +220,15 @@ func TestKnowledgeJournalRecordsEvidenceAndSkipsCompletedWrites(t *testing.T) {
 	}
 	if _, err := fixture.run(false, WaitOptions{}); result.AsError(err).Kind != "precondition" {
 		t.Fatalf("existing journal overwritten: %v", err)
+	}
+}
+
+func TestKnowledgeJournalMemberUnsupportedUploadStopsBeforeWrites(t *testing.T) {
+	fixture := newKnowledgeJournalFixture(t)
+	fixture.member, fixture.noUploadRoute = true, true
+	_, err := fixture.service.KnowledgeBaseIngestJournal(config.AsMember(context.Background()), "kb-a", []string{fixture.file}, "", "parser-a", fixture.path, false, false, WaitOptions{}, CheckOptions{ContextSet: true, Context: "production"})
+	if err == nil || result.AsError(err).Kind != "precondition" || fixture.uploads != 0 || fixture.stores != 0 {
+		t.Fatalf("err=%v uploads=%d stores=%d", err, fixture.uploads, fixture.stores)
 	}
 }
 
@@ -466,6 +483,18 @@ func TestKnowledgeJournalDryRunAndDirectoryJournalExclusion(t *testing.T) {
 	if _, err := os.Stat(fixture.path); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("dry-run wrote journal: %v", err)
 	}
+	if _, err := os.Stat(fixture.path + ".lock"); !os.IsNotExist(err) {
+		t.Fatalf("dry-run created a lock file: %v", err)
+	}
+	absentDir := filepath.Join(filepath.Dir(fixture.file), "preview-only")
+	_, err = fixture.service.KnowledgeBaseIngestJournal(context.Background(), "kb-a", []string{fixture.file}, "", "parser-a", filepath.Join(absentDir, "progress.json"), false, true, WaitOptions{}, CheckOptions{ContextSet: true, Context: "production"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(absentDir); !os.IsNotExist(err) {
+		t.Fatalf("dry-run created a parent directory: %v", err)
+	}
+
 	for _, resume := range []bool{false, true} {
 		if _, err := fixture.service.KnowledgeBaseIngestJournal(context.Background(), "kb-a", nil, filepath.Dir(fixture.file), "parser-a", fixture.path, resume, false, WaitOptions{}, CheckOptions{ContextSet: true, Context: "production"}); err != nil {
 			t.Fatal(err)
