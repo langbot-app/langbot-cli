@@ -558,7 +558,12 @@ lbctl monitoring llm-calls --pipeline PIPELINE_UUID
 lbctl monitoring tool-calls --session SESSION_ID
 lbctl monitoring embedding-calls --knowledge-base KB_UUID
 lbctl monitoring sessions --active true
+lbctl monitoring trace --bot BOT_UUID --session SESSION_ID --since 2h -o json
 ```
+
+`monitoring trace` collects the selected Bot and session's messages, executions, routing evidence, model/tool calls, generated outputs and platform deliveries. It follows explicit record IDs and pages every execution section. The report contains status/error projections and record locators. Use each locator's operation/input to inspect full details. `--since` selects a lookback window, and linked details preserve their full record chain. The default covers accessible session history, with `--timeout` bounding collection.
+
+`first_error` identifies the earliest timestamped confirmed failure when ordering is established. Unknown failure timestamps or tied earliest records produce `first_error=null` and `error_ordering=undetermined`. `errors` retains all confirmed failures, with untimed evidence also listed in `unordered_errors`. Untimed failures, legacy context, missing links, changed/deleted records and incomplete pages appear in `issues` with `partial=true` and a nonzero exit code. Successful generation and platform delivery have separate records. Unlinked historical replies appear as `session_context`. Related records retain their execution identities and `record_source` distinguishes record namespaces.
 
 Runtime-record queries require `resource.view`. Lists support `--limit 1..500` and `--offset`, subject to Core's limits. `--start-time` and `--end-time` use ISO 8601. See each command's `--help` for filters.
 

@@ -531,7 +531,12 @@ lbctl monitoring llm-calls --pipeline PIPELINE_UUID
 lbctl monitoring tool-calls --session SESSION_ID
 lbctl monitoring embedding-calls --knowledge-base KB_UUID
 lbctl monitoring sessions --active true
+lbctl monitoring trace --bot BOT_UUID --session SESSION_ID --since 2h -o json
 ```
+
+`monitoring trace` 汇总指定 Bot、会话的消息、执行、路由证据、模型与工具调用、生成输出和平台投递，沿明确记录 ID 关联并排空执行详情的各个分页。报告提供状态、错误和原始记录定位，可使用定位中的 operation/input 查看完整详情。`--since` 指定回溯窗口，关联详情保留完整记录链。默认读取可访问的会话历史，`--timeout` 限定收集时长。
+
+顺序可确认时，`first_error` 指向时间最早的已证实失败记录。失败时间未知或最早记录同时间时返回 `first_error=null`、`error_ordering=undetermined`。`errors` 保留全部已证实失败，无时间证据另列于 `unordered_errors`。缺少失败时间、legacy_context、关联缺失、查询中变更或删除以及分页不完整会列入 `issues`，返回 `partial=true` 和非零退出码。生成输出与平台投递分别呈现，无关联的历史回复列为 `session_context`，相关记录保留执行标识并以 `record_source` 区分记录命名空间。
 
 运行记录查询要求 `resource.view`。列表支持 `--limit 1..500` 和 `--offset`，Core 可进一步限制；`--start-time`、`--end-time` 使用 ISO 8601 时间。可用筛选条件见各命令 `--help`。
 

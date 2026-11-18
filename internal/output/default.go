@@ -190,6 +190,19 @@ func renderDefaultData(w io.Writer, value any, command string) error {
 		return renderValue(w, value, "")
 	}
 	switch command {
+	case "monitoring.trace":
+		if err := renderFields(w, data, []string{"bot_id", "session_id", "complete", "partial", "error_ordering"}); err != nil {
+			return err
+		}
+		if err := renderValue(w, data["first_error"], fieldLabel("first_error")); err != nil {
+			return err
+		}
+		if items, ok := data["timeline"].([]any); ok {
+			if err := renderResourceList(w, "timeline", items); err != nil {
+				return err
+			}
+		}
+		return renderValue(w, data["issues"], fieldLabel("issues"))
 	case "list":
 		items, _ := data["instances"].([]any)
 		return renderResourceList(w, "instances", items)
@@ -924,6 +937,8 @@ func commandListKey(command string) string {
 
 func resourceFields(key string) []string {
 	switch key {
+	case "timeline":
+		return []string{"time", "stage", "record_source", "id", "status", "error"}
 	case "instances":
 		return []string{"name", "dir", "port", "status", "autostart"}
 	case "deployments":

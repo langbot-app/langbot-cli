@@ -153,6 +153,7 @@ var schemaMetaByName = map[string]schemaCommandMeta{
 	"pipeline.extensions.update":        writeMeta(operationIDs("pipeline.extensions.update"), schemaWriteOptions{SupportsDryRun: true, RequiredFlags: []string{"file"}, Readbacks: []schemaOperation{readbackID("pipeline.extensions.get")}}),
 	"pipeline.run":                      writeMeta(operationIDs("pipeline.run"), schemaWriteOptions{SupportsDryRun: true, RequiredFlags: []string{"message"}, Preconditions: []schemaOperation{preconditionID("pipeline.get")}}),
 	"monitoring.messages":               readMeta(operationIDs("monitoring.messages")...),
+	"monitoring.trace":                  readMetaWithFlags(operationIDs("monitoring.messages", "monitoring.executions", "monitoring.execution.detail", "monitoring.llm_calls", "monitoring.tool_calls", "monitoring.errors", preconditionID("operation.invoke")), "bot", "session"),
 	"monitoring.llm-calls":              readMeta(operationIDs("monitoring.llm_calls")...),
 	"monitoring.tool-calls":             readMeta(operationIDs("monitoring.tool_calls")...),
 	"monitoring.embedding-calls":        readMeta(operationIDs("monitoring.embedding_calls")...),

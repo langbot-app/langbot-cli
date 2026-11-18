@@ -2,6 +2,24 @@ package i18n
 
 func init() {
 	for key, value := range map[string]string{
+		"Trace a Bot session using recorded identities":                            "按记录标识溯源 Bot 会话",
+		"monitoring trace requires --bot and --session":                            "会话溯源需要 --bot 和 --session",
+		"since must be a positive duration":                                        "since 必须是大于零的时长",
+		"Monitoring trace is partial. Inspect the recorded gaps and source errors": "溯源证据不完整，请查看记录缺口及来源错误",
+		"Bot ID":                             "Bot ID",
+		"Session ID":                         "会话 ID",
+		"Look back by a duration such as 2h": "回溯时长，例如 2h",
+		"Invalid monitoring trace source response":            "溯源来源返回的数据格式无效",
+		"First confirmed error":                               "首个可确认错误",
+		"Trace timeline":                                      "溯源时间线",
+		"Complete evidence":                                   "证据完整",
+		"Partial evidence":                                    "证据不完整",
+		"Failure ordering":                                    "错误顺序依据",
+		"Stage":                                               "阶段",
+		"Record source":                                       "记录来源",
+		"Evidence gaps":                                       "证据缺口",
+		"Time":                                                "时间",
+
 		"Preview changes":                                                 "预览更改",
 		"Watch an existing Agent run":                                     "跟踪已有 Agent 运行",
 		"after-sequence must not be negative":                             "事件序号不能为负数",
