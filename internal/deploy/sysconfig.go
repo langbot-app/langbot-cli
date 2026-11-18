@@ -293,7 +293,7 @@ func SystemConfigOverrides(ctx context.Context, record Record, runner Runner, ke
 	return names, nil
 }
 
-const WindowsHostBoxMinVersion = ""
+const WindowsHostBoxMinVersion = "v4.11.9"
 
 func WindowsHostBoxSupported(platform, version string) bool {
 	if platform != "windows" {
