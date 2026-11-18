@@ -195,6 +195,7 @@ func (s *Service) repairDockerInstall(ctx context.Context, dir string, record de
 	if err == nil {
 		data["status"] = map[string]any{"status": "running"}
 		installAutostartData(data, record, dir)
+		addInstallBoxResult(ctx, data, record)
 	}
 	return auth.result(Result{Data: data}), normalizeLocalMutationError(err)
 }

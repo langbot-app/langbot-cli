@@ -25,6 +25,22 @@ func (s *Service) nativeOutput() io.Writer {
 	return io.Discard
 }
 
+func addInstallBoxResult(ctx context.Context, data map[string]any, record deploy.Record) {
+	if box, ok := deploy.InstalledBoxSettings(record); ok {
+		data["box"] = box
+		if box.Unsafe {
+			data["box_warning"] = box.Warning(record.CoreVersion)
+		}
+		backend := box.Backend
+		if !box.Enabled {
+			backend = "off"
+		}
+		if deploy.ValidBoxBackend(backend, true) {
+			telemetry.SetInstallBox(ctx, backend)
+		}
+	}
+}
+
 func (s *Service) installNative(ctx context.Context, options InstallOptions) (Result, error) {
 	ctx = telemetry.TrackSteps(ctx)
 	progress.NativeInstallPlan(ctx)
@@ -149,7 +165,12 @@ func (s *Service) installNative(ctx context.Context, options InstallOptions) (Re
 					return result.New("precondition", i18n.T("deployment changed"))
 				}
 				if deploy.NativeRunning(dir) {
-					if !auth.configure(ctx, record) {
+					changed := auth.configure(ctx, record)
+					boxChanged, err := deploy.SelectInstallBox(ctx, dir, record, s.localRunner(), options.BoxBackend)
+					if err != nil {
+						return err
+					}
+					if !changed && !boxChanged {
 						return nil
 					}
 					if err := deploy.NativeStop(ctx, dir, record); err != nil {
@@ -187,6 +208,9 @@ func (s *Service) installNative(ctx context.Context, options InstallOptions) (Re
 				return err
 			}
 			auth.configure(ctx, record)
+			if _, err := deploy.SelectInstallBox(ctx, dir, record, s.localRunner(), options.BoxBackend); err != nil {
+				return err
+			}
 			telemetry.SetStep(ctx, "install_service")
 			if err := deploy.InstallNativeService(ctx, dir, record); err != nil {
 				return err
@@ -220,6 +244,7 @@ func (s *Service) installNative(ctx context.Context, options InstallOptions) (Re
 		data["local_auth"] = deploy.SupportsLocalAuth(record.CoreVersion)
 		data["local_context"] = record.DeploymentID
 		installAutostartData(data, record, dir)
+		addInstallBoxResult(ctx, data, record)
 	} else {
 		data["step"] = telemetry.CurrentStep(ctx)
 		for key, path := range map[string]string{"log_path": logPath, "runtime_log_path": filepath.Join(dir, "logs", "langbot.log")} {

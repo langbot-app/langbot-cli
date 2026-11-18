@@ -135,6 +135,17 @@ func (d Diagnostics) Status(ctx context.Context) (StatusResult, error) {
 func (d Diagnostics) Doctor(ctx context.Context) ([]Check, error) {
 	if record, err := d.Store.Read(); err == nil && record.Driver == DriverNative {
 		checks := NativeCapabilities()
+		if box, ok := NativeBoxSettings(record); ok && (!box.Enabled || box.Unsafe) {
+			for index := range checks {
+				if checks[index].Name == "box_sandbox" {
+					checks[index].Status = "skip"
+					checks[index].Reason = i18n.T("Box is disabled.")
+					if box.Enabled {
+						checks[index].Reason = i18n.T("Host mode does not use a sandbox.")
+					}
+				}
+			}
+		}
 		status, err := d.Status(ctx)
 		checks = append(checks, Check{Name: "native_service", Status: status.Status, Reason: record.ServiceManager})
 		if record.ServiceManager == "systemd-user" {
