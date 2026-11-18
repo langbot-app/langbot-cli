@@ -16,6 +16,12 @@ import (
 
 // SkillInstallDirectory uses the existing preview/upload contract for local files.
 func (s *Service) SkillInstallDirectory(ctx context.Context, directory string, sourcePaths []string, dryRun bool, options CheckOptions) (Result, error) {
+	return withSkillDirectory(ctx, directory, func(ctx context.Context, filename string) (Result, error) {
+		return s.SkillInstallUpload(ctx, filename, sourcePaths, dryRun, options)
+	})
+}
+
+func withSkillDirectory(ctx context.Context, directory string, run func(context.Context, string) (Result, error)) (Result, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -82,7 +88,7 @@ func (s *Service) SkillInstallDirectory(ctx context.Context, directory string, s
 	if err := writeSkillDirectory(ctx, root, files, filename); err != nil {
 		return Result{}, skillDirectoryError(ctx, err)
 	}
-	value, err := s.SkillInstallUpload(ctx, filename, sourcePaths, dryRun, options)
+	value, err := run(ctx, filename)
 	if data, ok := value.Data.(map[string]any); ok {
 		data["source_directory"] = directory
 		data["file_count"] = len(files)

@@ -5,8 +5,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/langbot-app/langbot-cli/internal/result"
 )
 
 func TestPluginAndSkillReadsUseSafeProjectionsAndValidatedPaths(t *testing.T) {
@@ -119,5 +122,41 @@ func TestPluginAndSkillWritesUseOnlyDeclaredPathsAndVerifyFileContentInternally(
 	}
 	if len(requests) != 7 {
 		t.Fatalf("requests = %#v", requests)
+	}
+}
+
+func TestSkillPackageUpdateRejectsAmbiguousSuccessAndPreservesConflicts(t *testing.T) {
+	for _, scenario := range []struct {
+		name     string
+		preview  bool
+		status   int
+		body     string
+		wantType string
+	}{
+		{"invalid-preview", true, 200, `{"code":0,"data":{"skill_name":"other"}}`, ""},
+		{"invalid-publish", false, 200, `{"code":0,"data":{"skill_name":"other"}}`, "result_unknown"},
+		{"revision-mismatch", false, 200, `{"code":0,"data":{"skill_name":"packet","base_revision":"old","proposed_revision":"new","dry_run":false,"changes":{},"skill":{"name":"packet","revision":"other"}}}`, "result_unknown"},
+		{"conflict", false, 409, `{"code":-1,"msg":"stale revision"}`, "skill_revision_conflict"},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			calls := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(scenario.status)
+				fmt.Fprint(w, scenario.body)
+			}))
+			defer server.Close()
+			_, err := (Client{}).SkillPackageUpdate(context.Background(), Target{Endpoint: server.URL}, "packet", "old", "packet.zip", strings.NewReader("archive"), scenario.preview)
+			if err == nil || calls != 1 {
+				t.Fatalf("error=%v calls=%d", err, calls)
+			}
+			if scenario.wantType != "" && result.AsError(err).Type != scenario.wantType {
+				t.Fatalf("error=%#v", result.AsError(err))
+			}
+			if scenario.preview && result.AsError(err).Type == "result_unknown" {
+				t.Fatal("preview error marked as a possible write")
+			}
+		})
 	}
 }

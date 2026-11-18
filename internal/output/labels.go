@@ -4,6 +4,10 @@ import "github.com/langbot-app/langbot-cli/internal/i18n"
 
 // Labels apply only to human rendering. Protocol keys and resource names stay unchanged.
 var humanFieldLabels = map[string]string{
+	"base_revision": i18n.Source("Base revision"), "proposed_revision": i18n.Source("Proposed revision"),
+	"changes": i18n.Source("Changes"), "added": i18n.Source("Added"), "modified": i18n.Source("Modified"), "deleted": i18n.Source("Deleted"),
+	"required_permissions": i18n.Source("Required permissions"), "can_publish": i18n.Source("Can publish"),
+	"source_directory": i18n.Source("Source directory"), "file_count": i18n.Source("File count"),
 	"instances": "Local instances", "autostart": "Startup", "port": "Port",
 	"log_path": "log_path", "runtime_log_path": "runtime_log_path",
 	"latest": i18n.Source("Latest version"), "updated": i18n.Source("Updated"), "available": i18n.Source("Available"), "command": i18n.Source("Execute command"),

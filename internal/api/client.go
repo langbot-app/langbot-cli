@@ -206,6 +206,8 @@ var capabilityOperationIDs = []string{
 	"skill.files.read",
 	"skill.files.write",
 	"skill.preview",
+	"skill.package.preview",
+	"skill.package.publish",
 	"skill.install.github",
 	"skill.install.upload",
 	"mcp_server.list",
@@ -1352,7 +1354,7 @@ func (c Client) previewMultipart(ctx context.Context, target Target, path string
 	return c.doWithContentType(ctx, target, http.MethodPost, path, bytes.NewReader(body), true, contentType)
 }
 
-func multipartBody(filename string, file io.Reader, sourcePaths []string, maxBytes int64) ([]byte, string, error) {
+func multipartBody(filename string, file io.Reader, sourcePaths []string, maxBytes int64, fields ...map[string]string) ([]byte, string, error) {
 	if file == nil {
 		return nil, "", result.New("input", i18n.T("Upload file must not be empty"))
 	}
@@ -1375,6 +1377,13 @@ func multipartBody(filename string, file io.Reader, sourcePaths []string, maxByt
 	for _, sourcePath := range sourcePaths {
 		if err := writer.WriteField("source_paths", sourcePath); err != nil {
 			return nil, "", result.New("input", i18n.T("Unable to construct upload request"))
+		}
+	}
+	for _, group := range fields {
+		for name, value := range group {
+			if err := writer.WriteField(name, value); err != nil {
+				return nil, "", result.New("input", i18n.T("Unable to construct upload request"))
+			}
 		}
 	}
 	if err := writer.Close(); err != nil {
@@ -1561,6 +1570,9 @@ func knownWritePath(method, path string) bool {
 	if method == http.MethodPost && path == skillsPath {
 		return true
 	}
+	if method == http.MethodPost && nestedPath(path, skillsPath, 1, "package") {
+		return true
+	}
 	if method == http.MethodPut && strings.HasPrefix(path, skillsPath+"/") && strings.Contains(path, "/files/") {
 		value := strings.TrimPrefix(path, skillsPath+"/")
 		parts := strings.SplitN(value, "/files/", 2)
@@ -1632,7 +1644,7 @@ func splitWritePath(path string) (string, url.Values, bool) {
 }
 
 func knownPreviewPath(path string) bool {
-	return path == skillsPath+"/install/github/preview" || path == skillsPath+"/install/upload/preview"
+	return path == skillsPath+"/install/github/preview" || path == skillsPath+"/install/upload/preview" || nestedPathParts(path, skillsPath, 1, []string{"package", "preview"})
 }
 
 func safeNestedPath(path, base, suffix string, segments int) bool {
@@ -2398,4 +2410,44 @@ func httpStatusMessage(status int) string {
 		return i18n.T("Service returned a redirect; CLI does not follow redirects automatically")
 	}
 	return fmt.Sprintf(i18n.T("Service returned HTTP %d"), status)
+}
+
+// SkillPackageUpdate uses the revision-aware complete-package transport.
+func (c Client) SkillPackageUpdate(ctx context.Context, target Target, name, revision, filename string, file io.Reader, preview bool) (map[string]any, error) {
+	if strings.TrimSpace(revision) == "" {
+		return nil, result.New("input", i18n.T("Skill base_revision must be a non-empty string"))
+	}
+	path, err := skillResourcePath(name, "/package")
+	if err != nil {
+		return nil, err
+	}
+	body, contentType, err := multipartBody(filename, file, nil, maxUploadBytes, map[string]string{"base_revision": revision})
+	if err != nil {
+		return nil, err
+	}
+	var resp response
+	if preview {
+		resp, err = c.previewMultipart(ctx, target, path+"/preview", body, contentType)
+	} else {
+		resp, err = c.writeMultipart(ctx, target, path, body, contentType)
+	}
+	if err != nil {
+		return nil, skillRevisionError(err)
+	}
+	proposed, _ := resp.Data["proposed_revision"].(string)
+	_, hasChanges := resp.Data["changes"].(map[string]any)
+	if resp.Data["skill_name"] != name || resp.Data["base_revision"] != revision || proposed == "" || !hasChanges || resp.Data["dry_run"] != preview {
+		err := protocolError(i18n.T("Invalid Skill package update response"), resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
+		if !preview {
+			return nil, writeUnknown(result.AsError(err))
+		}
+		return nil, err
+	}
+	if !preview {
+		skill, err := parseSkillResponse(resp, name, target.secret())
+		if err != nil || skill["revision"] != proposed {
+			return nil, writeUnknown(result.AsError(protocolError(i18n.T("Invalid Skill package update response"), resp.StatusCode, "")))
+		}
+	}
+	return redactConnectionSecret(resp.Data, target.secret()).(map[string]any), nil
 }

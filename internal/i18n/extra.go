@@ -2,8 +2,17 @@ package i18n
 
 func init() {
 	for key, value := range map[string]string{
-		"Agent debug message text":                "Agent 调试消息文本",
-		"Provide exactly one --message or --file": "请提供 --message 或 --file 中的一项",
+		"Base revision": "基础修订", "Proposed revision": "预计修订", "Changes": "变更",
+		"Added": "新增", "Modified": "修改", "Deleted": "删除",
+		"Required permissions": "所需权限", "Can publish": "具备发布权限",
+		"Source directory": "来源目录", "File count": "文件数",
+		"Publish a complete local Skill directory":                           "发布本地 Skill 完整目录",
+		"Reviewed revision required for complete package replacement":        "编辑前已查看的修订，完整包替换时必填",
+		"Validate the package and preview added, modified and deleted files": "校验包并预览新增、修改和删除的文件",
+		"Invalid Skill package update response":                              "Skill 整包更新响应格式无效",
+		"Skill revision differs after package publication":                   "整包发布后 Skill 修订与发布结果不一致",
+		"Agent debug message text":                                           "Agent 调试消息文本",
+		"Provide exactly one --message or --file":                            "请提供 --message 或 --file 中的一项",
 		"  lbctl skill get demo -o json\n  # edit.yaml = {\"instructions\":\"Updated instructions\",\"base_revision\":\"<revision>\"}\n  lbctl skill update demo --file edit.yaml --dry-run\n  lbctl skill update demo --file edit.yaml": "  lbctl skill get demo -o json\n  # edit.yaml = {\"instructions\":\"更新后的指令\",\"base_revision\":\"<revision>\"}\n  lbctl skill update demo --file edit.yaml --dry-run\n  lbctl skill update demo --file edit.yaml",
 		"Server did not acknowledge the sandbox configuration reset":                                                                                                       "服务端未确认沙箱配置已重置",
 		"Resetting workspace sandbox configuration clears backend, E2B credentials and resource limit overrides and requires --yes":                                        "重置工作区沙箱配置会清除后端、E2B 凭据和资源限额覆盖，需要 --yes 确认",

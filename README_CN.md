@@ -356,12 +356,16 @@ lbctl skill install github --file skill.yaml
 lbctl skill install upload --file skill.zip
 lbctl skill install upload --dir ./my-skill --dry-run
 lbctl skill install upload --dir ./my-skill
+lbctl skill push <name> --dir ./my-skill --base-revision <revision> --dry-run
+lbctl skill push <name> --dir ./my-skill --base-revision <revision>
 lbctl skill delete <name> --yes
 ```
 
 Skill 安装的 `--dry-run` 调用服务端预览，不产生安装。Plugin 安装、升级和删除可用 `--wait` 跟踪异步任务。
 
 `skill install upload --dir` 将本地目录打包，保留相对路径和普通隐藏文件，跳过 `.git`，拒绝符号链接，并按现有 10 MB ZIP 上传上限检查。`--file` 和 `--dir` 选择其中一项。
+
+`skill push` 用本地完整目录更新已有 Skill，包含二进制资源和可执行权限。目录中缺少的文件会从新发布版本删除。编辑前读取当前修订，并显式传入 `--base-revision`，`SKILL.md` 中的 `name` 必须与命令参数一致。`--dry-run` 校验包，列出新增、修改、删除的路径、预计修订及发布权限。发布需要 `resource.manage` 和 `resource.view`，随后读取并验证发布修订。发生修订冲突时，请查看并合并最新包后重试。Core 需要声明 `skill.package.preview` 与 `skill.package.publish` 能力。
 
 Core 提供修订号时，Skill 查询会返回 `revision`。基于先前读取内容编辑时，文件写入可传 `--base-revision`，更新请求可带 `base_revision`。发生冲突返回 `skill_revision_conflict`，请读取最新内容、合并修改，再携最新修订号重试。省略修订号时，CLI 在写入前读取当前修订。`skill package get -O` 保存 ZIP 并覆盖已有目标文件。
 

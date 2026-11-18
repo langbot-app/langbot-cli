@@ -898,6 +898,7 @@ func newPluginCommand(service *app.Service, deps Dependencies, flags *globalFlag
 
 func newSkillCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
 	command := &cobra.Command{Use: "skill", Short: i18n.T("Manage Skills"), Args: cobra.NoArgs}
+	command.AddCommand(newSkillPushCommand(service, deps, flags))
 	command.AddCommand(&cobra.Command{Use: "list", Short: i18n.T("List Skills"), Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		return emitCall(deps, flags, func() (app.Result, error) { return service.SkillList(cmd.Context(), connectionOptions(flags)) })
 	}})
@@ -1966,4 +1967,24 @@ func enrichResult(deps Dependencies, flags *globalFlags, value app.Result, err e
 func hasEnvironmentConfig(deps Dependencies) bool {
 	_, ok := deps.LookupEnv("LANGBOT_CONFIG")
 	return ok
+}
+
+func newSkillPushCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
+	var directory, revision string
+	var dryRun bool
+	command := &cobra.Command{
+		Use: "push <name>", Short: i18n.T("Publish a complete local Skill directory"), Args: cobra.ExactArgs(1),
+		Example: "  lbctl skill get demo -o json\n  lbctl skill push demo --dir ./demo --base-revision <revision> --dry-run\n  lbctl skill push demo --dir ./demo --base-revision <revision>",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return emitCall(deps, flags, func() (app.Result, error) {
+				return service.SkillPush(cmd.Context(), args[0], directory, revision, dryRun, connectionOptions(flags))
+			})
+		},
+	}
+	command.Flags().StringVar(&directory, "dir", "", i18n.T("Local Skill directory; packaged as ZIP before upload"))
+	command.Flags().StringVar(&revision, "base-revision", "", i18n.T("Reviewed revision required for complete package replacement"))
+	command.Flags().BoolVar(&dryRun, "dry-run", false, i18n.T("Validate the package and preview added, modified and deleted files"))
+	_ = command.MarkFlagRequired("dir")
+	_ = command.MarkFlagRequired("base-revision")
+	return command
 }

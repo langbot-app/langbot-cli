@@ -383,12 +383,16 @@ lbctl skill install github --file skill.yaml
 lbctl skill install upload --file skill.zip
 lbctl skill install upload --dir ./my-skill --dry-run
 lbctl skill install upload --dir ./my-skill
+lbctl skill push <name> --dir ./my-skill --base-revision <revision> --dry-run
+lbctl skill push <name> --dir ./my-skill --base-revision <revision>
 lbctl skill delete <name> --yes
 ```
 
 Skill installation with `--dry-run` uses a server-side preview. Plugin installation, upgrade, and deletion support `--wait` to follow asynchronous tasks.
 
 `skill install upload --dir` packages a local directory, including relative paths and hidden files. It skips `.git`, rejects symbolic links, and enforces the 10 MB ZIP upload limit. Choose one of `--file` and `--dir`.
+
+`skill push` updates an existing Skill from a complete local directory, including binary resources and executable modes. Files absent from the directory are deleted in the new publication. Read the current revision before editing and pass it explicitly with `--base-revision`. The `name` in `SKILL.md` must match the command argument. `--dry-run` validates the package and reports added, modified and deleted paths, the proposed revision and publication permissions. Publishing requires `resource.manage` and `resource.view`, then verifies the resulting revision with a readback. A revision conflict requires reviewing and merging the latest package before retrying. Core must advertise `skill.package.preview` and `skill.package.publish`.
 
 Skill reads include `revision` when provided by Core. For edits based on a previous read, pass that revision with `--base-revision` for file writes or `base_revision` in an update request. A conflict preserves the server content and returns `skill_revision_conflict`. Read the latest content, merge your changes, and retry with the latest revision. Omitted revisions use a fresh read before writing. `skill package get -O` saves the ZIP and replaces an existing destination file.
 

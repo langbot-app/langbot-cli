@@ -119,3 +119,24 @@ func TestLongHumanListsPreserveIDsAndMachineNames(t *testing.T) {
 		t.Fatalf("list lost identity or machine content: %s / %s", &human, &machine)
 	}
 }
+
+func TestSkillPushPreviewShowsChangesRevisionAndPermissions(t *testing.T) {
+	var out bytes.Buffer
+	err := renderDefault(&out, map[string]any{
+		"ok": true,
+		"data": map[string]any{
+			"operation": "skill.package.preview", "dry_run": true,
+			"base_revision": "sha256:base", "proposed_revision": "sha256:proposed", "can_publish": false,
+			"required_permissions": []any{"resource.view", "resource.manage"},
+			"changes":              map[string]any{"added": []any{"new.bin"}, "modified": []any{"SKILL.md"}, "deleted": []any{"old.bin"}},
+		},
+	}, "skill.push")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range []string{"sha256:base", "sha256:proposed", "resource.manage", "new.bin", "SKILL.md", "old.bin"} {
+		if !strings.Contains(out.String(), value) {
+			t.Fatalf("preview omitted %q: %s", value, out.String())
+		}
+	}
+}

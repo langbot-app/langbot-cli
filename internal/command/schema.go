@@ -290,6 +290,7 @@ var schemaMetaByName = map[string]schemaCommandMeta{
 	"skill.file.read":      readMeta(operationIDs("skill.files.read")...),
 	"skill.file.write":     writeMeta(operationIDs("skill.files.write"), schemaWriteOptions{SupportsDryRun: true, RequiredFlags: []string{"file"}, Readbacks: []schemaOperation{readbackID("skill.files.read")}}),
 	"skill.preview":        readMeta(operationIDs("skill.preview")...),
+	"skill.push":           writeMeta(operationIDs(conditionalID("skill.package.preview", flagEquals("dry-run", true)), conditionalID("skill.package.publish", flagEquals("dry-run", false)), conditionalID("skill.get", flagEquals("dry-run", false))), schemaWriteOptions{SupportsDryRun: true, RequiredFlags: []string{"dir", "base-revision"}}),
 	"skill.install.github": writeMeta(operationIDs("skill.install.github"), schemaWriteOptions{SupportsDryRun: true, RequiredFlags: []string{"file"}}),
 	"skill.install.upload": func() schemaCommandMeta {
 		meta := writeMeta(operationIDs("skill.install.upload"), schemaWriteOptions{SupportsDryRun: true})
