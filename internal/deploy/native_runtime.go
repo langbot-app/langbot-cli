@@ -159,6 +159,11 @@ func NativeEnvironment(record Record) []string {
 	env["LANGBOT_DATA_ROOT"] = record.DataDir
 	env["LANGBOT_PLUGIN_PYPI_INDEX_URL"] = record.PyPIIndex
 	env["API__PORT"] = fmt.Sprint(record.Port)
+	// Native deployments may themselves run inside a container (CI, devcontainers,
+	// NAS images) where /.dockerenv exists. Tell Core explicitly that this is not
+	// the Docker Compose layout so it launches its own Plugin Runtime and Box
+	// instead of dialing langbot_plugin_runtime/langbot_box. Older Core ignores it.
+	env["DOCKER_ENV"] = "false"
 	if _, err := os.Stat(filepath.Join(record.DataDir, "config.yaml")); os.IsNotExist(err) {
 		env["API__WEBHOOK_PREFIX"] = record.Endpoint
 	}
