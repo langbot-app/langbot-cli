@@ -211,7 +211,37 @@ func addOperationCommands(root *cobra.Command, service *app.Service, deps Depend
 	addOperationUploads(root, service, deps, flags)
 }
 
+func readTerminalLine(ctx context.Context, reader *bufio.Reader) (string, error) {
+	if ctx.Done() == nil {
+		return reader.ReadString('\n')
+	}
+	type answer struct {
+		line string
+		err  error
+	}
+	// A terminal read can outlast SIGINT on both Unix and Windows. The CLI
+	// owns stdin until exit. Only one read is in flight, and it never writes output.
+	done := make(chan answer, 1)
+	go func() {
+		line, err := reader.ReadString('\n')
+		done <- answer{line, err}
+	}()
+	select {
+	case <-ctx.Done():
+		return "", result.New("network", i18n.T("Request cancelled"))
+	case reply := <-done:
+		if ctx.Err() != nil {
+			return "", result.New("network", i18n.T("Request cancelled"))
+		}
+		return reply.line, reply.err
+	}
+}
+
 func confirmOperation(deps Dependencies, yes bool, stdinUsed bool) error {
+	return confirmOperationContext(context.Background(), deps, yes, stdinUsed)
+}
+
+func confirmOperationContext(ctx context.Context, deps Dependencies, yes bool, stdinUsed bool) error {
 	if yes {
 		return nil
 	}
@@ -224,7 +254,10 @@ func confirmOperation(deps Dependencies, yes bool, stdinUsed bool) error {
 		return result.New("precondition", i18n.T("Writes require --yes"))
 	}
 	fmt.Fprint(deps.Err, i18n.T("Confirm this write operation? [y/N] "))
-	answer, err := bufio.NewReader(file).ReadString('\n')
+	answer, err := readTerminalLine(ctx, bufio.NewReader(file))
+	if ctx.Err() != nil {
+		return result.New("network", i18n.T("Request cancelled"))
+	}
 	if err != nil || (strings.TrimSpace(strings.ToLower(answer)) != "y" && strings.TrimSpace(strings.ToLower(answer)) != "yes") {
 		return result.New("precondition", i18n.T("Operation unconfirmed"))
 	}

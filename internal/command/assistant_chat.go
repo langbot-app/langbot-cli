@@ -118,9 +118,9 @@ func chatResult(session *app.OperationSession, view chatView, err error) (app.Re
 	return session.Result(data), err
 }
 
-func chatInput(reader *bufio.Reader, prompt string, out io.Writer) (string, error) {
+func chatInput(ctx context.Context, reader *bufio.Reader, prompt string, out io.Writer) (string, error) {
 	fmt.Fprint(out, prompt)
-	line, err := reader.ReadString('\n')
+	line, err := readTerminalLine(ctx, reader)
 	if len(line) > 0 && err == io.EOF {
 		err = nil
 	}
@@ -128,7 +128,7 @@ func chatInput(reader *bufio.Reader, prompt string, out io.Writer) (string, erro
 }
 
 // Each decision applies only to the exact batch printed in this iteration.
-func chatPrompt(reader *bufio.Reader, out io.Writer, view chatView) (map[string]any, error) {
+func chatPrompt(ctx context.Context, reader *bufio.Reader, out io.Writer, view chatView) (map[string]any, error) {
 	if view.status == "approval" {
 		fmt.Fprintln(out, i18n.T("Pending tool calls"), view.revision)
 		encoder := json.NewEncoder(out)
@@ -136,7 +136,7 @@ func chatPrompt(reader *bufio.Reader, out io.Writer, view chatView) (map[string]
 		if err := encoder.Encode(redact.Value(view.data["pending"], "")); err != nil {
 			return nil, err
 		}
-		answer, err := chatInput(reader, i18n.T("Approve this entire batch? [yes/no/enter to leave] "), out)
+		answer, err := chatInput(ctx, reader, i18n.T("Approve this entire batch? [yes/no/enter to leave] "), out)
 		switch strings.ToLower(answer) {
 		case "yes":
 			return map[string]any{"approved": true}, err
@@ -161,7 +161,7 @@ func chatPrompt(reader *bufio.Reader, out io.Writer, view chatView) (map[string]
 			}, text))
 		}
 	}
-	line, err := chatInput(reader, i18n.T("Message (enter to leave)> "), out)
+	line, err := chatInput(ctx, reader, i18n.T("Message (enter to leave)> "), out)
 	if line == "" || err != nil {
 		return nil, err
 	}
@@ -205,7 +205,7 @@ func addAssistantChat(root *cobra.Command, service *app.Service, deps Dependenci
 				if err := session.Authorize(friendlyOperationDetails["assistant.stream"].description()); err != nil {
 					return session.Result(nil), err
 				}
-				if err := confirmOperation(deps, yes, flags.apiKeyStdin); err != nil {
+				if err := confirmOperationContext(ctx, deps, yes, flags.apiKeyStdin); err != nil {
 					return session.Result(nil), err
 				}
 			}
@@ -228,7 +228,7 @@ func addAssistantChat(root *cobra.Command, service *app.Service, deps Dependenci
 				case decision:
 					body = map[string]any{"approved": approve}
 				case interactive:
-					body, err = chatPrompt(reader, deps.Err, view)
+					body, err = chatPrompt(ctx, reader, deps.Err, view)
 				}
 				if body == nil || err != nil {
 					if err == io.EOF {
