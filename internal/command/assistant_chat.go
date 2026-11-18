@@ -62,7 +62,7 @@ func readChat(ctx context.Context, session *app.OperationSession, id string) (ch
 	return parseChatView(raw, id)
 }
 
-func chatTurn(ctx context.Context, session *app.OperationSession, view chatView, body map[string]any) (chatView, error) {
+func chatTurn(ctx context.Context, session *app.OperationSession, view chatView, body map[string]any, progress io.Writer) (chatView, error) {
 	if err := session.Authorize(friendlyOperationDetails["assistant.stream"].description()); err != nil {
 		return view, err
 	}
@@ -71,7 +71,24 @@ func chatTurn(ctx context.Context, session *app.OperationSession, view chatView,
 	err := session.Client.OperationStream(ctx, session.Target, "assistant.stream", body, func(raw any) error {
 		frame, _ := raw.(map[string]any)
 		switch frame["kind"] {
-		case "snapshot", "phase", "text":
+		case "phase":
+			phase, _ := frame["data"].(map[string]any)
+			if progress != nil {
+				switch phase["phase"] {
+				case "thinking":
+					round, _ := phase["round"].(json.Number)
+					n, err := round.Int64()
+					if err == nil && n > 0 {
+						_, err = fmt.Fprintf(progress, i18n.T("Thinking (round %d)\n"), n)
+						return err
+					}
+				case "tool":
+					_, err := fmt.Fprintln(progress, i18n.T("Running a tool…"))
+					return err
+				}
+			}
+			return nil
+		case "snapshot", "text":
 			return nil
 		case "completed":
 			var err error
@@ -118,9 +135,9 @@ func chatResult(session *app.OperationSession, view chatView, err error) (app.Re
 	return session.Result(data), err
 }
 
-func chatInput(reader *bufio.Reader, prompt string, out io.Writer) (string, error) {
+func chatInput(ctx context.Context, reader *bufio.Reader, prompt string, out io.Writer) (string, error) {
 	fmt.Fprint(out, prompt)
-	line, err := reader.ReadString('\n')
+	line, err := readTerminalLine(ctx, reader)
 	if len(line) > 0 && err == io.EOF {
 		err = nil
 	}
@@ -128,7 +145,7 @@ func chatInput(reader *bufio.Reader, prompt string, out io.Writer) (string, erro
 }
 
 // Each decision applies only to the exact batch printed in this iteration.
-func chatPrompt(reader *bufio.Reader, out io.Writer, view chatView) (map[string]any, error) {
+func chatPrompt(ctx context.Context, reader *bufio.Reader, out io.Writer, view chatView) (map[string]any, error) {
 	if view.status == "approval" {
 		fmt.Fprintln(out, i18n.T("Pending tool calls"), view.revision)
 		encoder := json.NewEncoder(out)
@@ -136,7 +153,7 @@ func chatPrompt(reader *bufio.Reader, out io.Writer, view chatView) (map[string]
 		if err := encoder.Encode(redact.Value(view.data["pending"], "")); err != nil {
 			return nil, err
 		}
-		answer, err := chatInput(reader, i18n.T("Approve this entire batch? [yes/no/enter to leave] "), out)
+		answer, err := chatInput(ctx, reader, i18n.T("Approve this entire batch? [yes/no/enter to leave] "), out)
 		switch strings.ToLower(answer) {
 		case "yes":
 			return map[string]any{"approved": true}, err
@@ -161,7 +178,7 @@ func chatPrompt(reader *bufio.Reader, out io.Writer, view chatView) (map[string]
 			}, text))
 		}
 	}
-	line, err := chatInput(reader, i18n.T("Message (enter to leave)> "), out)
+	line, err := chatInput(ctx, reader, i18n.T("Message (enter to leave)> "), out)
 	if line == "" || err != nil {
 		return nil, err
 	}
@@ -205,7 +222,7 @@ func addAssistantChat(root *cobra.Command, service *app.Service, deps Dependenci
 				if err := session.Authorize(friendlyOperationDetails["assistant.stream"].description()); err != nil {
 					return session.Result(nil), err
 				}
-				if err := confirmOperation(deps, yes, flags.apiKeyStdin); err != nil {
+				if err := confirmOperationContext(ctx, deps, yes, flags.apiKeyStdin); err != nil {
 					return session.Result(nil), err
 				}
 			}
@@ -220,6 +237,10 @@ func addAssistantChat(root *cobra.Command, service *app.Service, deps Dependenci
 				return chatResult(session, view, result.New("precondition", i18n.T("Conversation changed. Review the latest turn")))
 			}
 			reader := bufio.NewReader(deps.In)
+			var progress io.Writer
+			if interactive {
+				progress = deps.Err
+			}
 			for {
 				var body map[string]any
 				switch {
@@ -228,7 +249,7 @@ func addAssistantChat(root *cobra.Command, service *app.Service, deps Dependenci
 				case decision:
 					body = map[string]any{"approved": approve}
 				case interactive:
-					body, err = chatPrompt(reader, deps.Err, view)
+					body, err = chatPrompt(ctx, reader, deps.Err, view)
 				}
 				if body == nil || err != nil {
 					if err == io.EOF {
@@ -236,7 +257,7 @@ func addAssistantChat(root *cobra.Command, service *app.Service, deps Dependenci
 					}
 					return chatResult(session, view, err)
 				}
-				view, err = chatTurn(ctx, session, view, body)
+				view, err = chatTurn(ctx, session, view, body, progress)
 				if !interactive || err != nil {
 					return chatResult(session, view, err)
 				}

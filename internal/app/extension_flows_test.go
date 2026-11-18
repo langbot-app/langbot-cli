@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -360,4 +361,81 @@ func extensionCapabilitiesResponse(operations ...string) *http.Response {
 		values += fmt.Sprintf("%q:{\"supported\":true}", operation)
 	}
 	return taskResponse(fmt.Sprintf(`{"code":0,"data":{"schema_version":1,"operations":{%s}}}`, values))
+}
+
+func TestPluginUpgradeWaitReadsInstalledRuntimeAndGrantsOnlyOnRequest(t *testing.T) {
+	const ready = `"version":"2","enabled":true,"status":"initialized","components":[]`
+	const pending = `"version":"2","enabled":false,"status":"pending_confirmation","permission_status":{"pending_confirmation":true},"components":[]`
+	const mounted = `"version":"2","enabled":true,"status":"mounted","components":[]`
+	for _, tc := range []struct {
+		name                  string
+		states                []string
+		confirm, lostAck      bool
+		want                  string
+		wantReads, wantGrants int
+	}{
+		{"ready", []string{ready}, false, false, "ready", 2, 0},
+		{"already current", []string{`"version":"1","enabled":true,"status":"initialized","components":[]`}, false, false, "ready", 2, 0},
+		{"initializing", []string{mounted, ready}, false, false, "ready", 3, 0},
+		{"disabled", []string{`"version":"2","status":"initialized","enabled":false,"components":[]`}, false, false, "unknown", 2, 0},
+		{"unverified components", []string{`"version":"2","status":"initialized","enabled":true`}, false, false, "unknown", 2, 0},
+		{"wrong running version", []string{ready + `,"install_info":{"plugin_version":"3"}`}, false, false, "unknown", 2, 0},
+		{"pending", []string{pending}, false, false, "pending_confirmation", 2, 0},
+		{"explicit permission grant", []string{pending, ready}, true, false, "ready", 3, 1},
+		{"approval response lost", []string{pending, ready}, true, true, "unknown", 3, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			reads, upgrades, grants, manifests := 0, 0, 0, 0
+			service, options := extensionService(t, taskRoundTripFunc(func(r *http.Request) (*http.Response, error) {
+				switch r.URL.Path {
+				case "/api/v1/system/context":
+					return extensionIdentityResponse(), nil
+				case "/api/v1/system/capabilities":
+					return extensionCapabilitiesResponse("plugin.upgrade", "plugin.get", "task.get", "operation.invoke", "plugin.permissions.confirm_api_key"), nil
+				case "/api/v1/plugins/acme/echo":
+					state := `"version":"1"`
+					if reads > 0 {
+						if reads > len(tc.states) {
+							t.Fatalf("unexpected extra runtime read %d", reads)
+						}
+						state = tc.states[reads-1]
+					}
+					reads++
+					return taskResponse(`{"code":0,"data":{"plugin":{"author":"acme","name":"echo",` + state + `}}}`), nil
+				case "/api/v1/plugins/acme/echo/upgrade":
+					upgrades++
+					return taskResponse(`{"code":0,"data":{"task_id":42}}`), nil
+				case "/api/v1/system/tasks/42":
+					return taskResponse(`{"code":0,"data":{"id":42,"task_type":"user","kind":"plugin-operation","status":"succeeded","error":null,"result":null,"created_at":1}}`), nil
+				case "/api/v1/operations/plugin.permissions.get":
+					manifests++
+					return taskResponse(`{"code":0,"data":{"permissions":[{"category":"capabilities","id":"example.read"}]}}`), nil
+				case "/api/v1/operations/plugin.permissions.update":
+					grants++
+					payload, _ := io.ReadAll(r.Body)
+					if !strings.Contains(string(payload), `"capabilities":["example.read"]`) {
+						t.Fatalf("confirmation body %s", payload)
+					}
+					if tc.lostAck {
+						return nil, errors.New("lost acknowledgment")
+					}
+					return taskResponse(`{"code":0,"data":{"enabled":true,"pending_confirmation":false}}`), nil
+				default:
+					t.Fatalf("unexpected URL %s", r.URL.Path)
+					return nil, nil
+				}
+			}))
+			out, err := service.PluginUpgrade(context.Background(), "acme", "echo", false, !tc.confirm, WaitOptions{ConfirmPermissions: tc.confirm, PollInterval: time.Millisecond, WaitTimeout: time.Second}, options)
+			data, ok := out.Data.(map[string]any)
+			if !ok || data["readiness"] != tc.want || data["step"] != "completed" || (err == nil) != (tc.want == "ready") || reads != tc.wantReads || upgrades != 1 || grants != tc.wantGrants {
+				t.Fatalf("got %#v err %v; reads/upgrades/grants %d/%d/%d", out, err, reads, upgrades, grants)
+			}
+			if (tc.states[0] == pending) != (manifests == 1) {
+				t.Fatalf("manifest reads %d", manifests)
+			}
+			if tc.want == "ready" && data["version_changed"] != (tc.name != "already current") {
+				t.Fatalf("version evidence %#v", data)
+			}
+		})
+	}
 }

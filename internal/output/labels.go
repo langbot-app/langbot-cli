@@ -4,10 +4,6 @@ import "github.com/langbot-app/langbot-cli/internal/i18n"
 
 // Labels apply only to human rendering. Protocol keys and resource names stay unchanged.
 var humanFieldLabels = map[string]string{
-	"first_error": i18n.Source("First confirmed error"), "timeline": i18n.Source("Trace timeline"),
-	"complete": i18n.Source("Complete evidence"), "partial": i18n.Source("Partial evidence"), "error_ordering": i18n.Source("Failure ordering"),
-	"stage": i18n.Source("Stage"), "record_source": i18n.Source("Record source"), "issues": i18n.Source("Evidence gaps"), "time": i18n.Source("Time"),
-	"bot_id": i18n.Source("Bot ID"), "session_id": i18n.Source("Session ID"),
 	"instances": "Local instances", "autostart": "Startup", "port": "Port",
 	"log_path": "log_path", "runtime_log_path": "runtime_log_path",
 	"latest": i18n.Source("Latest version"), "updated": i18n.Source("Updated"), "available": i18n.Source("Available"), "command": i18n.Source("Execute command"),
@@ -45,4 +41,8 @@ var humanFieldLabels = map[string]string{
 	"changed": i18n.Source("Changed"), "dry_run": i18n.Source("Preflight"), "verified": i18n.Source("Full verification"), "verification": i18n.Source("Write verification"),
 	"observable_fields_match": i18n.Source("Observable fields match"), "unverified_fields": i18n.Source("Unverified fields"), "checked_fields": i18n.Source("Verified fields"), "scope": i18n.Source("Verification scope"),
 	"saved": i18n.Source("Saved"), "effective": i18n.Source("Effective this time"), "instructions": i18n.Source("Description text"), "permissions": i18n.Source("Permissions"), "schema_version": i18n.Source("Schema version"),
+	"first_error": i18n.Source("First confirmed error"), "timeline": i18n.Source("Trace timeline"),
+	"complete": i18n.Source("Complete evidence"), "partial": i18n.Source("Partial evidence"), "error_ordering": i18n.Source("Failure ordering"),
+	"stage": i18n.Source("Stage"), "record_source": i18n.Source("Record source"), "issues": i18n.Source("Evidence gaps"), "time": i18n.Source("Time"),
+	"bot_id": i18n.Source("Bot ID"), "session_id": i18n.Source("Session ID"),
 }

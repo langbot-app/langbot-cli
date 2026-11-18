@@ -339,7 +339,7 @@ func (c Client) Task(ctx context.Context, target Target, identifier string) (Tas
 	if err != nil {
 		return Task{}, err
 	}
-	task, ok := parseTaskData(resp.Data, identifier)
+	task, ok := parseTaskData(resp.Data, identifier, target.UserToken != "")
 	if !ok {
 		return Task{}, protocolError(i18n.T("Invalid server task data format"), resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
 	}
@@ -377,7 +377,7 @@ func (c Client) Tasks(ctx context.Context, target Target, filters TaskListFilter
 		if !ok || strings.TrimSpace(id) == "" || containsSecret(id, target.secret()) {
 			return nil, protocolError(i18n.T("Server task lacks a valid ID"), resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
 		}
-		task, ok := parseTaskData(item, id)
+		task, ok := parseTaskData(item, id, target.UserToken != "")
 		if !ok {
 			return nil, protocolError(i18n.T("Invalid server task data format"), resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
 		}
@@ -1934,10 +1934,40 @@ func validResourceUUID(value map[string]any, secret string) bool {
 	return ok && strings.TrimSpace(uuid) != "" && !containsSecret(uuid, secret)
 }
 
-func parseTaskData(value map[string]any, identifier string) (Task, bool) {
+func parseTaskData(value map[string]any, identifier string, member bool) (Task, bool) {
 	taskID, ok := value["id"].(json.Number)
 	if !ok || taskID.String() != identifier {
 		return Task{}, false
+	}
+	// Native member responses include private runtime diagnostics. Project only
+	// the observed lifecycle before they reach either human or machine output.
+	if _, exists := value["status"]; !exists && member {
+		runtime, _ := value["runtime"].(map[string]any)
+		done, valid := runtime["done"].(bool)
+		exception, hasException := runtime["exception"]
+		if !valid || !hasException {
+			return Task{}, false
+		}
+		status := ""
+		switch {
+		case runtime["state"] == "PENDING" && !done && exception == nil:
+			status = "running"
+		case runtime["state"] == "CANCELLED" && done:
+			status = "cancelled"
+		case runtime["state"] == "FINISHED" && done:
+			if exception == nil {
+				status = "succeeded"
+			} else if _, ok := exception.(string); ok {
+				status = "failed"
+			}
+		}
+		value = map[string]any{"id": taskID, "task_type": value["task_type"], "kind": value["kind"], "created_at": value["created_at"], "status": status}
+		if status == "failed" || status == "cancelled" {
+			value["error"] = map[string]any{"type": "task_" + status, "message": i18n.T("Asynchronous task failed")}
+			if status == "cancelled" {
+				value["error"] = map[string]any{"type": "task_cancelled", "message": i18n.T("Request cancelled")}
+			}
+		}
 	}
 	status, ok := value["status"].(string)
 	if !ok {
@@ -2032,6 +2062,19 @@ func projectKnowledgeBase(value map[string]any, secret string) map[string]any {
 
 func projectPlugin(value map[string]any, author, name, secret string) map[string]any {
 	projected := projectScalarFields(value, []string{"author", "name", "version", "description", "debug", "enabled", "status", "created_at", "updated_at"}, secret)
+	if installation, ok := value["install_info"].(map[string]any); ok {
+		if version, ok := installation["plugin_version"].(string); ok && version != "" && !containsSecret(version, secret) {
+			projected["installed_version"] = version
+		}
+	}
+	if components, ok := value["components"].([]any); ok {
+		projected["component_count"] = len(components)
+	}
+	if status, ok := value["permission_status"].(map[string]any); ok {
+		if pending, ok := status["pending_confirmation"].(bool); ok {
+			projected["pending_confirmation"] = pending
+		}
+	}
 	metadata := value
 	if manifest, ok := value["manifest"].(map[string]any); ok {
 		if nested, ok := manifest["manifest"].(map[string]any); ok {

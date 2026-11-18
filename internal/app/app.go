@@ -1857,6 +1857,9 @@ func (s *Service) pluginInstall(ctx context.Context, operation string, body map[
 
 // PluginUpgrade 升级已安装插件。
 func (s *Service) PluginUpgrade(ctx context.Context, author, name string, dryRun, wait bool, waitOptions WaitOptions, options CheckOptions) (Result, error) {
+	if waitOptions.ConfirmPermissions && !dryRun {
+		wait = true
+	}
 	if dryRun && wait {
 		return Result{}, result.New("input", i18n.T("dry-run cannot wait for asynchronous tasks"))
 	}
@@ -1867,12 +1870,20 @@ func (s *Service) PluginUpgrade(ctx context.Context, author, name string, dryRun
 	if err := requireCapability(preflight, "plugin.get"); err != nil {
 		return Result{Meta: preflight.Meta()}, err
 	}
+	if waitOptions.ConfirmPermissions && preflight.Connection.UserToken == "" {
+		if err := requireCapability(preflight, "operation.invoke"); err != nil {
+			return Result{Meta: preflight.Meta()}, err
+		}
+		if err := requireCapability(preflight, "plugin.permissions.confirm_api_key"); err != nil {
+			return Result{Meta: preflight.Meta()}, err
+		}
+	}
 	if wait {
 		if err := requireCapability(preflight, "task.get"); err != nil {
 			return Result{Meta: preflight.Meta()}, err
 		}
 	}
-	client, target := s.writeClient(preflight)
+	client, target := api.Client{Transport: s.deps.Transport}, readTarget(preflight)
 	data := map[string]any{
 		"operation":               "plugin.upgrade",
 		"author":                  author,
@@ -1896,7 +1907,20 @@ func (s *Service) PluginUpgrade(ctx context.Context, author, name string, dryRun
 		markAsyncSubmissionFailure(data, err)
 		return Result{Data: data, Meta: preflight.Meta()}, err
 	}
-	return s.finishTask(ctx, client, target, taskID, wait, waitOptions, data, preflight.Meta())
+	limit := waitOptions.WaitTimeout
+	if limit <= 0 {
+		limit = 5 * time.Minute
+	}
+	deadline := time.Now().Add(limit)
+	finished, err := s.finishTask(ctx, client, target, taskID, wait, waitOptions, data, preflight.Meta())
+	if !wait || err != nil {
+		return finished, err
+	}
+	ctx, cancel := context.WithDeadline(ctx, deadline)
+	defer cancel()
+	data["previous_version"] = plugin["version"]
+	err = operationSession(preflight, client, target).verifyUpgradedPlugin(ctx, author, name, waitOptions, data)
+	return finished, err
 }
 
 // SkillInstallGitHub 安装 GitHub Skill；dry-run 使用服务端预览接口。

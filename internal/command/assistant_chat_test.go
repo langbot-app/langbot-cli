@@ -3,13 +3,16 @@ package command
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestAssistantChatConversation(t *testing.T) {
@@ -123,9 +126,35 @@ func TestAssistantChatPromptShowsBatchForEachDecision(t *testing.T) {
 	reader := bufio.NewReader(strings.NewReader("yes\nno\n\n"))
 	for _, want := range []any{true, false, nil} {
 		var out bytes.Buffer
-		body, err := chatPrompt(reader, &out, chatView{revision: 8, status: "approval", data: map[string]any{"pending": []any{map[string]any{"name": "change", "arguments": map[string]any{"risk": "write"}}}}})
+		body, err := chatPrompt(context.Background(), reader, &out, chatView{revision: 8, status: "approval", data: map[string]any{"pending": []any{map[string]any{"name": "change", "arguments": map[string]any{"risk": "write"}}}}})
 		if err != nil || body["approved"] != want || !strings.Contains(out.String(), "change") || !strings.Contains(out.String(), "write") || !strings.Contains(out.String(), "8") {
 			t.Fatalf("%v %v %s", body, err, &out)
 		}
+	}
+}
+
+func TestAssistantChatInterruptAtIdlePrompt(t *testing.T) {
+	for _, status := range []string{"ready", "approval"} {
+		t.Run(status, func(t *testing.T) {
+			input, sender := io.Pipe()
+			defer input.Close()
+			defer sender.Close()
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			done := make(chan error, 1)
+			go func() {
+				_, err := chatPrompt(ctx, bufio.NewReader(input), io.Discard, chatView{status: status})
+				done <- err
+			}()
+			cancel()
+			select {
+			case err := <-done:
+				if err == nil {
+					t.Fatal("cancelled prompt returned success")
+				}
+			case <-time.After(time.Second):
+				t.Fatal("cancelled prompt is waiting for another line")
+			}
+		})
 	}
 }

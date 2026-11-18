@@ -359,6 +359,8 @@ lbctl skill install upload --dir ./my-skill
 lbctl skill delete <name> --yes
 ```
 
+升级应用市场插件时，`upgrade --wait` 会回读运行版本、初始化状态和组件数量。需要新权限时，命令以非零状态退出并给出权限查看命令。加上 `--confirm-permissions` 会授予该插件声明的全部权限并等待初始化。版本相同时会在结果中标明。
+
 Skill 安装的 `--dry-run` 调用服务端预览，不产生安装。Plugin 安装、升级和删除可用 `--wait` 跟踪异步任务。
 
 `skill install upload --dir` 将本地目录打包，保留相对路径和普通隐藏文件，跳过 `.git`，拒绝符号链接，并按现有 10 MB ZIP 上传上限检查。`--file` 和 `--dir` 选择其中一项。

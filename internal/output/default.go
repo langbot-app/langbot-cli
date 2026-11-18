@@ -844,7 +844,11 @@ func renderAction(w io.Writer, data map[string]any) error {
 				if _, err := fmt.Fprintln(w, fmt.Sprintf(i18n.T("%s:"), fieldLabel(key))); err != nil {
 					return err
 				}
-				if err := renderFields(w, resource, []string{"uuid", "author", "name"}); err != nil {
+				fields := []string{"uuid", "author", "name"}
+				if key == "plugin" && data["readiness"] != nil {
+					fields = append(fields, "version", "installed_version", "enabled", "status", "component_count")
+				}
+				if err := renderFields(w, resource, fields); err != nil {
 					return err
 				}
 				continue
