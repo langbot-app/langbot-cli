@@ -5,8 +5,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -92,4 +94,70 @@ func installPortFree(port int) bool {
 	}
 	listener.Close()
 	return true
+}
+
+// installBoxSelection picks the Box backend for a fresh native installation.
+// Interactive installs explain the host risk before first start and preselect
+// host; non-interactive installs default to host. Existing installations,
+// explicit --box-backend values and Windows Cores without host support keep
+// their current configuration.
+func installBoxSelection(deps Dependencies, driver, dir, version, backend string, yes, dryRun bool) (string, error) {
+	if driver != "native" || backend != "" || !hostBoxDefaultAllowed(runtime.GOOS, version) {
+		return backend, nil
+	}
+	resolved, err := installTargetDir(deps, dir)
+	if err != nil {
+		return "", nil
+	}
+	if _, err := (deploy.Store{Dir: resolved}).Read(); err == nil {
+		return "", nil
+	}
+	if !inputTTY(deps) || yes || dryRun {
+		return "host", nil
+	}
+	return promptBoxBackend(deps.In, deps.Err)
+}
+
+func promptBoxBackend(in io.Reader, out io.Writer) (string, error) {
+	fmt.Fprintln(out, i18n.Human(installBoxPrompt))
+	line, err := bufio.NewReader(in).ReadString('\n')
+	if err != nil && (err != io.EOF || line == "") {
+		return "", err
+	}
+	switch strings.ToLower(strings.TrimSpace(line)) {
+	case "", "1", "host":
+		return "host", nil
+	case "2", "local":
+		return "local", nil
+	case "3", "docker":
+		return "docker", nil
+	case "4", "off":
+		return "off", nil
+	}
+	return "", errors.New(i18n.T("select 1, 2, 3 or 4"))
+}
+
+const installBoxPrompt = "Box runs Agent commands, skills and stdio MCP.\n" +
+	"host runs them directly as your system user, with no file, network or process isolation. If the bot joins a group chat, untrusted users can use prompt injection to run commands on this computer.\n" +
+	"1) host (no isolation; for personal use on this computer)\n" +
+	"2) local (Docker or nsjail sandbox; must already be installed)\n" +
+	"3) docker (Docker sandbox; Docker must already be installed)\n" +
+	"4) off (disable Box; command tools are unavailable)\n" +
+	"Select Box backend [1]:"
+
+func hostBoxDefaultAllowed(platform, version string) bool {
+	if platform != "windows" {
+		return true
+	}
+	if version == "" {
+		return deploy.WindowsHostBoxMinVersion != ""
+	}
+	return deploy.WindowsHostBoxSupported(platform, version)
+}
+
+func installTargetDir(deps Dependencies, dir string) (string, error) {
+	if strings.TrimSpace(dir) == "" && strings.TrimSpace(deps.LocalDir) != "" {
+		return deploy.ResolveDir(deps.LocalDir)
+	}
+	return (deploy.Locator{Path: deps.LocalLocatorPath}).Resolve(dir)
 }
