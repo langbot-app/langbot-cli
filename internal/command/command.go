@@ -1954,6 +1954,28 @@ func enrichResult(deps Dependencies, flags *globalFlags, value app.Result, err e
 			}
 		}
 	}
+	if flags.commandPath == "agent.runs.watch" && err != nil && result.AsError(err).Kind != "input" && data["last_sequence"] != nil {
+		processor, _ := data["processor_id"].(string)
+		run, _ := data["run_id"].(string)
+		if processor != "" && run != "" {
+			if flags.asMember {
+				connect = append(connect, "--as-member")
+			}
+			add(i18n.T("Resume observing Agent run events"), connect, "agent", "runs", "watch", processor, run, "--after-sequence", fmt.Sprint(data["last_sequence"]))
+		}
+	}
+	if flags.commandPath == "assistant.chat" {
+		if id, ok := data["conversation_id"].(string); ok && id != "" {
+			add(i18n.T("Inspect the latest conversation"), connect, "assistant", "chat", id, "-o", "json")
+			if data["status"] == "approval" {
+				for _, decision := range []string{"approve", "reject"} {
+					add(i18n.T("Review the pending batch"), connect, "assistant", "chat", id, "--"+decision, "--revision", fmt.Sprint(data["revision"]), "--yes")
+				}
+			}
+		} else if data["action"] == "create" {
+			add(i18n.T("List Assistant conversations"), connect, "assistant", "list")
+		}
+	}
 	if len(steps) > 0 {
 		meta["next_steps"] = steps
 	}

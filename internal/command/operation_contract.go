@@ -40,6 +40,7 @@ var friendlyOperationDetails = map[string]operationDetails{
 	"bot.logs":                          {"read", "resource.view", false, false, "bot_uuid from_index max_count"},
 	"bot.message.send":                  {"dangerous", "runtime.operate", true, false, "bot_uuid message_chain_data target_id target_type"},
 	"bot.message.test":                  {"write", "resource.manage", true, false, "bot_uuid message"},
+	"bot.routes.bind":                   {"write", "resource.manage", true, false, "bot_uuid dry_run expected_binding target_type target_uuid"},
 	"bot.routes.preview":                {"read", "resource.manage", false, false, "bot_uuid event_bindings event_context event_data event_type"},
 	"bot.routes.status":                 {"read", "resource.view", false, false, "bot_uuid"},
 	"bot.runtime.get":                   {"read", "resource.view", false, false, "bot_uuid include_secret"},

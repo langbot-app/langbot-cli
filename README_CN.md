@@ -596,6 +596,21 @@ lbctl agent debug <agent-uuid> --message '你好' --yes
 
 `agent debug --message` 将文本作为 `payload.text` 发送。`--message` 和 `--file` 选择其中一项。
 
+用 `lbctl agent runs watch <agent-uuid> <run-id>` 跟踪已有运行。每条事件都带序号，中断后用 `--after-sequence <最后输出的序号>` 续看。可用 `--timeout 5m` 设置本次跟踪总时长。
+
+Codex 设备登录和 Assistant 会话使用已保存的成员身份。
+
+```bash
+lbctl provider codex login <provider-uuid> --yes
+lbctl assistant chat --message '列出我的机器人' --yes -o json
+lbctl assistant chat <会话ID> -o json
+lbctl assistant chat <会话ID> --approve --revision 1 --yes
+```
+
+设备登录先显示授权网址与设备代码，再轮询授权结果。`--wait-timeout` 可限制等待时长。在终端运行 `lbctl assistant chat` 可连续输入消息，并逐批审阅工具调用。脚本先读出待审批内容，再携带该修订号，通过 `--approve` 或 `--reject` 提交决定。断线后用会话 ID 查看执行进度。
+
+要切换一条已有 Bot 路由，先用 `lbctl bot get <bot-uuid>` 找到绑定 ID。执行 `lbctl bot routes bind <bot-uuid> --binding <id> --agent <agent-uuid> --dry-run` 预览，再用 `--yes` 应用。绑定到流水线时使用 `--pipeline`。此命令要求 Core 提供 `bot.routes.bind` 操作。
+
 `op call` 的 `--file path|-` 可选，接受 JSON/YAML 对象，默认 `{}`；`op stream` 必须提供 `--file`。通用调用从 `op describe` 获取风险与执行模式；目录隐藏但 CLI 已登记的 ID 使用内置契约，未知隐藏 ID 仍不可调用。write/high/dangerous 操作交互时确认，非交互时必须 `--yes`。友好命令使用登记的操作契约并遵循相同确认规则。写操作要求保存且绑定 Workspace 的 context；请求体、API Key 和确认答案不能同时读取 stdin。SSE 每收到事件即按选定格式输出，最后输出完成结果；错误或未收到 `done` 就断开连接会失败，不自动重试。
 
 位置参数自动填入同名 Core 字段，其余字段通过 `--file` 提供。请求体是**操作输入对象**，不是旧 HTTP 接口的请求体：创建 Agent 使用 `{"agent_data":{...}}`，调试使用 `{"payload":{...}}`，`monitoring execution <id>` 需要 `{"source":"agent"}` 或相应执行来源。位置参数与文件内 ID 冲突时本地拒绝。`--help` 列出输入字段名，目录可见的操作可用 `op describe` 查看完整 schema。所有命令支持简洁输出和 `-o json|yaml`，全部 Core 请求携带规范命令路径的 `X-LangBot-Client-Command`。

@@ -623,6 +623,21 @@ lbctl agent debug <agent-uuid> --message 'Hello' --yes
 
 `agent debug --message` sends text as `payload.text`. Choose one of `--message` and `--file`.
 
+Follow an existing run with `lbctl agent runs watch <agent-uuid> <run-id>`. Each event carries its sequence. Pass the last emitted sequence to `--after-sequence` to continue after an interruption. Set the total observation time with `--timeout 5m`.
+
+Use a saved member session for device login and Assistant conversations.
+
+```bash
+lbctl provider codex login <provider-uuid> --yes
+lbctl assistant chat --message 'List my bots' --yes -o json
+lbctl assistant chat <conversation-id> -o json
+lbctl assistant chat <conversation-id> --approve --revision 1 --yes
+```
+
+Device login prints the verification URL and code before polling. Use `--wait-timeout` to limit the wait. In a terminal, `lbctl assistant chat` prompts for messages and shows each proposed tool batch. For scripts, inspect the pending calls and pass their current revision with `--approve` or `--reject`. A disconnected chat can be inspected by its conversation ID.
+
+To switch one existing Bot route, get its binding ID with `lbctl bot get <bot-uuid>`. Preview with `lbctl bot routes bind <bot-uuid> --binding <id> --agent <agent-uuid> --dry-run`, then apply with `--yes`. Use `--pipeline` for a Pipeline target. This command requires the Core `bot.routes.bind` operation.
+
 `op call` accepts an optional JSON/YAML object via `--file path` or `--file -`, defaulting to `{}`; `op stream` requires `--file`. Generic calls obtain risk and execution mode from `op describe`; catalog-hidden IDs already registered by this CLI use their built-in contracts. Unknown hidden IDs remain unavailable. Writes and high/dangerous-risk operations require interactive confirmation or `--yes`. Friendly commands use their registered operation contracts and the same confirmation rule. Writes require a saved, Workspace-bound context. Stdin cannot simultaneously supply a request body, an API key, or a confirmation answer. Streams emit each event immediately in the selected format, then a completion result; errors or disconnection before `done` fail without retrying.
 
 Friendly positionals populate Core input fields; remaining fields go in `--file`. Bodies are **operation inputs**, not legacy HTTP payloads: agent creation uses `{"agent_data":{...}}`, debug uses `{"payload":{...}}`, and `monitoring execution <id>` needs `{"source":"agent"}` or another Core execution source. Conflicting positional/body IDs fail locally. `--help` lists input field names; `op describe` supplies schemas for catalog-visible operations. All commands support concise output and `-o json|yaml`. Every Core request carries the canonical `X-LangBot-Client-Command` name.

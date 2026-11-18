@@ -204,6 +204,10 @@ func addOperationCommands(root *cobra.Command, service *app.Service, deps Depend
 		addOperationCommand(parent, spec, service, deps, flags)
 	}
 	addPermissionCommand(root, service, deps, flags)
+	addAgentRunWatch(root, service, deps, flags)
+	addAssistantChat(root, service, deps, flags)
+	addCodexLogin(root, service, deps, flags)
+	addBotRouteBind(root, service, deps, flags)
 	addOperationUploads(root, service, deps, flags)
 }
 

@@ -14,6 +14,20 @@ func init() {
 		schemaMetaByName[strings.ReplaceAll(path, " ", ".")] = writeMeta(operationIDs(identifier), schemaWriteOptions{RequiresYes: identifier != "skill.zip.preview", RequiredFlags: []string{"file"}})
 	}
 	schemaMetaByName["knowledge-base.migration.preview"] = readMeta(operationIDs("knowledge.migration.preview")...)
+	schemaMetaByName["agent.runs.watch"] = readMeta(operationIDs("agent.runs.events", preconditionID("operation.invoke"))...)
+	bind := writeMeta(operationIDs("bot.routes.bind"), schemaWriteOptions{RequiresYes: true, SupportsDryRun: true, Preconditions: []schemaOperation{preconditionID("bot.get")}, Readbacks: []schemaOperation{readbackID("bot.get")}})
+	bind.RequiredOneOf = [][]string{{"agent", "pipeline"}}
+	schemaMetaByName["bot.routes.bind"] = bind
+	schemaMetaByName["provider.codex.login"] = writeMeta(operationIDs("provider.codex.start", "provider.codex.poll", "provider.codex.cancel"), schemaWriteOptions{RequiresYes: true, Readbacks: []schemaOperation{readbackID("provider.codex.status")}})
+	schemaMetaByName["assistant.chat"] = writeMeta(operationIDs(conditionalID("assistant.create", &schemaCondition{Argument: "conversation_id", Absent: true}), "assistant.stream"), schemaWriteOptions{RequiresYes: true, Preconditions: []schemaOperation{preconditionID("assistant.get")}})
+	for _, name := range []string{"agent.runs.watch", "provider.codex.login"} {
+		meta := schemaMetaByName[name]
+		meta.ConditionalOutputs = []schemaConditionalOutput{
+			{When: flagEquals("output", "json"), Format: "json", Encoding: "json-stream"},
+			{When: &schemaCondition{Flag: "output", OneOf: []string{"yaml", "yml"}}, Format: "yaml", Encoding: "yaml-documents"},
+		}
+		schemaMetaByName[name] = meta
+	}
 	schemaMetaByName["knowledge-base.migration.execute"] = writeMeta(operationIDs("knowledge.migration.execute"), schemaWriteOptions{RequiresYes: true})
 	for _, spec := range operationCommands() {
 		name := strings.ReplaceAll(spec.path, " ", ".")
