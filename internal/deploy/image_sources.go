@@ -169,21 +169,25 @@ func (sources ImageSources) ProbeAll(ctx context.Context, repositories []string,
 	return probes
 }
 
+var trustedDigestTimeout = 10 * time.Second
+
 func (sources ImageSources) trustedDigest(ctx context.Context, tag string) (string, error) {
-	for _, repository := range []string{CanonicalImageRepository, DefaultImageRepository} {
-		digest, err := sources.manifestDigest(ctx, repository, tag)
-		if err == nil {
-			return digest, nil
-		}
-		if ctx.Err() != nil {
-			return "", ctx.Err()
+	for attempt := 0; attempt < 2; attempt++ {
+		for _, repository := range []string{CanonicalImageRepository, DefaultImageRepository} {
+			digest, err := sources.manifestDigest(ctx, repository, tag, trustedDigestTimeout)
+			if err == nil {
+				return digest, nil
+			}
+			if ctx.Err() != nil {
+				return "", ctx.Err()
+			}
 		}
 	}
-	return "", errors.New(i18n.T("Unable to resolve a trusted image digest"))
+	return "", errors.New(i18n.T("Unable to resolve a trusted image digest; check network or proxy and retry"))
 }
 
-func (sources ImageSources) manifestDigest(ctx context.Context, repository, tag string) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+func (sources ImageSources) manifestDigest(ctx context.Context, repository, tag string, timeout time.Duration) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	_, repo := imageRegistry(repository)
 	response, err := sources.request(ctx, http.MethodGet, repository, "/v2/"+repo+"/manifests/"+tag)
