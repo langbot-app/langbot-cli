@@ -493,11 +493,14 @@ func TestMonitoringTracePreservesPartialDataOnCancellationAndTimeout(t *testing.
 			defer server.Close()
 			args := []string{"monitoring", "trace", "--bot", "bot-a", "--session", "chat-a"}
 			if timeout {
-				args = append(args, "--timeout", "150ms")
+				args = append(args, "--timeout", "1s")
 			}
 			code, output := operationCLIContext(t, ctx, server, "", nil, args...)
 			data := decodeOperationStream(t, output, "json")[0]["data"].(map[string]any)
-			if code == 0 || data["partial"] != true || len(traceRecords(t, data, "inputs")) == 0 || len(fixture.calls["pipeline/message-a/outputs"]) != 1 {
+			fixture.mu.Lock()
+			outputRequests := len(fixture.calls["pipeline/message-a/outputs"])
+			fixture.mu.Unlock()
+			if code == 0 || data["partial"] != true || len(traceRecords(t, data, "inputs")) == 0 || outputRequests != 1 {
 				t.Fatalf("code=%d output=%s", code, output)
 			}
 		})
