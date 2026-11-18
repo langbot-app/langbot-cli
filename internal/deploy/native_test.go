@@ -245,7 +245,7 @@ func TestNativeEnvironmentAndPinnedUVPlatforms(t *testing.T) {
 	}
 	t.Setenv("DOCKER_ENV", "true")
 	env := strings.Join(NativeEnvironment(Record{ToolsDir: "/managed/tools", DataDir: "/managed/data", Port: 5310, PyPIIndex: "https://example.test/simple"}), "\n")
-	for _, value := range []string{"API__PORT=5310", "LANGBOT_DATA_ROOT=/managed/data", "UV_PYTHON_PREFERENCE=only-managed", "LANGBOT_PLUGIN_PYPI_INDEX_URL=https://example.test/simple", "DOCKER_ENV=false"} {
+	for _, value := range []string{"API__PORT=5310", "LANGBOT_DATA_ROOT=/managed/data", "UV_PYTHON_PREFERENCE=only-managed", "LANGBOT_PLUGIN_PYPI_INDEX_URL=https://example.test/simple", "DOCKER_ENV=false", "UV_HTTP_TIMEOUT=120"} {
 		if !strings.Contains(env, value) {
 			t.Fatalf("missing %s", value)
 		}
@@ -372,5 +372,13 @@ func TestDockerMirrorSettingsSurviveUpgrade(t *testing.T) {
 	content, _, err := ComposeForUpgrade(record, dir, "v4.11.8")
 	if err != nil || !strings.Contains(string(content), repository+":v4.11.8") || strings.Count(string(content), index) != 2 {
 		t.Fatalf("%s %v", content, err)
+	}
+}
+
+func TestNativeEnvironmentKeepsUserUVHTTPTimeout(t *testing.T) {
+	t.Setenv("UV_HTTP_TIMEOUT", "600")
+	env := strings.Join(NativeEnvironment(Record{ToolsDir: "/managed/tools", DataDir: "/managed/data"}), "\n")
+	if !strings.Contains(env, "UV_HTTP_TIMEOUT=600") || strings.Contains(env, "UV_HTTP_TIMEOUT=120") {
+		t.Fatal("user UV_HTTP_TIMEOUT must win over the managed default")
 	}
 }
