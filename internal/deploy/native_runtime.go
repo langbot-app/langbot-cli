@@ -290,18 +290,40 @@ func PrepareNative(ctx context.Context, dir string, record Record, out io.Writer
 	if record.Region == "cn" && record.PyPIIndex == "https://mirrors.aliyun.com/pypi/simple" {
 		indexes = append(indexes, "https://pypi.tuna.tsinghua.edu.cn/simple")
 	}
+	var primaryErr error
 	for _, index := range indexes {
 		telemetry.SetStep(ctx, "install_package")
-		fmt.Fprintln(out, i18n.Human("Installing"), packageName, i18n.Human("from"), index)
-		err = run("pip", "install", "--python", NativePython(dir, record.CoreVersion), "--index-url", index, packageName)
-		if err == nil {
-			return nil
+		for attempt := 0; attempt < 2; attempt++ {
+			fmt.Fprintln(out, i18n.Human("Installing"), packageName, i18n.Human("from"), index)
+			err = run("pip", "install", "--python", NativePython(dir, record.CoreVersion), "--index-url", index, packageName)
+			if err == nil {
+				return nil
+			}
+			if ctx.Err() != nil {
+				return err
+			}
+			if attempt > 0 || !transientFileLock(lastOutput) {
+				break
+			}
+			// Windows antivirus/indexer briefly locks freshly unpacked files
+			// ("Access is denied", os error 5); the same index usually succeeds on retry.
+			fmt.Fprintln(out, i18n.Human("Files were temporarily locked; retrying"))
+			select {
+			case <-ctx.Done():
+				return err
+			case <-time.After(nativeRetryDelay):
+			}
 		}
-		if ctx.Err() != nil {
-			return err
+		if primaryErr == nil {
+			primaryErr = err
 		}
 	}
 	if record.Region != "cn" || !missingLangBotVersion(lastOutput) {
+		// Report the configured index's failure; a fallback mirror's error
+		// (e.g. a 403 from a secondary mirror) would hide the real cause.
+		if primaryErr != nil {
+			return primaryErr
+		}
 		return err
 	}
 	metadata, fetchErr := Fetch(ctx, &http.Client{Timeout: 15 * time.Second}, "https://pypi.org/pypi/langbot/"+strings.TrimPrefix(record.CoreVersion, "v")+"/json", 2<<20)
@@ -317,6 +339,18 @@ func PrepareNative(ctx context.Context, dir string, record Record, out io.Writer
 	}
 	fmt.Fprintln(out, i18n.Human("Retrying LangBot wheel from PyPI; dependencies use"), record.PyPIIndex)
 	return run("pip", "install", "--python", NativePython(dir, record.CoreVersion), "--index-url", record.PyPIIndex, wheel)
+}
+
+var nativeRetryDelay = 3 * time.Second
+
+func transientFileLock(output string) bool {
+	lower := strings.ToLower(output)
+	for _, marker := range []string{"os error 5)", "os error -2147024891", "access is denied", "being used by another process", "os error 32)"} {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func missingLangBotVersion(output string) bool {

@@ -74,6 +74,9 @@ func WaitNativeHealth(ctx context.Context, record Record, client *http.Client) e
 			return nil
 		}
 		if !NativeRunning(filepath.Dir(record.DataDir)) {
+			if nativePackageMissing(filepath.Join(filepath.Dir(record.DataDir), "logs", "langbot.log")) {
+				return errors.New(i18n.T("LangBot is not installed in this instance's Python environment (the installation was probably interrupted); rerun the same lbctl install command to resume"))
+			}
 			return errors.New(i18n.T("native process exited before becoming healthy; inspect logs"))
 		}
 		select {
@@ -82,6 +85,21 @@ func WaitNativeHealth(ctx context.Context, record Record, client *http.Client) e
 		case <-ticker.C:
 		}
 	}
+}
+
+// nativePackageMissing recognizes a venv whose package install never finished,
+// e.g. the terminal was closed during install_package and start was run later.
+func nativePackageMissing(logPath string) bool {
+	file, err := os.Open(logPath)
+	if err != nil {
+		return false
+	}
+	defer file.Close()
+	if info, err := file.Stat(); err == nil && info.Size() > 4096 {
+		file.Seek(info.Size()-4096, io.SeekStart)
+	}
+	data, _ := io.ReadAll(io.LimitReader(file, 4096))
+	return strings.Contains(string(data), "No module named langbot")
 }
 
 func nativeCopyData(ctx context.Context, source, target string) error {

@@ -51,26 +51,60 @@ func ResolveRegion(ctx context.Context, region string, client *http.Client) (str
 		}
 		return region, nil
 	}
-	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, regionProbeTimeout)
 	defer cancel()
 	if client == nil {
 		client = http.DefaultClient
 	}
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, "https://langbot.app/cdn-cgi/trace", nil)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, regionTraceURL, nil)
 	resp, err := client.Do(req)
 	if err != nil {
-		return "global", nil
+		return fallbackRegion(), nil
 	}
 	defer resp.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, 8192))
-	if err == nil && resp.StatusCode == http.StatusOK {
-		for _, line := range strings.Split(string(data), "\n") {
-			if strings.TrimSpace(line) == "loc=CN" {
-				return "cn", nil
-			}
+	if err != nil || resp.StatusCode != http.StatusOK {
+		return fallbackRegion(), nil
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.TrimSpace(line) == "loc=CN" {
+			return "cn", nil
 		}
 	}
 	return "global", nil
+}
+
+var (
+	regionTraceURL     = "https://langbot.app/cdn-cgi/trace"
+	regionProbeTimeout = 4 * time.Second
+	regionSystemLocale = i18n.SystemLanguage
+)
+
+// fallbackRegion is used only when the location probe is unreachable. A slow or
+// blocked probe is most common on mainland China networks, so a Simplified
+// Chinese / mainland locale selects the cn mirrors instead of Docker Hub/PyPI.
+func fallbackRegion() string {
+	values := []string{}
+	for _, key := range []string{"LBCTL_LANG", "LANGBOT_LANG", "LC_ALL", "LC_MESSAGES", "LANG"} {
+		values = append(values, os.Getenv(key))
+	}
+	if regionSystemLocale != nil {
+		values = append(values, regionSystemLocale())
+	}
+	for _, value := range values {
+		value = strings.ToLower(strings.TrimSpace(value))
+		value, _, _ = strings.Cut(value, ".")
+		value, _, _ = strings.Cut(value, "@")
+		if value == "" || value == "c" || value == "posix" {
+			continue
+		}
+		value = strings.ReplaceAll(value, "_", "-")
+		if value == "zh" || value == "zh-cn" || value == "zh-hans" || value == "zh-sg" || strings.HasPrefix(value, "zh-hans-") || strings.HasPrefix(value, "zh-cn-") {
+			return "cn"
+		}
+		return "global"
+	}
+	return "global"
 }
 
 func ApplyRegion(record *Record) {
