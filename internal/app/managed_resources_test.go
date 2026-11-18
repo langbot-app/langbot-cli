@@ -89,7 +89,7 @@ func TestKnowledgeEvaluationBaselineRulesAndPartialComparisons(t *testing.T) {
 		t.Fatalf("reordered/redacted baseline rejected: %v", err)
 	}
 	comparison := compareKnowledgeEvaluation(&baseline, current)
-	if len(comparison.NotComparable) != 1 || comparison.NotComparable[0] != "private" {
+	if len(comparison.NotComparable) != 1 || comparison.NotComparable[0] != "private" || comparison.HitRateDelta != nil {
 		t.Fatalf("comparison=%+v", comparison)
 	}
 	baseline.Cases[0].Query = "edited baseline query"

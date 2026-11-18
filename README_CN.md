@@ -347,7 +347,7 @@ lbctl knowledge-base evaluate <uuid> --cases cases.yaml --baseline before.json
 
 报告为每条用例保留 `passed`、`failed`、`error`、`cancelled` 或 `not_started` 状态。命中率等于通过用例数除以已成功执行检索的用例数，空结果计为未命中。`empty_result` 标识空结果，`score_missing_count` 统计返回条目中缺少 score 或 score 为 null 的数量。断言失败时退出码非零。服务错误与取消会保留已完成和剩余用例的记录。
 
-基线接受本命令的 JSON 结果封套，也接受断言失败的历史结果。执行检索前会核对实例、Workspace、知识库、用例 ID、查询、断言及实际 top-k。允许调整用例顺序。对照结果列出改善、退化、稳定的用例，执行不完整的条目标记为 `not_comparable`。命中率变化分别使用两次执行中成功完成检索的用例计算。
+基线接受本命令的 JSON 结果封套，也接受断言失败的历史结果。执行检索前会核对实例、Workspace、知识库、用例 ID、查询、断言及实际 top-k。允许调整用例顺序。对照结果列出改善、退化、稳定的用例，执行不完整的条目标记为 `not_comparable`。两次成功执行检索的用例集合一致时才给出命中率变化，否则该字段为 null。
 
 成员会话使用当前 Workspace 返回的实例身份。基线对照要求两次结果均含已确认的实例及 Workspace，并在发起检索前完成核对。旧版成员响应缺少实例身份时仍支持独立评估。入库进度记录模式要求在上传前确认实例身份。
 

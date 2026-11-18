@@ -410,14 +410,16 @@ func compareKnowledgeEvaluation(baseline *knowledgeEvaluationReport, current kno
 	}
 	summary := knowledgeEvaluationCounts(baseline.Cases)
 	comparison := &knowledgeEvaluationComparison{BaselineHitRate: summary.HitRate, Improved: []string{}, Regressed: []string{}, Stable: []string{}, NotComparable: []string{}}
-	if summary.HitRate != nil && current.Summary.HitRate != nil {
-		delta := *current.Summary.HitRate - *summary.HitRate
-		comparison.HitRateDelta = &delta
-	}
+	sameCohort := true
 	for _, row := range current.Cases {
 		before := previous[row.CaseID]
+		beforeEvaluated := before == "passed" || before == "failed"
+		nowEvaluated := row.Status == "passed" || row.Status == "failed"
 		switch {
-		case (before != "passed" && before != "failed") || (row.Status != "passed" && row.Status != "failed"):
+		case !beforeEvaluated || !nowEvaluated:
+			if beforeEvaluated != nowEvaluated {
+				sameCohort = false
+			}
 			comparison.NotComparable = append(comparison.NotComparable, row.CaseID)
 		case before == "failed" && row.Status == "passed":
 			comparison.Improved = append(comparison.Improved, row.CaseID)
@@ -426,6 +428,10 @@ func compareKnowledgeEvaluation(baseline *knowledgeEvaluationReport, current kno
 		default:
 			comparison.Stable = append(comparison.Stable, row.CaseID)
 		}
+	}
+	if sameCohort && summary.HitRate != nil && current.Summary.HitRate != nil {
+		delta := *current.Summary.HitRate - *summary.HitRate
+		comparison.HitRateDelta = &delta
 	}
 	return comparison
 }
