@@ -376,6 +376,8 @@ The report retains every case with `passed`, `failed`, `error`, `cancelled` or `
 
 The baseline accepts this command's JSON envelope, including a prior run with failed assertions. It validates the instance, Workspace, knowledge base, case IDs, queries, expectations and effective top-k before submitting retrievals. Case ordering may change. Comparison reports improved, regressed and stable cases, plus cases with incomplete execution as `not_comparable`. Hit-rate deltas use each run's successfully evaluated cases.
 
+Member sessions use the instance identity reported by the current Workspace. Baseline comparison requires confirmed instance and Workspace identities in both runs and validates them before retrieval requests. Older member responses with no instance identity support standalone evaluation. Journal ingestion requires the instance identity before uploading.
+
 ### Provider and Model
 
 ```sh

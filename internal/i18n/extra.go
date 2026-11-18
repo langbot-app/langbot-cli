@@ -55,6 +55,7 @@ func init() {
 		"Baseline must be a JSON result from knowledge-base evaluate":                           "基线必须是 knowledge-base evaluate 的 JSON 结果",
 		"Evaluation baseline contains invalid case results":                                     "评估基线包含无效的逐例结果",
 		"Evaluation baseline target or case rules differ from this run":                         "评估基线的目标或用例规则与本次执行不一致",
+		"Evaluation baseline comparison requires confirmed instance and Workspace identities":   "评估基线对照需要已确认的实例和 Workspace 身份",
 		"Base revision": "基础修订", "Proposed revision": "预计修订", "Changes": "变更",
 		"Added": "新增", "Modified": "修改", "Deleted": "删除",
 		"Required permissions": "所需权限", "Can publish": "具备发布权限",

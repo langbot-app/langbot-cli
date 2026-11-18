@@ -362,6 +362,9 @@ func loadKnowledgeEvaluationBaseline(path string) (*knowledgeEvaluationReport, e
 }
 
 func validateKnowledgeBaseline(baseline *knowledgeEvaluationReport, current knowledgeEvaluationReport) error {
+	if current.Target.InstanceUUID == "" || current.Target.WorkspaceUUID == "" || baseline.Target.InstanceUUID == "" || baseline.Target.WorkspaceUUID == "" {
+		return result.New("precondition", i18n.T("Evaluation baseline comparison requires confirmed instance and Workspace identities"))
+	}
 	expected := map[string]knowledgeEvaluationCase{}
 	for _, row := range current.Cases {
 		expected[row.CaseID] = row.knowledgeEvaluationCase

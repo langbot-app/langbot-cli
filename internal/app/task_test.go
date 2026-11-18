@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/langbot-app/langbot-cli/internal/api"
+	"github.com/langbot-app/langbot-cli/internal/config"
 	"github.com/langbot-app/langbot-cli/internal/result"
 )
 
@@ -35,6 +36,7 @@ type knowledgeJournalFixture struct {
 	config, file, path string
 	instance           string
 	workspace          string
+	member             bool
 	uploads, stores    int
 	tasks              int
 	storeStatus        int
@@ -61,7 +63,12 @@ func newKnowledgeJournalFixture(t *testing.T) *knowledgeJournalFixture {
 	fixture.server = httptest.NewServer(http.HandlerFunc(fixture.serveHTTP))
 	t.Cleanup(fixture.server.Close)
 	fixture.service = New(Dependencies{
-		LookupEnv:         func(name string) (string, bool) { return "journal-api-secret", name == "KEY" },
+		LookupEnv: func(name string) (string, bool) {
+			if name == "LANGBOT_USER_TOKEN" && fixture.member {
+				return "journal-member-token", true
+			}
+			return "journal-api-secret", name == "KEY"
+		},
 		DefaultConfigPath: func() (string, error) { return fixture.config, nil },
 	})
 	if _, err := fixture.service.ContextAdd("production", fixture.server.URL, "KEY", "workspace-a", ""); err != nil {
@@ -74,8 +81,19 @@ func (fixture *knowledgeJournalFixture) serveHTTP(w http.ResponseWriter, request
 	fixture.mu.Lock()
 	defer fixture.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
+	if fixture.member && (request.Header.Get("Authorization") != "Bearer journal-member-token" || request.Header.Get("X-API-Key") != "") {
+		fixture.t.Errorf("member credential was lost for %s", request.URL.Path)
+	}
 	write := func(data any) { _ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": data}) }
 	switch request.URL.Path {
+	case "/api/v1/workspaces/current":
+		workspace := map[string]any{"uuid": fixture.workspace}
+		if fixture.instance != "" {
+			workspace["instance_uuid"] = fixture.instance
+		}
+		write(map[string]any{"workspace": workspace, "permissions": []string{"resource.manage", "resource.view"}})
+	case "/api/v1/operations":
+		fmt.Fprint(w, `{"operations":[{"id":"knowledge.file.store"},{"id":"knowledge.base.get"},{"id":"file.document.upload"},{"id":"knowledge.file.list"}]}`)
 	case "/api/v1/system/context":
 		write(map[string]any{"instance_uuid": fixture.instance, "workspace_uuid": fixture.workspace, "api_key_id": "key-a", "permissions": []string{"resource.manage", "resource.view"}})
 	case "/api/v1/system/capabilities":
@@ -194,6 +212,48 @@ func TestKnowledgeJournalRecordsEvidenceAndSkipsCompletedWrites(t *testing.T) {
 	}
 	if _, err := fixture.run(false, WaitOptions{}); result.AsError(err).Kind != "precondition" {
 		t.Fatalf("existing journal overwritten: %v", err)
+	}
+}
+
+func TestKnowledgeJournalMemberIdentityAndBearer(t *testing.T) {
+	for _, hasInstance := range []bool{true, false} {
+		t.Run(fmt.Sprintf("instance_%t", hasInstance), func(t *testing.T) {
+			fixture := newKnowledgeJournalFixture(t)
+			fixture.member = true
+			if !hasInstance {
+				fixture.instance = ""
+			}
+			for _, resume := range []bool{false, true} {
+				_, err := fixture.service.KnowledgeBaseIngestJournal(config.AsMember(context.Background()), "kb-a", []string{fixture.file}, "", "parser-a", fixture.path, resume, false, WaitOptions{Wait: true}, CheckOptions{ContextSet: true, Context: "production"})
+				if hasInstance {
+					if err != nil || fixture.uploads != 1 || fixture.stores != 1 || fixture.journal().InstanceUUID != "instance-a" {
+						t.Fatalf("member journal=%+v err=%v writes=%d/%d", fixture.journal(), err, fixture.uploads, fixture.stores)
+					}
+					continue
+				}
+				if result.AsError(err).Kind != "incompatible" || fixture.uploads != 0 || fixture.stores != 0 {
+					t.Fatalf("unbound member identity reached writes: %v %d/%d", err, fixture.uploads, fixture.stores)
+				}
+				if _, err := os.Stat(fixture.path); !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("unbound member created progress journal: %v", err)
+				}
+				break
+			}
+		})
+	}
+}
+
+func TestWriteClientPreservesResolvedCredentialAndConnection(t *testing.T) {
+	for _, connection := range []config.Connection{
+		{Endpoint: "https://example.test", APIKey: "api-secret", Timeout: 2 * time.Second},
+		{Endpoint: "https://example.test", UserToken: "member-secret", Timeout: 3 * time.Second},
+	} {
+		transport := taskRoundTripFunc(func(*http.Request) (*http.Response, error) { return taskResponse(`{}`), nil })
+		service := New(Dependencies{Transport: transport})
+		client, target := service.writeClient(WritePreflight{Connection: connection})
+		if client.Transport == nil || target.Endpoint != connection.Endpoint || target.APIKey != connection.APIKey || target.UserToken != connection.UserToken || target.Timeout != connection.Timeout {
+			t.Fatalf("resolved target changed: %+v", target)
+		}
 	}
 }
 

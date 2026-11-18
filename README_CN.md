@@ -349,6 +349,8 @@ lbctl knowledge-base evaluate <uuid> --cases cases.yaml --baseline before.json
 
 基线接受本命令的 JSON 结果封套，也接受断言失败的历史结果。执行检索前会核对实例、Workspace、知识库、用例 ID、查询、断言及实际 top-k。允许调整用例顺序。对照结果列出改善、退化、稳定的用例，执行不完整的条目标记为 `not_comparable`。命中率变化分别使用两次执行中成功完成检索的用例计算。
 
+成员会话使用当前 Workspace 返回的实例身份。基线对照要求两次结果均含已确认的实例及 Workspace，并在发起检索前完成核对。旧版成员响应缺少实例身份时仍支持独立评估。入库进度记录模式要求在上传前确认实例身份。
+
 ### Provider 与 Model
 
 ```sh

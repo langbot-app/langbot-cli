@@ -6,9 +6,13 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/langbot-app/langbot-cli/internal/config"
+	"github.com/langbot-app/langbot-cli/internal/result"
 )
 
 func TestKnowledgeEvaluationRulesAndTopK(t *testing.T) {
@@ -101,6 +105,83 @@ func TestKnowledgeEvaluationBaselineRulesAndPartialComparisons(t *testing.T) {
 	baseline.CasesDigest = "changed rules"
 	if err := validateKnowledgeBaseline(&baseline, current); err == nil {
 		t.Fatal("accepted another input digest")
+	}
+}
+
+func TestKnowledgeEvaluationMemberIdentityCatalogAndBearer(t *testing.T) {
+	for _, hasInstance := range []bool{true, false} {
+		t.Run(fmt.Sprintf("instance_%t", hasInstance), func(t *testing.T) {
+			instance := "instance-a"
+			if !hasInstance {
+				instance = ""
+			}
+			identities, catalogs, retrieves := 0, 0, 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+				if request.Header.Get("Authorization") != "Bearer evaluation-member-token" || request.Header.Get("X-API-Key") != "" {
+					t.Errorf("member credential missing at %s", request.URL.Path)
+				}
+				switch request.URL.Path {
+				case "/api/v1/workspaces/current":
+					identities++
+					workspace := map[string]any{"uuid": "workspace-a"}
+					if instance != "" {
+						workspace["instance_uuid"] = instance
+					}
+					_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": map[string]any{"workspace": workspace, "permissions": []string{"resource.view"}}})
+				case "/api/v1/operations":
+					catalogs++
+					fmt.Fprint(w, `{"operations":[{"id":"knowledge.base.retrieve"}]}`)
+				case "/api/v1/knowledge/bases/kb-a/retrieve":
+					retrieves++
+					fmt.Fprint(w, `{"code":0,"data":{"results":[{"id":"chunk-a","content":[{"type":"text","text":"guide"}],"score":1}]}}`)
+				default:
+					t.Errorf("unexpected member request %s", request.URL.Path)
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer server.Close()
+			directory := t.TempDir()
+			service := New(Dependencies{
+				LookupEnv:         func(name string) (string, bool) { return "evaluation-member-token", name == "LANGBOT_USER_TOKEN" },
+				DefaultConfigPath: func() (string, error) { return filepath.Join(directory, "config.yaml"), nil },
+			})
+			if _, err := service.ContextAdd("production", server.URL, "KEY", "workspace-a", ""); err != nil {
+				t.Fatal(err)
+			}
+			input := map[string]any{"top_k": 1, "cases": []any{map[string]any{"case_id": "guide", "query": "guide", "expect": map[string]any{"id": "chunk-a"}}}}
+			ctx := config.AsMember(context.Background())
+			options := CheckOptions{ContextSet: true, Context: "production"}
+			value, err := service.KnowledgeBaseEvaluate(ctx, "kb-a", input, "", options)
+			if err != nil || retrieves != 1 || identities != 1 || catalogs != 1 {
+				t.Fatalf("member evaluation err=%v identity/catalog/retrieve=%d/%d/%d", err, identities, catalogs, retrieves)
+			}
+			report := value.Data.(knowledgeEvaluationReport)
+			if report.Target.InstanceUUID != instance || report.Summary.Passed != 1 {
+				t.Fatalf("member target/report=%+v", report)
+			}
+			baseline := filepath.Join(directory, "baseline.json")
+			encoded, err := json.Marshal(map[string]any{"data": report})
+			if err != nil || strings.Contains(string(encoded), "evaluation-member-token") {
+				t.Fatalf("unsafe report encoding: %v", err)
+			}
+			if err := os.WriteFile(baseline, encoded, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			compared, err := service.KnowledgeBaseEvaluate(ctx, "kb-a", input, baseline, options)
+			if !hasInstance {
+				if result.AsError(err).Kind != "precondition" || retrieves != 1 || identities != 2 || catalogs != 2 || compared.Data.(knowledgeEvaluationReport).Summary.NotStarted != 1 {
+					t.Fatalf("unbound member baseline incurred retrieval: %v %d/%d/%d", err, identities, catalogs, retrieves)
+				}
+				return
+			}
+			if err != nil || retrieves != 2 || identities != 2 || catalogs != 2 || compared.Data.(knowledgeEvaluationReport).Comparison == nil {
+				t.Fatalf("member baseline failed: %v %d/%d/%d", err, identities, catalogs, retrieves)
+			}
+			instance = "another-instance"
+			if _, err := service.KnowledgeBaseEvaluate(ctx, "kb-a", input, baseline, options); err == nil || retrieves != 2 {
+				t.Fatalf("target drift incurred paid retrieval: %v calls=%d", err, retrieves)
+			}
+		})
 	}
 }
 
