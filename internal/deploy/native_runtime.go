@@ -156,6 +156,12 @@ func NativeEnvironment(record Record) []string {
 	env["UV_PYTHON_INSTALL_DIR"] = filepath.Join(record.ToolsDir, "python")
 	env["UV_PYTHON_PREFERENCE"] = "only-managed"
 	env["UV_CACHE_DIR"] = filepath.Join(record.ToolsDir, "cache")
+	// uv's default 30s read timeout aborts large wheels (litellm, chromadb,
+	// numpy) on slow or congested links mid-install. Allow more headroom
+	// unless the user configured their own value.
+	if env["UV_HTTP_TIMEOUT"] == "" {
+		env["UV_HTTP_TIMEOUT"] = "120"
+	}
 	env["LANGBOT_DATA_ROOT"] = record.DataDir
 	env["LANGBOT_PLUGIN_PYPI_INDEX_URL"] = record.PyPIIndex
 	env["API__PORT"] = fmt.Sprint(record.Port)
