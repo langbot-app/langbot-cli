@@ -328,6 +328,24 @@ func TestNativeHealthFailsWhenProcessExited(t *testing.T) {
 	}
 }
 
+func TestNativeHealthExplainsInterruptedPackageInstall(t *testing.T) {
+	dir, record := nativeFixture(t)
+	record.Endpoint = "http://127.0.0.1:1"
+	logs := filepath.Join(filepath.Dir(record.DataDir), "logs")
+	if err := os.MkdirAll(logs, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(logs, "langbot.log"), []byte("C:\\venv\\Scripts\\python.exe: No module named langbot\r\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	err := WaitNativeHealth(ctx, record, nil)
+	if err == nil || !strings.Contains(err.Error(), "rerun the same lbctl install") {
+		t.Fatalf("%s: %v", dir, err)
+	}
+}
+
 func TestDockerMirrorSettingsSurviveUpgrade(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "instance")
 	assets, err := NewInstallAssets(dir, "v4.11.7", "basic", 5300, InstallNetworkOptions{})
