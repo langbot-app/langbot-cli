@@ -62,7 +62,12 @@ func TestHostBoxDefaultAllowedOnWindowsNeedsSupportedCore(t *testing.T) {
 	if !hostBoxDefaultAllowed("linux", "") || !hostBoxDefaultAllowed("darwin", "v4.0.0") {
 		t.Fatal("POSIX must allow host by default")
 	}
-	if deploy.WindowsHostBoxMinVersion == "" && (hostBoxDefaultAllowed("windows", "") || hostBoxDefaultAllowed("windows", "v4.11.8")) {
-		t.Fatal("Windows without a supported Core must not default to host")
+	if hostBoxDefaultAllowed("windows", "v4.11.8") {
+		t.Fatal("Windows Core without SDK 0.7.26 must not default to host")
+	}
+	for _, version := range []string{"", "v4.11.9", "v4.12.0"} {
+		if !hostBoxDefaultAllowed("windows", version) {
+			t.Fatalf("Windows Core %q supports host Box", version)
+		}
 	}
 }
