@@ -163,7 +163,7 @@ func (s *Service) automaticCredentialDeployment(options CheckOptions) string {
 	return ""
 }
 
-func (s *Service) repairDockerInstall(ctx context.Context, dir string, record deploy.Record) (Result, error) {
+func (s *Service) repairDockerInstall(ctx context.Context, dir string, record deploy.Record, backend string) (Result, error) {
 	auth := localAuthAttempt{service: s, dir: dir}
 	err := deploy.WithMutationLock(ctx, dir, func() error {
 		if err := deploy.CheckUpgradeInterrupted(dir); err != nil {
@@ -175,6 +175,11 @@ func (s *Service) repairDockerInstall(ctx context.Context, dir string, record de
 			return result.New("precondition", i18n.T("Unable to confirm local deployment status; run doctor first"))
 		}
 		changed := auth.configure(ctx, record)
+		boxChanged, err := deploy.SelectInstallBox(ctx, dir, record, s.localRunner(), backend)
+		if err != nil {
+			return err
+		}
+		changed = changed || boxChanged
 		args := []string{"up", "-d"}
 		if changed && before.Status == "running" {
 			args = []string{"restart"}
@@ -195,6 +200,7 @@ func (s *Service) repairDockerInstall(ctx context.Context, dir string, record de
 	if err == nil {
 		data["status"] = map[string]any{"status": "running"}
 		installAutostartData(data, record, dir)
+		addInstallBoxResult(ctx, data, record)
 	}
 	return auth.result(Result{Data: data}), normalizeLocalMutationError(err)
 }

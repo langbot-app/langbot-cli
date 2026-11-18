@@ -23,27 +23,28 @@ import (
 const DefaultEndpoint = "https://space.langbot.app/api/v1/telemetry"
 
 type Event struct {
-	AttemptID        string         `json:"attempt_id,omitempty"`
-	PreviousFailures int            `json:"previous_failures"`
-	Details          map[string]any `json:"details,omitempty"`
-	EventType        string         `json:"event_type"`
-	EventID          string         `json:"event_id"`
-	InstanceID       string         `json:"instance_id"`
-	Command          string         `json:"command"`
-	Outcome          string         `json:"outcome"`
-	Step             string         `json:"step"`
-	ErrorCode        string         `json:"error_code"`
-	Error            string         `json:"error"`
-	DurationMs       int64          `json:"duration_ms"`
-	LBCTLVersion     string         `json:"lbctl_version"`
-	OS               string         `json:"os"`
-	Arch             string         `json:"arch"`
-	Driver           string         `json:"driver"`
-	ServiceManager   string         `json:"service_manager"`
-	Region           string         `json:"region"`
-	CoreVersion      string         `json:"core_version"`
-	Locale           string         `json:"locale"`
-	Source           string         `json:"source"`
+	Features         map[string]string `json:"features,omitempty"`
+	AttemptID        string            `json:"attempt_id,omitempty"`
+	PreviousFailures int               `json:"previous_failures"`
+	Details          map[string]any    `json:"details,omitempty"`
+	EventType        string            `json:"event_type"`
+	EventID          string            `json:"event_id"`
+	InstanceID       string            `json:"instance_id"`
+	Command          string            `json:"command"`
+	Outcome          string            `json:"outcome"`
+	Step             string            `json:"step"`
+	ErrorCode        string            `json:"error_code"`
+	Error            string            `json:"error"`
+	DurationMs       int64             `json:"duration_ms"`
+	LBCTLVersion     string            `json:"lbctl_version"`
+	OS               string            `json:"os"`
+	Arch             string            `json:"arch"`
+	Driver           string            `json:"driver"`
+	ServiceManager   string            `json:"service_manager"`
+	Region           string            `json:"region"`
+	CoreVersion      string            `json:"core_version"`
+	Locale           string            `json:"locale"`
+	Source           string            `json:"source"`
 }
 
 type Options struct {
@@ -273,6 +274,15 @@ func SetEnvironment(ctx context.Context, driver, manager, region, coreVersion st
 			op.Event.Region = region
 		}
 		op.Event.CoreVersion = Identifier(coreVersion)
+	}
+}
+
+func SetInstallBox(ctx context.Context, backend string) {
+	if op, ok := ctx.Value(operationKey{}).(*Operation); ok && op.Event.Command == "install" {
+		switch backend {
+		case "off", "host", "local", "docker", "nsjail", "e2b":
+			op.Event.Features = map[string]string{"box_backend": backend}
+		}
 	}
 }
 

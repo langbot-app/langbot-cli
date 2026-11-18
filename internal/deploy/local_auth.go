@@ -5,8 +5,6 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
-	"os"
-	"os/exec"
 	"path/filepath"
 
 	"github.com/langbot-app/langbot-cli/internal/i18n"
@@ -46,46 +44,17 @@ func EnsureLocalAuth(ctx context.Context, dir string, record Record, runner Runn
 	failure := func() (bool, error) {
 		return false, errors.New(i18n.T("Unable to configure local API authentication"))
 	}
-	path := filepath.Join(record.DataDir, "config.yaml")
-	data, err := os.ReadFile(path)
-	newConfig := os.IsNotExist(err)
+	data, newConfig, err := ReadSystemConfig(ctx, dir, record, runner)
 	if err != nil {
-		if record.Driver == DriverNative {
-			if !newConfig {
-				return failure()
-			}
-			command := exec.CommandContext(ctx, NativePython(dir, record.CoreVersion), "-c", readAuthConfig, path)
-			hideNativeConsole(command)
-			data, err = command.Output()
-		} else {
-			var output CommandResult
-			output, err = authContainer(ctx, runner, record, "", readAuthConfig, "/data/config.yaml")
-			data = []byte(output.Stdout)
-		}
-		if err != nil {
-			return failure()
-		}
+		return failure()
 	}
 	updated, key, changed, err := configureAPIKey(data, newConfig, record.Endpoint)
 	if err != nil {
 		return failure()
 	}
 	if changed || newConfig {
-		if err := writeAtomic(path, updated, 0o600); err != nil {
-			if record.Driver != DriverDockerCompose {
-				return failure()
-			}
-			temporary, err := os.MkdirTemp(dir, ".auth-")
-			if err != nil {
-				return failure()
-			}
-			defer os.RemoveAll(temporary)
-			if err := writeAtomic(filepath.Join(temporary, "config.yaml"), updated, 0o600); err != nil {
-				return failure()
-			}
-			if _, err := authContainer(ctx, runner, record, temporary, writeAuthConfig); err != nil {
-				return failure()
-			}
+		if err := WriteSystemConfig(ctx, dir, record, runner, updated); err != nil {
+			return failure()
 		}
 	}
 	if err := writeAtomic(LocalKeyPath(dir), []byte(key), 0o600); err != nil {
@@ -112,11 +81,11 @@ func authContainer(ctx context.Context, runner Runner, record Record, source, sc
 }
 
 func configureAPIKey(data []byte, newConfig bool, endpoint string) ([]byte, string, bool, error) {
-	var document yaml.Node
-	if err := yaml.Unmarshal(data, &document); err != nil || len(document.Content) != 1 || document.Content[0].Kind != yaml.MappingNode {
+	config, err := ParseSystemConfig(data)
+	if err != nil {
 		return nil, "", false, errors.New("invalid configuration")
 	}
-	root := document.Content[0]
+	root := config.Document.Content[0]
 	api := mappingValue(root, "api")
 	if api == nil {
 		api = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
@@ -146,6 +115,6 @@ func configureAPIKey(data []byte, newConfig bool, endpoint string) ([]byte, stri
 			webhook.Value = endpoint
 		}
 	}
-	encoded, err := yaml.Marshal(&document)
+	encoded, err := config.Bytes()
 	return encoded, key.Value, true, err
 }

@@ -544,6 +544,9 @@ func renderLocalAction(w io.Writer, data map[string]any) error {
 		}
 		rows = append(rows, [2]string{i18n.T("Directory"), displayCell(data["dir"])}, [2]string{i18n.T("Log"), "lbctl logs"})
 		lines = append(lines, progress.Labels(rows)...)
+		if warning, ok := data["box_warning"].(string); ok && warning != "" {
+			lines = append(lines, "", warning, "lbctl sysconfig set box.backend docker --restart", "lbctl sysconfig set box.backend local --restart", "lbctl sysconfig set box.enabled false --restart", "")
+		}
 		if data["local_auth"] == true {
 			command := "lbctl bot list"
 			if name := formatCell(data["local_context"]); name != "" {

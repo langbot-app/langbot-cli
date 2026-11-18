@@ -46,12 +46,13 @@ type Dependencies struct {
 }
 
 type globalFlags struct {
-	notice         string
-	noticeMachine  bool
-	display        *progress.Display
-	language       string
-	verbose        bool
-	operationError error
+	showConfigSecrets bool
+	notice            string
+	noticeMachine     bool
+	display           *progress.Display
+	language          string
+	verbose           bool
+	operationError    error
 
 	asMember    bool
 	listView    listViewOptions
@@ -242,6 +243,7 @@ func newRoot(deps Dependencies, flags *globalFlags, service *app.Service) *cobra
 	root.AddCommand(newDoctorCommand(service, deps, flags))
 	root.AddCommand(newInstallCommand(service, deps, flags))
 	root.AddCommand(newAutostartCommand(service, deps, flags))
+	root.AddCommand(newSystemConfigCommand(service, deps, flags))
 	root.AddCommand(newAdoptCommand(service, deps, flags))
 	root.AddCommand(newLifecycleCommand(service, deps, flags, "start"))
 	root.AddCommand(newLifecycleCommand(service, deps, flags, "stop"))
@@ -1346,6 +1348,7 @@ func newDoctorCommand(service *app.Service, deps Dependencies, flags *globalFlag
 }
 
 func newInstallCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
+	var boxBackend string
 	var dir, version, profile, project string
 	var driver, name, region, pypiIndex, pythonMirror, imageRepository string
 	var extras []string
@@ -1375,7 +1378,7 @@ func newInstallCommand(service *app.Service, deps Dependencies, flags *globalFla
 			return emitCall(deps, flags, func() (app.Result, error) {
 				return service.Install(cmd.Context(), app.InstallOptions{
 					Driver: selected, Name: name, Region: region, PyPIIndex: pypiIndex, PythonMirror: pythonMirror, ImageRepository: imageRepository, Extras: extras,
-					Dir: dir, Version: version, Profile: profile, Port: selectedPort, DryRun: dryRun,
+					Dir: dir, Version: version, Profile: profile, Port: selectedPort, DryRun: dryRun, BoxBackend: boxBackend,
 					Project: project, PluginDebugPort: &pluginDebugPort, AdapterPorts: adapterPorts,
 					Timeout: flags.timeout, TimeoutSet: flags.timeoutSet,
 				})
@@ -1393,6 +1396,7 @@ func newInstallCommand(service *app.Service, deps Dependencies, flags *globalFla
 	cmd.Flags().BoolVar(&yes, "yes", false, i18n.T("Skip interactive prompts"))
 	cmd.Flags().StringVar(&version, "version", "", i18n.T("LangBot stable Release tag; defaults to the latest release"))
 	cmd.Flags().StringVar(&profile, "profile", "basic", i18n.T("Deployment profile: basic or all"))
+	cmd.Flags().StringVar(&boxBackend, "box-backend", "", i18n.T("Select Box backend: host, local, docker, nsjail, e2b or off"))
 	cmd.Flags().IntVar(&port, "port", 5300, i18n.T("LangBot HTTP host port"))
 	cmd.Flags().StringVar(&project, "project", deploy.DefaultComposeProject, i18n.T("Unique Compose project name; use different names for multiple instances"))
 	cmd.Flags().IntVar(&pluginDebugPort, "plugin-debug-port", 5401, i18n.T("Plugin Runtime debug host port; 0 disables publishing"))
@@ -1706,7 +1710,13 @@ func emit(deps Dependencies, flags *globalFlags, value app.Result, callErr error
 	if callErr != nil {
 		envelope.Error = result.AsError(callErr)
 	}
-	if err := output.RenderCommand(deps.Out, envelope, format, flags.commandPath); err != nil {
+	var renderErr error
+	if callErr == nil && flags.commandPath == "sysconfig.get" && flags.showConfigSecrets {
+		renderErr = output.RenderSystemConfigWithSecrets(deps.Out, envelope, format)
+	} else {
+		renderErr = output.RenderCommand(deps.Out, envelope, format, flags.commandPath)
+	}
+	if renderErr != nil {
 		fmt.Fprintln(deps.Err, i18n.T("Output failed"))
 		return 10
 	}

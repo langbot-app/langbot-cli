@@ -37,8 +37,16 @@ func Render(w io.Writer, value any, format string) error {
 
 // RenderCommand 在统一脱敏结果上选择机器编码或人工摘要。
 func RenderCommand(w io.Writer, value any, format, command string) error {
+	return renderCommand(w, value, format, command, false)
+}
+
+func RenderSystemConfigWithSecrets(w io.Writer, value any, format string) error {
+	return renderCommand(w, value, format, "sysconfig.get", true)
+}
+
+func renderCommand(w io.Writer, value any, format, command string, showConfig bool) error {
 	if format == FormatDefault {
-		safe, err := prepare(value)
+		safe, err := prepare(value, showConfig)
 		if err != nil {
 			return err
 		}
@@ -51,7 +59,7 @@ func RenderCommand(w io.Writer, value any, format, command string) error {
 	if err != nil {
 		return err
 	}
-	safe, err := prepare(value)
+	safe, err := prepare(value, showConfig)
 	if err != nil {
 		return err
 	}
@@ -75,7 +83,7 @@ func RenderCommand(w io.Writer, value any, format, command string) error {
 	}
 }
 
-func prepare(value any) (any, error) {
+func prepare(value any, showConfig bool) (any, error) {
 	data, err := json.Marshal(value)
 	if err != nil {
 		return nil, err
@@ -86,7 +94,13 @@ func prepare(value any) (any, error) {
 	if err := decoder.Decode(&decoded); err != nil {
 		return nil, err
 	}
-	return redact.Value(decoded, ""), nil
+	safe := redact.Value(decoded, "")
+	if showConfig {
+		if envelope, ok := decoded.(map[string]any); ok && envelope["ok"] == true {
+			safe.(map[string]any)["data"] = envelope["data"]
+		}
+	}
+	return safe, nil
 }
 
 func yamlValue(value any) any {

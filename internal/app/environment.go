@@ -122,6 +122,17 @@ func (s *Service) Doctor(ctx context.Context, options CheckOptions) (Result, err
 	resolved.Diagnostics.Region = options.Region
 	localChecks, localErr := resolved.Diagnostics.Doctor(localCtx)
 	checks = append(checks, localChecks...)
+	if box, ok := deploy.NativeBoxSettings(resolved.Record); ok {
+		data["box"] = box
+		reason := box.Backend
+		if !box.Enabled {
+			reason = "off"
+		}
+		if box.Unsafe {
+			reason += " · " + i18n.T("No sandbox isolation; change the backend with lbctl sysconfig.")
+		}
+		checks = append(checks, deploy.Check{Name: "box_backend", Status: "ok", Reason: reason})
+	}
 	data["checks"] = checks
 	if discoverErr != nil {
 		return Result{Data: data, Meta: connectionMeta(resolved.Connection)}, discoverErr

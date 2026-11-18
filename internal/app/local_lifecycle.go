@@ -32,6 +32,7 @@ import (
 var ansiEscapePattern = regexp.MustCompile(`\x1b\[[0-9;]*[A-Za-z]`)
 
 type InstallOptions struct {
+	BoxBackend      string
 	Driver          string
 	Name            string
 	Region          string
@@ -76,6 +77,9 @@ type LocalLogsOptions struct {
 }
 
 func (s *Service) Install(ctx context.Context, options InstallOptions) (Result, error) {
+	if options.BoxBackend != "" && !deploy.ValidBoxBackend(options.BoxBackend, true) {
+		return Result{}, result.New("input", i18n.T("Select Box backend: host, local, docker, nsjail, e2b or off"))
+	}
 	telemetry.SetEnvironment(ctx, options.Driver, "", options.Region, options.Version)
 	if options.Driver == deploy.DriverNative {
 		return s.installNative(ctx, options)
@@ -99,13 +103,19 @@ func (s *Service) Install(ctx context.Context, options InstallOptions) (Result, 
 		if options.DryRun {
 			return Result{Data: map[string]any{"action": "install", "dry_run": true, "record": existing}}, nil
 		}
-		return s.repairDockerInstall(operationCtx, dir, existing)
+		return s.repairDockerInstall(operationCtx, dir, existing, options.BoxBackend)
 	}
 	telemetry.SetStep(ctx, "resolve_version")
 	if version == "" {
 		version, err = s.latestRelease(operationCtx)
 		if err != nil {
 			return Result{}, err
+		}
+	}
+	if options.BoxBackend != "" {
+		options.Profile = "all"
+		if options.BoxBackend == "off" {
+			options.Profile = "basic"
 		}
 	}
 	assets, err := deploy.NewInstallAssets(dir, version, options.Profile, options.Port, deploy.InstallNetworkOptions{
@@ -194,6 +204,9 @@ func (s *Service) Install(ctx context.Context, options InstallOptions) (Result, 
 				return result.New("server", i18n.T("Failed to write local deployment locator"))
 			}
 			auth.configure(operationCtx, record)
+			if _, err := deploy.SelectInstallBox(operationCtx, assets.Dir, record, runner, options.BoxBackend); err != nil {
+				return err
+			}
 			telemetry.SetStep(ctx, "compose_up")
 			command, commandErr := runner.Compose(operationCtx, record, "up", "-d")
 			if commandErr != nil {
@@ -231,6 +244,7 @@ func (s *Service) Install(ctx context.Context, options InstallOptions) (Result, 
 	if data, ok := response.Data.(map[string]any); ok {
 		if record, ok := data["record"].(deploy.Record); ok {
 			installAutostartData(data, record, assets.Dir)
+			addInstallBoxResult(operationCtx, data, record)
 			data["local_auth"] = deploy.SupportsLocalAuth(record.CoreVersion)
 			data["local_context"] = record.DeploymentID
 			auth.bind(operationCtx, record)
