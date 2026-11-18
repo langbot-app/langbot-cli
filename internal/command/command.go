@@ -625,6 +625,7 @@ func newTaskCommand(service *app.Service, deps Dependencies, flags *globalFlags)
 
 func newKnowledgeBaseCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
 	command := &cobra.Command{Use: "knowledge-base", Aliases: []string{"kb"}, Short: i18n.T("Manage knowledge bases"), Args: cobra.NoArgs}
+	command.AddCommand(newKnowledgeEvaluateCommand(service, deps, flags))
 	command.AddCommand(&cobra.Command{Use: "list", Short: i18n.T("List knowledge bases"), Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		return emitCall(deps, flags, func() (app.Result, error) { return service.KnowledgeBaseList(cmd.Context(), connectionOptions(flags)) })
 	}})

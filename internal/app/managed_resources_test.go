@@ -11,6 +11,99 @@ import (
 	"testing"
 )
 
+func TestKnowledgeEvaluationRulesAndTopK(t *testing.T) {
+	for _, body := range []string{
+		`{"cases":[]}`, `{"cases":[{"case_id":"x","query":"x","expect":{}}]}`,
+		`{"cases":[{"case_id":"x","query":" ","expect":{"id":"id"}}]}`,
+		`{"top_k":0,"cases":[{"case_id":"x","query":"x","expect":{"id":"id"}}]}`,
+		`{"cases":[{"case_id":"x","query":"x","top_k":-1,"expect":{"id":"id"}}]}`,
+		`{"cases":[{"case_id":"x","query":"x","expect":{"unknown":"id"}}]}`,
+		`{"cases":[{"case_id":"x","query":"x","expect":{"id":"id"}},{"case_id":" x ","query":"y","expect":{"id":"id"}}]}`,
+	} {
+		var input map[string]any
+		if err := json.Unmarshal([]byte(body), &input); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := parseKnowledgeEvaluationCases(input); err == nil {
+			t.Errorf("accepted invalid cases %s", body)
+		}
+	}
+	topK := 1
+	row := knowledgeEvaluationRow{knowledgeEvaluationCase: knowledgeEvaluationCase{TopK: &topK, Expect: knowledgeExpectation{ID: "second"}}}
+	data := map[string]any{"results": []any{
+		map[string]any{"id": "first", "score": 0}, map[string]any{"id": "second"},
+	}}
+	if err := evaluateKnowledgeResults(&row, data); err != nil || row.Status != "failed" || row.ResultCount != 1 || row.ScoreMissingCount != 0 {
+		t.Fatalf("row=%+v error=%v", row, err)
+	}
+	row.Expect = knowledgeExpectation{TextContains: "match", Metadata: map[string]any{"source": "guide"}}
+	if matchesKnowledgeExpectation(row.Expect, map[string]any{"content": []any{map[string]any{"type": "image_url", "text": "match"}}, "metadata": map[string]any{"source": "guide"}}) {
+		t.Fatal("matched a non-text content element")
+	}
+	if matchesKnowledgeExpectation(row.Expect, map[string]any{"content": []any{map[string]any{"type": "text", "text": "match"}}, "metadata": map[string]any{"source": "other"}}) {
+		t.Fatal("ignored metadata assertion")
+	}
+	if !knowledgeMetadataMatches(map[string]any{"page": json.Number("1")}, map[string]any{"page": json.Number("1.0")}) {
+		t.Fatal("equivalent JSON numbers did not match")
+	}
+	if knowledgeJSONEqual(json.Number("9007199254740992"), json.Number("9007199254740993")) {
+		t.Fatal("large numeric metadata lost precision")
+	}
+	one, two := 1, 2
+	cases := []knowledgeEvaluationCase{{CaseID: "a", Query: "a", TopK: &one}, {CaseID: "b", Query: "b", TopK: &two}}
+	if knowledgeCasesDigest(cases) != knowledgeCasesDigest([]knowledgeEvaluationCase{cases[1], cases[0]}) {
+		t.Fatal("case ordering changed rule digest")
+	}
+	changed := append([]knowledgeEvaluationCase(nil), cases...)
+	changed[0].TopK = &two
+	if knowledgeCasesDigest(cases) == knowledgeCasesDigest(changed) {
+		t.Fatal("top_k change retained rule digest")
+	}
+}
+
+func TestKnowledgeEvaluationBaselineRulesAndPartialComparisons(t *testing.T) {
+	one := 1
+	current := knowledgeEvaluationReport{
+		Target: knowledgeEvaluationTarget{InstanceUUID: "instance", WorkspaceUUID: "workspace", KnowledgeBaseID: "kb"},
+		Cases: []knowledgeEvaluationRow{
+			{knowledgeEvaluationCase: knowledgeEvaluationCase{CaseID: "private", Query: "query", TopK: &one, Expect: knowledgeExpectation{Metadata: map[string]any{"api_key": "private-value"}}}, Status: "passed"},
+			{knowledgeEvaluationCase: knowledgeEvaluationCase{CaseID: "other", Query: "other", TopK: &one, Expect: knowledgeExpectation{ID: "hit"}}, Status: "failed"},
+		},
+	}
+	current.CasesDigest = knowledgeCasesDigest([]knowledgeEvaluationCase{current.Cases[0].knowledgeEvaluationCase, current.Cases[1].knowledgeEvaluationCase})
+	current.Summary = knowledgeEvaluationCounts(current.Cases)
+	baseline := current
+	baseline.Cases = append([]knowledgeEvaluationRow(nil), current.Cases...)
+	// A saved JSON report contains the shared output redactor's representation.
+	baseline.Cases[0].knowledgeEvaluationCase = knowledgeEvaluationCase{}
+	if err := json.Unmarshal(visibleKnowledgeRule(current.Cases[0].knowledgeEvaluationCase), &baseline.Cases[0].knowledgeEvaluationCase); err != nil {
+		t.Fatal(err)
+	}
+	baseline.Cases[0].Status = "error"
+	baseline.Cases[0], baseline.Cases[1] = baseline.Cases[1], baseline.Cases[0]
+	if err := validateKnowledgeBaseline(&baseline, current); err != nil {
+		t.Fatalf("reordered/redacted baseline rejected: %v", err)
+	}
+	comparison := compareKnowledgeEvaluation(&baseline, current)
+	if len(comparison.NotComparable) != 1 || comparison.NotComparable[0] != "private" {
+		t.Fatalf("comparison=%+v", comparison)
+	}
+	baseline.Cases[0].Query = "edited baseline query"
+	if err := validateKnowledgeBaseline(&baseline, current); err == nil {
+		t.Fatal("accepted edited baseline rules")
+	}
+	baseline = current
+	baseline.Target.WorkspaceUUID = "other-workspace"
+	if err := validateKnowledgeBaseline(&baseline, current); err == nil {
+		t.Fatal("accepted another Workspace")
+	}
+	baseline = current
+	baseline.CasesDigest = "changed rules"
+	if err := validateKnowledgeBaseline(&baseline, current); err == nil {
+		t.Fatal("accepted another input digest")
+	}
+}
+
 func TestKnowledgeBaseWritesUsePreflightConfirmationAndReadback(t *testing.T) {
 	baseExists := false
 	files := []string{"file-a"}

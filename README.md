@@ -336,6 +336,35 @@ Directory scans skip dot-prefixed files/directories and symbolic links. Each fil
 
 Confirmed file-specific failures allow the remaining files to proceed. An unknown submission, incomplete wait, authentication/permission failure, or incompatible target stops further submissions, preserves completed and unstarted items, and exits nonzero. Re-running uploads again; there is no cross-run deduplication or automatic retry. Single-file ZIP submission remains supported, but Core returns only one child task ID. Batch `--wait` rejects ZIP inputs before uploading: extract the archive and use `--dir` instead.
 
+#### Retrieval evaluation
+
+Create `cases.yaml` with stable case IDs and expected matches.
+
+```yaml
+top_k: 5
+cases:
+  - case_id: installation
+    query: How do I install LangBot?
+    expect:
+      text_contains: docker compose
+      metadata: {source: install.md}
+  - case_id: refund-policy
+    query: What is the refund policy?
+    top_k: 3
+    expect: {id: policy-chunk-42}
+```
+
+```sh
+lbctl knowledge-base evaluate <uuid> --cases cases.yaml -o json > before.json
+lbctl knowledge-base evaluate <uuid> --cases cases.yaml --baseline before.json
+```
+
+Each case sends one retrieval request using `resource.view`. `top_k` defaults to 5 and is enforced locally on the returned ranking. A single result must satisfy every supplied expectation. `text_contains` is a case-sensitive substring of text content, `id` matches the result ID, and `metadata` recursively matches the supplied keys and values. Metadata arrays use exact ordered equality.
+
+The report retains every case with `passed`, `failed`, `error`, `cancelled` or `not_started` status. Hit rate is passed cases divided by successfully evaluated cases, including empty retrievals as misses. `empty_result` identifies empty retrievals, while `score_missing_count` counts returned results whose score is absent or null. Assertion failures exit nonzero. Service errors and cancellation preserve completed and remaining case records.
+
+The baseline accepts this command's JSON envelope, including a prior run with failed assertions. It validates the instance, Workspace, knowledge base, case IDs, queries, expectations and effective top-k before submitting retrievals. Case ordering may change. Comparison reports improved, regressed and stable cases, plus cases with incomplete execution as `not_comparable`. Hit-rate deltas use each run's successfully evaluated cases.
+
 ### Provider and Model
 
 ```sh

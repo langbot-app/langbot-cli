@@ -262,6 +262,7 @@ var schemaMetaByName = map[string]schemaCommandMeta{
 	"knowledge-base.update":      writeMeta(operationIDs("knowledge_base.update"), schemaWriteOptions{SupportsDryRun: true, RequiredFlags: []string{"file"}, Readbacks: []schemaOperation{readbackID("knowledge_base.get")}}),
 	"knowledge-base.delete":      writeMeta(operationIDs("knowledge_base.delete"), schemaWriteOptions{SupportsDryRun: true, Destructive: true, RequiresYes: true, Readbacks: []schemaOperation{readbackID("knowledge_base.get")}}),
 	"knowledge-base.retrieve":    readMetaWithFlags(operationIDs("knowledge_base.retrieve"), "file"),
+	"knowledge-base.evaluate":    readMetaWithFlags(operationIDs("knowledge_base.retrieve"), "cases"),
 	"knowledge-base.file.list":   readMeta(operationIDs("knowledge_base.file.list")...),
 	"knowledge-base.file.delete": writeMeta(operationIDs("knowledge_base.file.delete"), schemaWriteOptions{SupportsDryRun: true, Destructive: true, RequiresYes: true, Readbacks: []schemaOperation{readbackID("knowledge_base.file.list")}}),
 	"knowledge-base.ingest": func() schemaCommandMeta {

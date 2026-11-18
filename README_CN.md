@@ -309,6 +309,35 @@ lbctl knowledge-base ingest <uuid> --dir ./documents --wait
 
 已确认的单文件失败会继续处理其他文件；提交结果未知、等待未完成、鉴权或权限等目标级错误会停止后续提交，保留已完成和未开始项，并返回非零退出码。重复执行会重新上传，当前不做跨次去重或自动重试。ZIP 仍可按单文件方式提交，但 Core 只返回其中一个子任务 ID；批量 `--wait` 遇到 ZIP 会在上传前拒绝，请先解压后使用 `--dir`。
 
+#### 检索效果回归
+
+创建 `cases.yaml`，为每条用例提供稳定 ID 和命中断言。
+
+```yaml
+top_k: 5
+cases:
+  - case_id: installation
+    query: 如何安装 LangBot？
+    expect:
+      text_contains: docker compose
+      metadata: {source: install.md}
+  - case_id: refund-policy
+    query: 退款规则是什么？
+    top_k: 3
+    expect: {id: policy-chunk-42}
+```
+
+```sh
+lbctl knowledge-base evaluate <uuid> --cases cases.yaml -o json > before.json
+lbctl knowledge-base evaluate <uuid> --cases cases.yaml --baseline before.json
+```
+
+每条用例使用 `resource.view` 权限发起一次检索。`top_k` 默认 5，CLI 同时按返回顺序限制断言范围。同一条检索结果必须满足所有已给出的断言。`text_contains` 按大小写敏感的子串匹配文本内容，`id` 精确匹配结果 ID，`metadata` 按给出的键和值递归匹配，元数据数组按顺序精确匹配。
+
+报告为每条用例保留 `passed`、`failed`、`error`、`cancelled` 或 `not_started` 状态。命中率等于通过用例数除以已成功执行检索的用例数，空结果计为未命中。`empty_result` 标识空结果，`score_missing_count` 统计返回条目中缺少 score 或 score 为 null 的数量。断言失败时退出码非零。服务错误与取消会保留已完成和剩余用例的记录。
+
+基线接受本命令的 JSON 结果封套，也接受断言失败的历史结果。执行检索前会核对实例、Workspace、知识库、用例 ID、查询、断言及实际 top-k。允许调整用例顺序。对照结果列出改善、退化、稳定的用例，执行不完整的条目标记为 `not_comparable`。命中率变化分别使用两次执行中成功完成检索的用例计算。
+
 ### Provider 与 Model
 
 ```sh

@@ -13,6 +13,27 @@ func ragGet(cmd *cobra.Command, service *app.Service, deps Dependencies, flags *
 		return service.APIRequest(cmd.Context(), http.MethodGet, path, nil, connectionOptions(flags))
 	})
 }
+
+func newKnowledgeEvaluateCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
+	var cases, baseline string
+	command := &cobra.Command{
+		Use: "evaluate <id>", Short: i18n.T("Evaluate knowledge retrieval against fixed cases"), Args: cobra.ExactArgs(1),
+		Example: "  lbctl knowledge-base evaluate <id> --cases cases.yaml -o json > before.json\n  lbctl knowledge-base evaluate <id> --cases cases.yaml --baseline before.json",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			body, err := loadRequestBody(cmd.Context(), cases, flags.apiKeyStdin, deps.In)
+			if err != nil {
+				return emitCommand(deps, flags, app.Result{}, err)
+			}
+			return emitCall(deps, flags, func() (app.Result, error) {
+				return service.KnowledgeBaseEvaluate(cmd.Context(), args[0], body, baseline, connectionOptions(flags))
+			})
+		},
+	}
+	command.Flags().StringVar(&cases, "cases", "", i18n.T("Evaluation cases JSON/YAML file"))
+	command.Flags().StringVar(&baseline, "baseline", "", i18n.T("Previous evaluate JSON result for the same target and case rules"))
+	_ = command.MarkFlagRequired("cases")
+	return command
+}
 func newKnowledgeEngineCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
 	root := &cobra.Command{Use: "knowledge-engine", Short: i18n.T("Query knowledge engines and configuration schema"), Args: cobra.NoArgs}
 	root.AddCommand(&cobra.Command{Use: "list", Short: i18n.T("List knowledge engines and capabilities"), Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {

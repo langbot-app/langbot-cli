@@ -4,6 +4,12 @@ import "github.com/langbot-app/langbot-cli/internal/i18n"
 
 // Labels apply only to human rendering. Protocol keys and resource names stay unchanged.
 var humanFieldLabels = map[string]string{
+	"cases": i18n.Source("Evaluation cases"), "case_id": i18n.Source("Case ID"), "query": i18n.Source("Query"), "expect": i18n.Source("Expected match"),
+	"hit_rate": i18n.Source("Hit rate"), "evaluated": i18n.Source("Evaluated"), "passed": i18n.Source("Passed"), "failed": i18n.Source("Failed"),
+	"empty_result": i18n.Source("Empty result"), "score_missing_count": i18n.Source("Results without a score"), "result_count": i18n.Source("Results within top-k"),
+	"observed_ids": i18n.Source("Retrieved IDs"), "matched_rank": i18n.Source("Matched rank"), "matched_id": i18n.Source("Matched ID"),
+	"comparison": i18n.Source("Baseline comparison"), "baseline_hit_rate": i18n.Source("Baseline hit rate"), "hit_rate_delta": i18n.Source("Hit rate change"),
+	"improved": i18n.Source("Improved"), "regressed": i18n.Source("Regressed"), "stable": i18n.Source("Stable"), "not_comparable": i18n.Source("Incomplete comparison"),
 	"base_revision": i18n.Source("Base revision"), "proposed_revision": i18n.Source("Proposed revision"),
 	"changes": i18n.Source("Changes"), "added": i18n.Source("Added"), "modified": i18n.Source("Modified"), "deleted": i18n.Source("Deleted"),
 	"required_permissions": i18n.Source("Required permissions"), "can_publish": i18n.Source("Can publish"),
