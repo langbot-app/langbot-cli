@@ -66,7 +66,6 @@ func init() {
 		"Complete evidence": "证据完整",
 		"Partial evidence": "证据不完整",
 		"Failure ordering": "错误顺序依据",
-		"Stage": "阶段",
 		"Record source": "记录来源",
 		"Evidence gaps": "证据缺口",
 		"Time": "时间",
