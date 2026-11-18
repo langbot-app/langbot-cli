@@ -1372,6 +1372,10 @@ func newInstallCommand(service *app.Service, deps Dependencies, flags *globalFla
 					return emitCommand(deps, flags, app.Result{}, result.New("input", err.Error()))
 				}
 			}
+			boxBackend, err = installBoxSelection(deps, selected, dir, version, boxBackend, yes, dryRun)
+			if err != nil {
+				return emitCommand(deps, flags, app.Result{}, result.New("input", err.Error()))
+			}
 			if !cmd.Flags().Changed("project") && name != "default" {
 				project = "langbot-" + strings.ToLower(name)
 			}
