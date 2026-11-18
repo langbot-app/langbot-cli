@@ -2032,6 +2032,19 @@ func projectKnowledgeBase(value map[string]any, secret string) map[string]any {
 
 func projectPlugin(value map[string]any, author, name, secret string) map[string]any {
 	projected := projectScalarFields(value, []string{"author", "name", "version", "description", "debug", "enabled", "status", "created_at", "updated_at"}, secret)
+	if installation, ok := value["install_info"].(map[string]any); ok {
+		if version, ok := installation["plugin_version"].(string); ok && version != "" && !containsSecret(version, secret) {
+			projected["installed_version"] = version
+		}
+	}
+	if components, ok := value["components"].([]any); ok {
+		projected["component_count"] = len(components)
+	}
+	if status, ok := value["permission_status"].(map[string]any); ok {
+		if pending, ok := status["pending_confirmation"].(bool); ok {
+			projected["pending_confirmation"] = pending
+		}
+	}
 	metadata := value
 	if manifest, ok := value["manifest"].(map[string]any); ok {
 		if nested, ok := manifest["manifest"].(map[string]any); ok {

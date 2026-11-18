@@ -2,6 +2,13 @@ package i18n
 
 func init() {
 	for key, value := range map[string]string{
+		"Upgrade installed. Review pending plugin permissions":                                 "升级已安装，请审阅待确认的插件权限",
+		"Upgrade installed. Runtime readiness could not be verified":                           "升级已安装，尚未确认插件运行时就绪",
+		"Wait for upgrade and confirm all declared plugin permissions":                         "等待升级并确认插件声明的全部权限",
+		"Stopped waiting for plugin initialization":                                            "已停止等待插件初始化",
+		"Inspect the installed plugin":                                                         "查看已安装插件",
+		"Review plugin permissions":                                                            "审阅插件权限",
+
 		"Preview changes":                                                 "预览更改",
 		"Watch an existing Agent run":                                     "跟踪已有 Agent 运行",
 		"after-sequence must not be negative":                             "事件序号不能为负数",

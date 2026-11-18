@@ -386,6 +386,8 @@ lbctl skill install upload --dir ./my-skill
 lbctl skill delete <name> --yes
 ```
 
+For marketplace plugins, `upgrade --wait` reads the running version, initialization state and component count. Pending permissions produce a nonzero exit and a review command. Add `--confirm-permissions` to grant all declared permissions and wait for initialization. An unchanged version is reported explicitly.
+
 Skill installation with `--dry-run` uses a server-side preview. Plugin installation, upgrade, and deletion support `--wait` to follow asynchronous tasks.
 
 `skill install upload --dir` packages a local directory, including relative paths and hidden files. It skips `.git`, rejects symbolic links, and enforces the 10 MB ZIP upload limit. Choose one of `--file` and `--dir`.
