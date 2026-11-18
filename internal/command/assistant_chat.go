@@ -62,7 +62,7 @@ func readChat(ctx context.Context, session *app.OperationSession, id string) (ch
 	return parseChatView(raw, id)
 }
 
-func chatTurn(ctx context.Context, session *app.OperationSession, view chatView, body map[string]any) (chatView, error) {
+func chatTurn(ctx context.Context, session *app.OperationSession, view chatView, body map[string]any, progress io.Writer) (chatView, error) {
 	if err := session.Authorize(friendlyOperationDetails["assistant.stream"].description()); err != nil {
 		return view, err
 	}
@@ -71,7 +71,24 @@ func chatTurn(ctx context.Context, session *app.OperationSession, view chatView,
 	err := session.Client.OperationStream(ctx, session.Target, "assistant.stream", body, func(raw any) error {
 		frame, _ := raw.(map[string]any)
 		switch frame["kind"] {
-		case "snapshot", "phase", "text":
+		case "phase":
+			phase, _ := frame["data"].(map[string]any)
+			if progress != nil {
+				switch phase["phase"] {
+				case "thinking":
+					round, _ := phase["round"].(json.Number)
+					n, err := round.Int64()
+					if err == nil && n > 0 {
+						_, err = fmt.Fprintf(progress, i18n.T("Thinking (round %d)\n"), n)
+						return err
+					}
+				case "tool":
+					_, err := fmt.Fprintln(progress, i18n.T("Running a tool…"))
+					return err
+				}
+			}
+			return nil
+		case "snapshot", "text":
 			return nil
 		case "completed":
 			var err error
@@ -220,6 +237,10 @@ func addAssistantChat(root *cobra.Command, service *app.Service, deps Dependenci
 				return chatResult(session, view, result.New("precondition", i18n.T("Conversation changed. Review the latest turn")))
 			}
 			reader := bufio.NewReader(deps.In)
+			var progress io.Writer
+			if interactive {
+				progress = deps.Err
+			}
 			for {
 				var body map[string]any
 				switch {
@@ -236,7 +257,7 @@ func addAssistantChat(root *cobra.Command, service *app.Service, deps Dependenci
 					}
 					return chatResult(session, view, err)
 				}
-				view, err = chatTurn(ctx, session, view, body)
+				view, err = chatTurn(ctx, session, view, body, progress)
 				if !interactive || err != nil {
 					return chatResult(session, view, err)
 				}

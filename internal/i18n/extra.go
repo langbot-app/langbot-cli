@@ -2,6 +2,8 @@ package i18n
 
 func init() {
 	for key, value := range map[string]string{
+		"Thinking (round %d)\n": "思考中（第 %d 轮）\n",
+		"Running a tool…": "正在执行工具…",
 		"Upgrade installed. Review pending plugin permissions":                                 "升级已安装，请审阅待确认的插件权限",
 		"Upgrade installed. Runtime readiness could not be verified":                           "升级已安装，尚未确认插件运行时就绪",
 		"Wait for upgrade and confirm all declared plugin permissions":                         "等待升级并确认插件声明的全部权限",
