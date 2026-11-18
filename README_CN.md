@@ -534,6 +534,8 @@ lbctl monitoring tool-calls --session SESSION_ID
 lbctl monitoring embedding-calls --knowledge-base KB_UUID
 lbctl monitoring sessions --active true
 lbctl monitoring trace --bot BOT_UUID --session SESSION_ID --since 2h -o json
+lbctl monitoring watch --bot BOT_UUID --since 15m
+lbctl monitoring watch --bot BOT_UUID --start-time 2026-11-18T00:00:00Z --timeout 1h -o json
 ```
 
 `monitoring trace` 汇总指定 Bot、会话的消息、执行、路由证据、模型与工具调用、生成输出和平台投递，沿明确记录 ID 关联并排空执行详情的各个分页。报告提供状态、错误和原始记录定位，可使用定位中的 operation/input 查看完整详情。`--since` 指定回溯窗口，关联详情保留完整记录链。默认读取可访问的会话历史，`--timeout` 限定收集时长。
@@ -541,6 +543,12 @@ lbctl monitoring trace --bot BOT_UUID --session SESSION_ID --since 2h -o json
 顺序可确认时，`first_error` 指向时间最早的已证实失败记录。失败时间未知或最早记录同时间时返回 `first_error=null`、`error_ordering=undetermined`。`errors` 保留全部已证实失败，无时间证据另列于 `unordered_errors`。缺少失败时间、legacy_context、关联缺失、查询中变更或删除以及分页不完整会列入 `issues`，返回 `partial=true` 和非零退出码。生成输出与平台投递分别呈现，无关联的历史回复列为 `session_context`，相关记录保留执行标识并以 `record_source` 区分记录命名空间。
 
 运行记录查询要求 `resource.view`。列表支持 `--limit 1..500` 和 `--offset`，Core 可进一步限制；`--start-time`、`--end-time` 使用 ISO 8601 时间。可用筛选条件见各命令 `--help`。
+
+`monitoring watch` 以 source、ID 区分新增执行和观测到的变化。初轮按 `--since`（默认 `15m`）或绝对 `--start-time` 回放，后续完成的列表扫描使用滚动 15 分钟窗口。已跟踪的活动执行继续接受有预算的详情读取，可在创建时间移出列表窗口后更新终态和迟到回复。Agent 账本状态与直接记录的投递证据分别呈现，Pipeline 账本状态为 `unknown`。`delivery_status` 以 `unknown`、`recorded_success`、`recorded_failure`、`mixed` 表示，JSON/YAML 提供原始记录定位。
+
+默认持续观测到 Ctrl+C，HTTP 请求保留配置的超时，显式全局 `--timeout` 限定值守总时长。轮询默认 `5s`，每轮固定结束时间和首批列表总量，最多读取 `--max-pages` 页列表（默认 `10`，每页 100 条），最多发出 `--max-details` 次投递详情请求（默认 `20`）。详情工作公平轮转，较长投递历史的分页游标跨轮保留。近期执行包含已有回复的执行，会在记录的结束时间后持续复查投递 15 分钟，缺少结束时间时按创建时间计算。活动执行在请求预算内继续观测。报告包含 `delivery_watch_until`、`delivery_watch_expired`、当前 `scan_start_time`、待查工作和截断计数。
+
+缓存最多保留 `min(max-pages, 10) * 100` 个执行，每个执行最多保留 1000 条投递记录。容量漏证、分页缺失和来源请求失败返回 `partial=true`。明确观察窗口外的终态自然退休计入过期、淘汰计数。`last_complete_start`、`last_complete_end` 表示已完成的快照窗口。JSON 输出信封流，YAML 输出独立文档，包含执行变化、每轮进度和最终汇总。Ctrl+C、超时返回非零结果及可继续执行的命令。使用打印的 `--start-time` 重启会回放该窗口，可能重复此前观测。暂态读取失败会使用保留的窗口重连，并在当前进程内去重。输出反映轮询时观测到的执行和投递记录。
 
 ## Sandbox 配置与诊断
 

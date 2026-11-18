@@ -264,6 +264,7 @@ func newRoot(deps Dependencies, flags *globalFlags, service *app.Service) *cobra
 	root.AddCommand(newKnowledgeEngineCommand(service, deps, flags), newKnowledgeParserCommand(service, deps, flags))
 	root.AddCommand(newMonitoringCommand(service, deps, flags))
 	addMonitoringTrace(root, service, deps, flags)
+	addMonitoringWatch(root, service, deps, flags)
 	root.AddCommand(newSandboxCommand(service, deps, flags))
 	root.AddCommand(newPluginCommand(service, deps, flags))
 	root.AddCommand(newSkillCommand(service, deps, flags))
@@ -1965,6 +1966,16 @@ func enrichResult(deps Dependencies, flags *globalFlags, value app.Result, err e
 			}
 			add(i18n.T("Resume observing Agent run events"), connect, "agent", "runs", "watch", processor, run, "--after-sequence", fmt.Sprint(data["last_sequence"]))
 		}
+	}
+	if flags.commandPath == "monitoring.watch" && err != nil && data["start_time"] != nil {
+		if flags.asMember {
+			connect = append(connect, "--as-member")
+		}
+		arguments := []string{"monitoring", "watch", "--bot", fmt.Sprint(data["bot_id"]), "--start-time", fmt.Sprint(data["start_time"]), "--poll-interval", fmt.Sprint(data["poll_interval"]), "--max-pages", fmt.Sprint(data["max_pages"]), "--max-details", fmt.Sprint(data["max_details"])}
+		if flags.output != "" {
+			arguments = append(arguments, "-o", flags.output)
+		}
+		add(i18n.T("Resume observing Bot executions"), connect, arguments...)
 	}
 	if flags.commandPath == "assistant.chat" {
 		if id, ok := data["conversation_id"].(string); ok && id != "" {

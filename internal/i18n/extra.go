@@ -135,6 +135,21 @@ func init() {
 		"Stopped waiting for plugin initialization": "已停止等待插件初始化",
 		"Inspect the installed plugin": "查看已安装插件",
 		"Review plugin permissions": "审阅插件权限",
+
+		"Watch Bot execution states and recorded deliveries": "值守 Bot 执行状态及已记录投递",
+		"Polling interval and request budgets must be positive": "轮询间隔和请求预算必须大于零",
+		"since and start-time are mutually exclusive": "since 与 start-time 互斥",
+		"start-time must be an ISO 8601 timestamp at or before now": "start-time 必须是不晚于当前时间的 ISO 8601 时间戳",
+		"Resume observing from this ISO 8601 window start": "从此 ISO 8601 窗口起点继续观测",
+		"Execution polling interval": "执行状态轮询间隔",
+		"Maximum execution list pages per round": "每轮执行列表分页上限",
+		"Maximum delivery detail requests per round": "每轮投递详情请求上限",
+		"Execution watch timed out": "执行值守已超时",
+		"Execution watch cancelled": "已取消执行值守",
+		"Execution %s/%s status=%s ledger=%s delivery=%s delivery_until=%s": "执行 %s/%s 状态=%s 账本=%s 投递=%s 投递复查截止=%s",
+		"Round %d retained=%d pages=%d details=%d partial=%t delivery_refresh=%s expired=%d truncated=%d": "第 %d 轮 保留执行=%d 列表页=%d 详情请求=%d 证据不完整=%t 投递复查=%s 过期=%d 截断=%d",
+		"Retained %s executions and emitted %s changes across %s rounds": "当前保留 %s 个执行，输出 %s 次变化，共 %s 轮",
+		"Resume observing Bot executions": "继续观测 Bot 执行",
 	} {
 		chinese[key] = value
 		if _, exists := english[value]; !exists {

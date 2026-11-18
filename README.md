@@ -561,6 +561,8 @@ lbctl monitoring tool-calls --session SESSION_ID
 lbctl monitoring embedding-calls --knowledge-base KB_UUID
 lbctl monitoring sessions --active true
 lbctl monitoring trace --bot BOT_UUID --session SESSION_ID --since 2h -o json
+lbctl monitoring watch --bot BOT_UUID --since 15m
+lbctl monitoring watch --bot BOT_UUID --start-time 2026-11-18T00:00:00Z --timeout 1h -o json
 ```
 
 `monitoring trace` collects the selected Bot and session's messages, executions, routing evidence, model/tool calls, generated outputs and platform deliveries. It follows explicit record IDs and pages every execution section. The report contains status/error projections and record locators. Use each locator's operation/input to inspect full details. `--since` selects a lookback window, and linked details preserve their full record chain. The default covers accessible session history, with `--timeout` bounding collection.
@@ -568,6 +570,12 @@ lbctl monitoring trace --bot BOT_UUID --session SESSION_ID --since 2h -o json
 `first_error` identifies the earliest timestamped confirmed failure when ordering is established. Unknown failure timestamps or tied earliest records produce `first_error=null` and `error_ordering=undetermined`. `errors` retains all confirmed failures, with untimed evidence also listed in `unordered_errors`. Untimed failures, legacy context, missing links, changed/deleted records and incomplete pages appear in `issues` with `partial=true` and a nonzero exit code. Successful generation and platform delivery have separate records. Unlinked historical replies appear as `session_context`. Related records retain their execution identities and `record_source` distinguishes record namespaces.
 
 Runtime-record queries require `resource.view`. Lists support `--limit 1..500` and `--offset`, subject to Core's limits. `--start-time` and `--end-time` use ISO 8601. See each command's `--help` for filters.
+
+`monitoring watch` emits new and changed executions keyed by source and ID. Its initial replay uses `--since` (default `15m`) or an absolute `--start-time`. Subsequent completed list scans use a rolling 15-minute window. Tracked active executions continue through budgeted detail reads, including a terminal status and reply arriving after their creation time leaves the list window. Agent ledger status and directly recorded delivery evidence have separate fields. Pipeline ledger status is `unknown`. `delivery_status` reports `unknown`, `recorded_success`, `recorded_failure` or `mixed`, with record locators in JSON/YAML.
+
+The default watch continues until Ctrl+C. HTTP requests retain their configured timeout, and an explicit global `--timeout` limits the watch lifetime. Polling defaults to `5s`. Each round fixes its end time and initial list count, reads up to `--max-pages` list pages (default `10`, 100 rows each), and makes up to `--max-details` delivery requests (default `20`). Detail work rotates fairly, carrying long delivery page cursors across rounds. Recent executions, including those with an existing reply, receive delivery refreshes for 15 minutes after their recorded finish time, or creation time when the finish time is missing. Active executions remain eligible within the request budget. Reports include `delivery_watch_until`, `delivery_watch_expired`, the current `scan_start_time`, deferred work and truncation counts.
+
+The cache holds at most `min(max-pages, 10) * 100` executions and 1000 delivery records per execution. Capacity losses, incomplete pages and source failures produce `partial=true`. Normal retirement of terminal executions outside the declared window appears in expiry/eviction counters. `last_complete_start` and `last_complete_end` describe the completed snapshot window. JSON emits a stream of envelopes and YAML emits separate documents, with execution changes, round progress and a final summary. Ctrl+C and timeout return a nonzero result containing a resumable command. Restarting with the printed `--start-time` replays its window and can repeat earlier observations. Transient read failures reconnect using the retained window and in-process deduplication. These are polled observations of execution and delivery records.
 
 ## Sandbox configuration and diagnostics
 
