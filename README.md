@@ -735,6 +735,28 @@ Login requires a saved context. Password and TOTP/recovery-code prompts hide inp
 
 Cloud disables password login (`password_login_disabled`). Sign into the target Workspace's WebUI, open browser developer tools → Application/Storage → Local Storage for that origin, and copy the `token` value. Paste it into `lbctl auth set-token --stdin` (finish stdin with EOF), or supply it through a protected stdin pipe. Treat it as a password and do not share it in logs or screenshots. The CLI does not refresh sessions: when the token expires or Core rejects a member request with 401/403, the error is `requires_member_session` (exit 3); log in again or import a fresh WebUI token. Missing tokens fail before any network request. `auth logout` removes the saved token; also unset `LANGBOT_USER_TOKEN` if exported. It does not revoke other browser sessions. Member permissions and Workspace binding are checked against `/api/v1/workspaces/current`; API-key-only system discovery endpoints are not used for member operation calls.
 
+### Collect explicit Artifacts
+
+Create a JSON/YAML manifest with IDs returned by Core and optional local filenames.
+
+```yaml
+artifacts:
+  - id: art_0123456789abcdef0123456789abcdef
+    name: report.pdf
+  - id: art_fedcba9876543210fedcba9876543210
+```
+
+```sh
+lbctl artifact collect --manifest outputs.yaml --dir ./delivery
+lbctl --as-member artifact collect --manifest outputs.yaml --dir ./delivery
+```
+
+`--manifest -` reads stdin. Names default to `ID.bin`, with a SHA-256-of-ID fallback for unsafe filenames. Explicit names are portable single filenames of at most 255 bytes. Paths, device names and trailing dots/spaces are rejected. Names must be unique ignoring case. Duplicate IDs with the same filename are fetched once and retain an occurrence count. Conflicting filenames for the same ID fail input validation before network access.
+
+Collection uses `resource.view` and the same captured API-key or member identity for each metadata and content request. Core authorizes every ID in both phases. Server-supplied names are retained as metadata. Local output paths derive from the manifest. Downloads are bounded by Core's 10 MiB limit and verified against metadata size and SHA-256, including binary and empty content. Verified temporary files are published with a no-replace hard link inside the output directory, requiring filesystem hard-link support. Existing matching files are authorized, downloaded and verified again. Existing different files produce `artifact_destination_conflict`.
+
+Human and JSON/YAML reports retain each ID, destination, stage, expected size/digest, received byte count/digest and structured error. Failed items leave completed files available, and HTTP 400/403/404/410, size limits and interrupted transfers retain their evidence. Cancellation preserves completed and unstarted item records. A partial failure exits nonzero.
+
 ### Binary files
 
 Binary uploads keep the existing multipart routes. `file image get <key> -O image.png` downloads original bytes from `/api/v1/files/image/<key>`, including on Core v4.11.8 without `operation.invoke`. Without `-O`, it writes binary stdout only when stdout is not a terminal. This command emits no JSON success envelope.

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/langbot-app/langbot-cli/internal/clientidentity"
@@ -17,6 +18,9 @@ import (
 )
 
 const operationsPath = "/api/v1/operations"
+
+// MaxArtifactBytes matches Core's authenticated Artifact read limit.
+const MaxArtifactBytes int64 = 10 << 20
 
 func ValidateOperationID(identifier string) error {
 	if identifier == "" || strings.IndexFunc(identifier, func(character rune) bool {
@@ -221,4 +225,46 @@ func (c Client) OperationStream(ctx context.Context, target Target, identifier s
 		return transportError(ctx, scanner.Err())
 	}
 	return result.New("network", i18n.T("SSE stream disconnected before done; do not retry automatically"))
+}
+
+// ArtifactDownload streams authorized binary content without JSON or text conversion.
+func (c Client) ArtifactDownload(ctx context.Context, target Target, identifier string, limit int64, destination io.Writer) (int64, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	path, err := resourcePath("/api/v1/artifacts", identifier)
+	if err != nil {
+		return 0, err
+	}
+	if limit < 1 || limit > MaxArtifactBytes || destination == nil {
+		return 0, result.New("input", i18n.T("Invalid Artifact download limit or destination"))
+	}
+	response, cancel, err := c.applicationRequest(ctx, target, http.MethodGet, path+"/content?max_bytes="+strconv.FormatInt(limit, 10), nil, "")
+	if err != nil {
+		return 0, err
+	}
+	defer cancel()
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		_, err := applicationResponse(response, target, false)
+		return 0, err
+	}
+	written, copyErr := io.Copy(destination, io.LimitReader(response.Body, limit+1))
+	if copyErr != nil {
+		callContext := ctx
+		if response.Request != nil {
+			callContext = response.Request.Context()
+		}
+		failure := transportError(callContext, copyErr)
+		failure.HTTPStatus = response.StatusCode
+		failure.RequestID = safeRequestID(response.Header.Get("X-Request-Id"), target.secret())
+		return written, failure
+	}
+	if written > limit {
+		failure := result.New("incompatible", i18n.T("Artifact content exceeds the download limit"))
+		failure.Type, failure.HTTPStatus = "artifact_too_large", response.StatusCode
+		failure.RequestID = safeRequestID(response.Header.Get("X-Request-Id"), target.secret())
+		return written, failure
+	}
+	return written, nil
 }

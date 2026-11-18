@@ -6,6 +6,27 @@ import (
 	"testing"
 )
 
+func TestArtifactCollectHumanOutputRetainsPartialDeliveryEvidence(t *testing.T) {
+	var out bytes.Buffer
+	value := map[string]any{"ok": false, "error": map[string]any{"message": "Artifact transfer failed"}, "data": map[string]any{
+		"operation": "artifact.collect", "directory": "delivery",
+		"summary": map[string]any{"saved": 1, "error": 1},
+		"files": []any{
+			map[string]any{"id": "art_complete", "file": "delivery/complete.bin", "status": "saved", "verified": true},
+			map[string]any{"id": "art_denied", "file": "delivery/denied.bin", "status": "error", "stage": "download", "size": 5, "received_bytes": 2,
+				"digest": "expected-sha", "received_sha256": "received-sha", "error": map[string]any{"http_status": 410, "server_code": "artifact_expired", "request_id": "request-evidence"}},
+		},
+	}}
+	if err := RenderCommand(&out, value, FormatDefault, "artifact.collect"); err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{"art_complete", "complete.bin", "art_denied", "denied.bin", "download", "expected-sha", "received-sha", "410", "artifact_expired", "request-evidence"} {
+		if !strings.Contains(out.String(), expected) {
+			t.Fatalf("human output lost %q: %s", expected, out.String())
+		}
+	}
+}
+
 func TestJournalIngestOutputShowsConfirmationPhases(t *testing.T) {
 	var out bytes.Buffer
 	value := map[string]any{"ok": false, "error": map[string]any{"type": "journal_unresolved", "message": "保留进度记录"}, "data": map[string]any{

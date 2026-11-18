@@ -4,6 +4,8 @@ import "github.com/langbot-app/langbot-cli/internal/i18n"
 
 // Labels apply only to human rendering. Protocol keys and resource names stay unchanged.
 var humanFieldLabels = map[string]string{
+	"metadata_id": i18n.Source("Metadata ID"), "digest": "SHA-256", "received_sha256": i18n.Source("Received SHA-256"),
+	"received_bytes": i18n.Source("Received bytes"), "occurrences": i18n.Source("Manifest occurrences"), "stage": i18n.Source("Stage"),
 	"cases": i18n.Source("Evaluation cases"), "case_id": i18n.Source("Case ID"), "query": i18n.Source("Query"), "expect": i18n.Source("Expected match"),
 	"hit_rate": i18n.Source("Hit rate"), "evaluated": i18n.Source("Evaluated"), "passed": i18n.Source("Passed"), "failed": i18n.Source("Failed"),
 	"empty_result": i18n.Source("Empty result"), "score_missing_count": i18n.Source("Results without a score"), "result_count": i18n.Source("Results within top-k"),

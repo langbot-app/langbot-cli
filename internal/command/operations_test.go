@@ -23,6 +23,368 @@ import (
 
 type operationTransport func(*http.Request) (*http.Response, error)
 
+func artifactMetadataResponse(w http.ResponseWriter, identifier, digest string, size int) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": map[string]any{
+		"id": identifier, "name": "../../same-name.bin", "size": size, "digest": digest,
+	}})
+}
+
+func TestArtifactCollectBinaryDuplicatesAndExistingFiles(t *testing.T) {
+	contents := map[string][]byte{"art_first": {'a', 0, 'b', '\n'}, "art_second": {255, 0, 10, 20}, "art_empty": {}}
+	metadataCalls, contentCalls := 0, 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if operationPreflight(w, r, true) {
+			return
+		}
+		if r.Header.Get("X-API-Key") != "test-secret" || r.Header.Get("Authorization") != "" {
+			t.Error("unexpected collection identity")
+		}
+		if r.URL.Path == "/api/v1/operations/artifact.get" {
+			var body struct {
+				ID string `json:"artifact_id"`
+			}
+			if json.NewDecoder(r.Body).Decode(&body) != nil {
+				t.Error("invalid metadata request")
+				return
+			}
+			metadataCalls++
+			payload := contents[body.ID]
+			artifactMetadataResponse(w, body.ID, fmt.Sprintf("%x", sha256.Sum256(payload)), len(payload))
+			return
+		}
+		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/v1/artifacts/"), "/content")
+		payload, exists := contents[id]
+		if !exists || r.Method != http.MethodGet {
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(404)
+			return
+		}
+		contentCalls++
+		w.Header().Set("Content-Type", "application/octet-stream")
+		_, _ = w.Write(payload)
+	}))
+	defer server.Close()
+	directory := filepath.Join(t.TempDir(), "delivery")
+	manifest := `artifacts:
+  - {id: art_first, name: first.bin}
+  - {id: art_second}
+  - {id: art_first, name: first.bin}
+  - {id: art_empty}
+`
+	code, out := operationCLI(t, server, manifest, "artifact", "collect", "--manifest", "-", "--dir", directory)
+	if code != 0 || metadataCalls != 3 || contentCalls != 3 {
+		t.Fatalf("code=%d metadata=%d content=%d %s", code, metadataCalls, contentCalls, out)
+	}
+	for id, payload := range contents {
+		name := id + ".bin"
+		if id == "art_first" {
+			name = "first.bin"
+		}
+		got, err := os.ReadFile(filepath.Join(directory, name))
+		if err != nil || !bytes.Equal(got, payload) {
+			t.Fatalf("%s=%v error=%v", name, got, err)
+		}
+	}
+	var envelope struct {
+		Data struct {
+			Summary map[string]int `json:"summary"`
+		} `json:"data"`
+	}
+	if json.Unmarshal([]byte(out), &envelope) != nil || envelope.Data.Summary["duplicates"] != 1 || envelope.Data.Summary["saved"] != 3 {
+		t.Fatal(out)
+	}
+	code, out = operationCLI(t, server, manifest, "artifact", "collect", "--manifest", "-", "--dir", directory)
+	if code != 0 || metadataCalls != 6 || contentCalls != 6 || !strings.Contains(out, "already_present") {
+		t.Fatalf("existing files bypassed authorization: %s", out)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "first.bin"), []byte("local edit"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	code, out = operationCLI(t, server, manifest, "artifact", "collect", "--manifest", "-", "--dir", directory)
+	if code == 0 || !strings.Contains(out, "artifact_destination_conflict") {
+		t.Fatal(out)
+	}
+	got, _ := os.ReadFile(filepath.Join(directory, "first.bin"))
+	if string(got) != "local edit" {
+		t.Fatal("overwrote different existing content")
+	}
+	entries, err := os.ReadDir(directory)
+	if err != nil || len(entries) != 3 {
+		t.Fatalf("left temporary or server-named files: %v %v", entries, err)
+	}
+}
+
+func TestArtifactCollectHTTPAndIntegrityEvidence(t *testing.T) {
+	identifiers := []string{"art_meta_400", "art_meta_403", "art_meta_404", "art_meta_410", "art_content_400", "art_content_403", "art_content_404", "art_content_410", "art_too_big", "art_invalid_digest", "art_bad_digest", "art_short", "art_overflow", "art_stream", "art_wrong_id", "art_good"}
+	contentCalls := map[string]int{}
+	payload := []byte{'a', 0, 'b', 'c', 'd'}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if operationPreflight(w, r, true) {
+			return
+		}
+		w.Header().Set("X-Request-Id", "collect-request")
+		if r.URL.Path == "/api/v1/operations/artifact.get" {
+			var body struct {
+				ID string `json:"artifact_id"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			if strings.HasPrefix(body.ID, "art_meta_") {
+				var status int
+				_, _ = fmt.Sscanf(strings.TrimPrefix(body.ID, "art_meta_"), "%d", &status)
+				w.WriteHeader(status)
+				fmt.Fprintf(w, `{"code":"artifact_%d","msg":"unavailable"}`, status)
+				return
+			}
+			digest, size, id := fmt.Sprintf("%x", sha256.Sum256(payload)), len(payload), body.ID
+			switch id {
+			case "art_too_big":
+				size = 10<<20 + 1
+			case "art_invalid_digest":
+				digest = "bad digest"
+			case "art_bad_digest":
+				digest = strings.Repeat("0", 64)
+			case "art_short":
+				size++
+			case "art_overflow":
+				size--
+			case "art_wrong_id":
+				id = "art_other"
+			}
+			artifactMetadataResponse(w, id, digest, size)
+			return
+		}
+		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/v1/artifacts/"), "/content")
+		contentCalls[id]++
+		if strings.HasPrefix(id, "art_content_") {
+			var status int
+			_, _ = fmt.Sscanf(strings.TrimPrefix(id, "art_content_"), "%d", &status)
+			w.WriteHeader(status)
+			fmt.Fprintf(w, `{"code":"artifact_%d","msg":"unavailable"}`, status)
+			return
+		}
+		if id == "art_stream" {
+			w.Header().Set("Content-Length", "5")
+			_, _ = w.Write(payload[:2])
+			return
+		}
+		_, _ = w.Write(payload)
+	}))
+	defer server.Close()
+	var manifest strings.Builder
+	manifest.WriteString("artifacts:\n")
+	for _, id := range identifiers {
+		fmt.Fprintf(&manifest, "  - {id: %s}\n", id)
+	}
+	directory := t.TempDir()
+	code, out := operationCLI(t, server, manifest.String(), "artifact", "collect", "--manifest", "-", "--dir", directory)
+	if code == 0 {
+		t.Fatal(out)
+	}
+	var envelope struct {
+		Data struct {
+			Files []struct {
+				ID       string `json:"id"`
+				Status   string `json:"status"`
+				Received int    `json:"received_bytes"`
+				Error    *struct {
+					Type       string `json:"type"`
+					HTTPStatus int    `json:"http_status"`
+					Code       any    `json:"server_code"`
+					RequestID  string `json:"request_id"`
+				} `json:"error"`
+			} `json:"files"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(out), &envelope); err != nil {
+		t.Fatalf("%v %s", err, out)
+	}
+	for index, row := range envelope.Data.Files {
+		if index < 8 {
+			want := []int{400, 403, 404, 410}[index%4]
+			if row.Error == nil || row.Error.HTTPStatus != want || row.Error.Code != fmt.Sprintf("artifact_%d", want) || row.Error.RequestID != "collect-request" {
+				t.Fatalf("missing HTTP evidence: %+v %s", row, out)
+			}
+		}
+		if row.ID == "art_bad_digest" || row.ID == "art_short" {
+			if row.Error == nil || row.Error.Type != "artifact_integrity_failed" || row.Received != len(payload) {
+				t.Fatalf("missing integrity evidence: %+v", row)
+			}
+		}
+		if row.ID == "art_stream" && (row.Error == nil || row.Received != 2) {
+			t.Fatalf("missing interrupted download evidence: %+v", row)
+		}
+	}
+	for _, id := range []string{"art_too_big", "art_invalid_digest", "art_wrong_id"} {
+		if contentCalls[id] != 0 {
+			t.Errorf("downloaded invalid metadata for %s", id)
+		}
+	}
+	entries, _ := os.ReadDir(directory)
+	if len(entries) != 1 || entries[0].Name() != "art_good.bin" {
+		t.Fatalf("partial files survived failures: %v %s", entries, out)
+	}
+}
+
+func TestArtifactCollectValidatesManifestOffline(t *testing.T) {
+	for _, manifest := range []string{
+		`{"artifacts":[]}`, `{"ids":["art_a"]}`,
+		`{"artifacts":[{"id":"../outside"}]}`,
+		`{"artifacts":[{"id":"art_a","name":"../outside"}]}`,
+		`{"artifacts":[{"id":"art_a","name":"C:\\outside.bin"}]}`,
+		`{"artifacts":[{"id":"art_a","name":"NUL.bin"}]}`,
+		`{"artifacts":[{"id":"art_a","name":"bad\u0000.bin"}]}`,
+		`{"artifacts":[{"id":"art_a","name":"same.bin"},{"id":"art_b","name":"SAME.bin"}]}`,
+		`{"artifacts":[{"id":"art_a","name":"one.bin"},{"id":"art_a","name":"two.bin"}]}`,
+		`{"artifacts":[{"id":"art_a","unknown":true}]}`,
+	} {
+		t.Run(manifest, func(t *testing.T) {
+			calls := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls++; w.WriteHeader(500) }))
+			defer server.Close()
+			directory := filepath.Join(t.TempDir(), "delivery")
+			code, out := operationCLI(t, server, manifest, "artifact", "collect", "--manifest", "-", "--dir", directory)
+			if code != 2 || calls != 0 {
+				t.Fatalf("code=%d calls=%d %s", code, calls, out)
+			}
+			if _, err := os.Stat(directory); !os.IsNotExist(err) {
+				t.Fatal("invalid manifest created an output directory")
+			}
+		})
+	}
+	t.Run("output path is a file", func(t *testing.T) {
+		calls := 0
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls++; w.WriteHeader(500) }))
+		defer server.Close()
+		path := filepath.Join(t.TempDir(), "existing.bin")
+		if err := os.WriteFile(path, []byte("existing"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		code, out := operationCLI(t, server, `artifacts: [{id: art_a}]`, "artifact", "collect", "--manifest", "-", "--dir", path)
+		if code != 2 || calls != 0 {
+			t.Fatalf("code=%d calls=%d %s", code, calls, out)
+		}
+	})
+}
+
+func TestArtifactCollectCancellationRetainsOnlyCompletedFiles(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	payload := []byte{1, 0, 2, 3}
+	metadataCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if operationPreflight(w, r, true) {
+			return
+		}
+		if r.URL.Path == "/api/v1/operations/artifact.get" {
+			var body struct {
+				ID string `json:"artifact_id"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			metadataCalls++
+			artifactMetadataResponse(w, body.ID, fmt.Sprintf("%x", sha256.Sum256(payload)), len(payload))
+			return
+		}
+		if strings.Contains(r.URL.Path, "art_second") {
+			cancel()
+			return
+		}
+		_, _ = w.Write(payload)
+	}))
+	defer server.Close()
+	directory := t.TempDir()
+	code, out := operationCLIContext(t, ctx, server, `artifacts: [{id: art_first}, {id: art_second}, {id: art_third}]`, nil, "artifact", "collect", "--manifest", "-", "--dir", directory)
+	if code == 0 || metadataCalls != 2 || !strings.Contains(out, "cancelled") || !strings.Contains(out, "not_started") {
+		t.Fatal(out)
+	}
+	entries, _ := os.ReadDir(directory)
+	if len(entries) != 1 || entries[0].Name() != "art_first.bin" {
+		t.Fatalf("interrupted files survived: %v %s", entries, out)
+	}
+}
+
+func TestArtifactCollectKeepsMemberAuthorizationForMetadataAndContent(t *testing.T) {
+	payloads := map[string][]byte{"art_a": {'a', 0, 255}, "art_b": {'b', 0, 128}, "art_read_denied": {0, 'x'}}
+	metadataCalls, contentCalls := map[string]int{}, map[string]int{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		actor := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if (actor != "member-a-token" && actor != "member-b-token") || r.Header.Get("X-API-Key") != "" {
+			t.Errorf("wrong member headers: %v", r.Header)
+			w.WriteHeader(401)
+			return
+		}
+		if r.URL.Path == "/api/v1/workspaces/current" {
+			fmt.Fprint(w, `{"code":0,"data":{"workspace":{"uuid":"workspace","instance_uuid":"instance"},"permissions":["resource.view"]}}`)
+			return
+		}
+		var id string
+		metadata := r.URL.Path == "/api/v1/operations/artifact.get"
+		if metadata {
+			var body struct {
+				ID string `json:"artifact_id"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			id = body.ID
+			metadataCalls[actor+"/"+id]++
+		} else {
+			id = strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/v1/artifacts/"), "/content")
+			contentCalls[actor+"/"+id]++
+		}
+		forbidden := id == "art_a" && actor != "member-a-token" || id == "art_b" && actor != "member-b-token" || id == "art_read_denied" && !metadata
+		if forbidden {
+			w.Header().Set("X-Request-Id", "member-denied")
+			w.WriteHeader(403)
+			fmt.Fprint(w, `{"code":"artifact_forbidden","msg":"denied"}`)
+			return
+		}
+		payload, exists := payloads[id]
+		if !exists {
+			t.Errorf("unexpected Artifact request %s", r.URL.Path)
+			w.WriteHeader(404)
+			return
+		}
+		if metadata {
+			artifactMetadataResponse(w, id, fmt.Sprintf("%x", sha256.Sum256(payload)), len(payload))
+			return
+		}
+		_, _ = w.Write(payload)
+	}))
+	defer server.Close()
+	for _, actor := range []string{"member-a-token", "member-b-token"} {
+		directory := t.TempDir()
+		if err := os.WriteFile(filepath.Join(directory, "art_read_denied.bin"), payloads["art_read_denied"], 0o600); err != nil {
+			t.Fatal(err)
+		}
+		configuration := filepath.Join(t.TempDir(), "config.yaml")
+		body := fmt.Sprintf("version: 1\ncurrent_context: test\ncontexts:\n  test:\n    endpoint: %s\n    expected_workspace_uuid: workspace\n    user_token: %s\n", server.URL, actor)
+		if err := os.WriteFile(configuration, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		var out bytes.Buffer
+		code := executeChinese(context.Background(), []string{"--config", configuration, "--as-member", "-o", "json", "artifact", "collect", "--manifest", "-", "--dir", directory}, Dependencies{
+			In: strings.NewReader(`artifacts: [{id: art_a}, {id: art_b}, {id: art_read_denied}]`), Out: &out, Err: &out, Version: "test",
+			LookupEnv: func(string) (string, bool) { return "", false },
+		})
+		if code == 0 || strings.Contains(out.String(), actor) || !strings.Contains(out.String(), `"http_status": 403`) || !strings.Contains(out.String(), "member-denied") {
+			t.Fatal(out.String())
+		}
+		own, foreign := "art_a", "art_b"
+		if actor == "member-b-token" {
+			own, foreign = foreign, own
+		}
+		got, err := os.ReadFile(filepath.Join(directory, own+".bin"))
+		if err != nil || !bytes.Equal(got, payloads[own]) {
+			t.Fatalf("lost authorized member file: %v %s", err, out.String())
+		}
+		if _, err := os.Stat(filepath.Join(directory, foreign+".bin")); !os.IsNotExist(err) {
+			t.Fatal("delivered another member's Artifact")
+		}
+		if metadataCalls[actor+"/"+foreign] != 1 || contentCalls[actor+"/"+foreign] != 0 || contentCalls[actor+"/"+own] != 1 || contentCalls[actor+"/art_read_denied"] != 1 {
+			t.Fatalf("authorization phases skipped: %v %v", metadataCalls, contentCalls)
+		}
+	}
+}
+
 func (transport operationTransport) RoundTrip(request *http.Request) (*http.Response, error) {
 	return transport(request)
 }

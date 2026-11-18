@@ -166,6 +166,7 @@ func commandGroup(root *cobra.Command, path []string) *cobra.Command {
 }
 
 func addOperationCommands(root *cobra.Command, service *app.Service, deps Dependencies, flags *globalFlags) {
+	commandGroup(root, []string{"artifact"}).AddCommand(newArtifactCollectCommand(service, deps, flags))
 	op := commandGroup(root, []string{"op"})
 	var domain, search string
 	list := &cobra.Command{Use: "list", Short: i18n.T("List operations available to the current identity"), Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
@@ -205,6 +206,26 @@ func addOperationCommands(root *cobra.Command, service *app.Service, deps Depend
 	}
 	addPermissionCommand(root, service, deps, flags)
 	addOperationUploads(root, service, deps, flags)
+}
+
+func newArtifactCollectCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
+	var manifest, directory string
+	command := &cobra.Command{Use: "collect", Short: i18n.T("Collect explicitly listed Artifacts into a directory"), Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			body, err := loadRequestBody(cmd.Context(), manifest, flags.apiKeyStdin, deps.In)
+			if err != nil {
+				return emitCommand(deps, flags, app.Result{}, err)
+			}
+			return emitCall(deps, flags, func() (app.Result, error) {
+				return service.ArtifactCollect(cmd.Context(), body, directory, connectionOptions(flags))
+			})
+		},
+	}
+	command.Flags().StringVar(&manifest, "manifest", "", i18n.T("Artifact ID manifest JSON/YAML file (- reads stdin)"))
+	command.Flags().StringVar(&directory, "dir", "", i18n.T("Output directory for verified Artifact files"))
+	_ = command.MarkFlagRequired("manifest")
+	_ = command.MarkFlagRequired("dir")
+	return command
 }
 
 func confirmOperation(deps Dependencies, yes bool, stdinUsed bool) error {

@@ -5,6 +5,7 @@ import "github.com/langbot-app/langbot-cli/internal/i18n"
 import "strings"
 
 func init() {
+	schemaMetaByName["artifact.collect"] = readMetaWithFlags(operationIDs(preconditionID("operation.invoke"), "artifact.get", "artifact.read"), "manifest", "dir")
 	schemaMetaByName["auth.show-key"] = schemaCommandMeta{RequiresYes: true, ConditionalOutputs: []schemaConditionalOutput{{When: flagEquals("yes", true), Format: "default", Encoding: "text-lines"}}}
 	schemaMetaByName["auth.login"] = schemaCommandMeta{Mutating: true, RequiresConnection: true, RequiresSavedContext: true, RequiredFlags: requiredFlagSet("email")}
 	schemaMetaByName["auth.set-token"] = schemaCommandMeta{Mutating: true, RequiresSavedContext: true, RequiredFlags: requiredFlagSet("stdin")}

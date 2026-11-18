@@ -708,6 +708,28 @@ lbctl auth logout
 
 Cloud 禁用密码登录，返回 `password_login_disabled`。先登录目标 Workspace 的 WebUI，在浏览器开发者工具 → Application/Storage → 对应域名的 Local Storage 中复制 `token`，粘贴到 `lbctl auth set-token --stdin` 并以 EOF 结束，或通过受保护的 stdin 管道传入。token 等同密码，不要放进日志或截图。CLI 不自动续期：过期或成员请求被 Core 返回 401/403 时统一报 `requires_member_session`（退出码 3），需重新登录或导入新的 WebUI token；缺少 token 时发请求之前即报错。`auth logout` 清除保存的 token；若使用环境变量还需 `unset LANGBOT_USER_TOKEN`，它不会撤销其他浏览器会话。成员操作通过 `/api/v1/workspaces/current` 核验权限和 Workspace 绑定，不使用仅允许 API Key 的 system 身份探测接口。
 
+### 按显式清单交付 Artifact
+
+创建 JSON/YAML 清单，填写 Core 返回的 ID，也可指定本地文件名。
+
+```yaml
+artifacts:
+  - id: art_0123456789abcdef0123456789abcdef
+    name: report.pdf
+  - id: art_fedcba9876543210fedcba9876543210
+```
+
+```sh
+lbctl artifact collect --manifest outputs.yaml --dir ./delivery
+lbctl --as-member artifact collect --manifest outputs.yaml --dir ./delivery
+```
+
+`--manifest -` 读取标准输入。默认文件名为 `ID.bin`，不安全的名称使用 ID 的 SHA-256 生成。显式名称须为最多 255 字节的可移植单个文件名，路径、设备名和尾部空格/点会在本地校验时拒绝。文件名按忽略大小写校验唯一性。同一 ID 与文件名重复时只获取一次，并记录出现次数。同一 ID 指向不同文件名时，会在网络访问前返回输入错误。
+
+收取使用 `resource.view` 权限，每个 ID 的元数据与内容请求使用同一份 API Key 或成员身份快照，并分别由 Core 授权。服务端名称保留为元数据，本地输出路径由清单决定。下载遵循 Core 的 10 MiB 限额，按元数据大小与 SHA-256 校验二进制和空内容。校验通过的临时文件通过输出目录内的无覆盖硬链接原子发布，因此文件系统需要支持硬链接。已有同内容文件仍会重新授权、下载和校验。已有异内容文件返回 `artifact_destination_conflict`。
+
+Human 和 JSON/YAML 报告保留逐项 ID、目标、阶段、预期大小/摘要、实际接收字节数/摘要和结构化错误。失败条目会保留已完成文件，HTTP 400/403/404/410、超限和传输中断证据保存在逐项结果中。取消会保留已完成和未开始记录。部分失败时退出码非零。
+
 ### 二进制文件
 
 上传继续使用已有 multipart 路由。`file image get <key> -O image.png` 从 `/api/v1/files/image/<key>` 下载原始字节，不依赖 `operation.invoke`，Core v4.11.8 也可使用。不传 `-O` 时仅允许向非终端 stdout 写入二进制；成功时不输出 JSON envelope。
