@@ -3,7 +3,7 @@ package i18n
 func init() {
 	for key, value := range map[string]string{
 		"Metadata ID": "元数据 ID", "Received SHA-256": "接收内容 SHA-256", "Received bytes": "接收字节数",
-		"Manifest occurrences": "清单出现次数", "Stage": "阶段",
+		"Manifest occurrences": "清单出现次数",
 		"Collect explicitly listed Artifacts into a directory":                                 "将清单明示的 Artifact 收取到目录",
 		"Artifact ID manifest JSON/YAML file (- reads stdin)":                                  "Artifact ID 清单 JSON/YAML 文件，- 读取标准输入",
 		"Output directory for verified Artifact files":                                         "已验证 Artifact 文件的输出目录",

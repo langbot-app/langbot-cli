@@ -5,7 +5,7 @@ import "github.com/langbot-app/langbot-cli/internal/i18n"
 // Labels apply only to human rendering. Protocol keys and resource names stay unchanged.
 var humanFieldLabels = map[string]string{
 	"metadata_id": i18n.Source("Metadata ID"), "digest": "SHA-256", "received_sha256": i18n.Source("Received SHA-256"),
-	"received_bytes": i18n.Source("Received bytes"), "occurrences": i18n.Source("Manifest occurrences"), "stage": i18n.Source("Stage"),
+	"received_bytes": i18n.Source("Received bytes"), "occurrences": i18n.Source("Manifest occurrences"),
 	"cases": i18n.Source("Evaluation cases"), "case_id": i18n.Source("Case ID"), "query": i18n.Source("Query"), "expect": i18n.Source("Expected match"),
 	"hit_rate": i18n.Source("Hit rate"), "evaluated": i18n.Source("Evaluated"), "passed": i18n.Source("Passed"), "failed": i18n.Source("Failed"),
 	"empty_result": i18n.Source("Empty result"), "score_missing_count": i18n.Source("Results without a score"), "result_count": i18n.Source("Results within top-k"),
@@ -38,7 +38,7 @@ var humanFieldLabels = map[string]string{
 	"dir": i18n.Source("Deployment directory"), "endpoint": i18n.Source("URL"), "current": i18n.Source("Current"), "name": i18n.Source("Name"),
 	"server_version": i18n.Source("Core version"), "server_edition": i18n.Source("Edition"), "for_version": i18n.Source("Core version"),
 	"http_status": i18n.Source("HTTP status"), "server_code": i18n.Source("Server error code"), "request_id": i18n.Source("Request ID"),
-	"enable": i18n.Source("Enable"), "enabled": i18n.Source("Enable"), "status": i18n.Source("Status"), "state": i18n.Source("Status"), "health": i18n.Source("Health check"),
+	"enable": i18n.Source("Enable"), "enabled": i18n.Source("Enable"), "status": i18n.Source("Status"), "state": i18n.Source("Status"), "stage": i18n.Source("Stage"), "health": i18n.Source("Health check"),
 	"bots": i18n.Source("Bots"), "pipelines": i18n.Source("Pipelines"), "providers": i18n.Source("Model providers"), "models": i18n.Source("Models"),
 	"bases": i18n.Source("Knowledge bases"), "files": i18n.Source("Files"), "servers": i18n.Source("MCP Servers"), "plugins": i18n.Source("Plugins"),
 	"skills": i18n.Source("Skills"), "tasks": i18n.Source("Tasks"), "operations": i18n.Source("Capabilities"), "checks": i18n.Source("Check result"),
