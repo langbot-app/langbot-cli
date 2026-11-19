@@ -228,6 +228,7 @@ func init() {
 		"Stopped waiting for plugin initialization":                                                            "已停止等待插件初始化",
 		"Inspect the installed plugin":                                                                         "查看已安装插件",
 		"Review plugin permissions":                                                                            "审阅插件权限",
+		"Review permissions in this Workspace's WebUI, or use lbctl plugin permissions confirm. Run this command again to check the resulting state.": "可在此 Workspace 的 WebUI 中审阅权限，也可使用 lbctl plugin permissions confirm。随后再次运行此命令核对状态。",
 
 		"Watch Bot execution states and recorded deliveries":                                              "值守 Bot 执行状态及已记录投递",
 		"Polling interval and request budgets must be positive":                                           "轮询间隔和请求预算必须大于零",

@@ -18,6 +18,14 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
+func (session *OperationSession) PluginApprovalHint() map[string]any {
+	return map[string]any{
+		"url":            strings.TrimRight(session.Target.Endpoint, "/") + "/home/extensions",
+		"workspace_uuid": session.preflight.Identity.WorkspaceUUID,
+		"message":        i18n.T("Review permissions in this Workspace's WebUI, or use lbctl plugin permissions confirm. Run this command again to check the resulting state."),
+	}
+}
+
 func (session *OperationSession) ConfirmPlugin(ctx context.Context, author, name string, capabilities, operations []string) (any, error) {
 	if session.Target.UserToken == "" && !session.preflight.Capabilities.Operations["plugin.permissions.confirm_api_key"] {
 		return nil, result.New("incompatible", i18n.T("Core does not yet support confirming plugin permissions with an API Key"))

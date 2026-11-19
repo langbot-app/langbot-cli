@@ -748,6 +748,8 @@ lbctl plugin permissions confirm <author> <name> --yes
 lbctl plugin permissions confirm <author> <name> --capability storage.plugin --operation agent.list --yes
 ```
 
+When `plugin permissions get` reports pending confirmation, its human, JSON, and YAML output includes an optional WebUI extensions URL and the target Workspace. Review permissions there with an authorized account, or use `plugin permissions confirm`. Run the command again after approval to check the resulting state.
+
 Confirmation grants all declared permissions unless individual IDs are supplied. Compatibility-mode plugins always receive the complete declared set. Core checks each grant against the API key's own permissions. `--confirm-permissions` implies waiting for successful installation, confirming, and verifying that the plugin is enabled. It requires `plugin.permissions.confirm_api_key` and `operation.invoke`; failure never proceeds to confirmation. Local/GitHub identity comes from the package manifest, not the filename/repository name. GitHub confirmation downloads the selected public release asset to inspect its manifest without sending the Workspace key to GitHub.
 
 ### Core access boundaries
