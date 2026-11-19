@@ -1011,3 +1011,28 @@ func TestMaliciousResponseDoesNotLeakKey(t *testing.T) {
 		t.Fatalf("协议错误泄露 API Key: %v", err)
 	}
 }
+
+func TestMemberTaskProjectsOnlyObservedLifecycle(t *testing.T) {
+	for _, test := range []struct {
+		state     string
+		done      bool
+		exception any
+		want      string
+	}{
+		{"PENDING", false, nil, "running"},
+		{"FINISHED", true, nil, "succeeded"},
+		{"FINISHED", true, "private traceback detail", "failed"},
+		{"CANCELLED", true, nil, "cancelled"},
+		{"FINISHED", false, nil, ""},
+		{"UNKNOWN", true, nil, ""},
+	} {
+		data := map[string]any{"id": json.Number("8"), "task_type": "user", "created_at": json.Number("1"), "kind": "plugin-operation", "runtime": map[string]any{"state": test.state, "done": test.done, "exception": test.exception, "exception_traceback": "private traceback", "result": "private raw result"}}
+		task, ok := parseTaskData(data, "8", true)
+		if ok != (test.want != "") || task.Status != test.want || task.Result != nil || (task.Error != nil) != (test.want == "failed" || test.want == "cancelled") {
+			t.Fatalf("state %s projected %#v, valid=%t", test.state, task, ok)
+		}
+		if _, ok := parseTaskData(data, "8", false); ok {
+			t.Fatal("API key accepted private task shape")
+		}
+	}
+}

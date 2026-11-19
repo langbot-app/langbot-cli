@@ -265,6 +265,8 @@ func newRoot(deps Dependencies, flags *globalFlags, service *app.Service) *cobra
 	root.AddCommand(newKnowledgeBaseCommand(service, deps, flags))
 	root.AddCommand(newKnowledgeEngineCommand(service, deps, flags), newKnowledgeParserCommand(service, deps, flags))
 	root.AddCommand(newMonitoringCommand(service, deps, flags))
+	addMonitoringTrace(root, service, deps, flags)
+	addMonitoringWatch(root, service, deps, flags)
 	root.AddCommand(newSandboxCommand(service, deps, flags))
 	root.AddCommand(newPluginCommand(service, deps, flags))
 	root.AddCommand(newSkillCommand(service, deps, flags))
@@ -881,19 +883,20 @@ func newPluginCommand(service *app.Service, deps Dependencies, flags *globalFlag
 	install.AddCommand(local)
 	command.AddCommand(install)
 
-	var upgradeDryRun, upgradeWait bool
+	var upgradeDryRun, upgradeWait, upgradeConfirm bool
 	var upgradePollInterval, upgradeWaitTimeout time.Duration
 	upgrade := &cobra.Command{Use: "upgrade <author> <name>", Short: i18n.T("Upgrade an installed Plugin"), Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := validateWaitFlags(upgradeDryRun, upgradeWait, upgradePollInterval, upgradeWaitTimeout); err != nil {
+			if err := validateWaitFlags(upgradeDryRun, upgradeWait || (upgradeConfirm && !upgradeDryRun), upgradePollInterval, upgradeWaitTimeout); err != nil {
 				return emitCommand(deps, flags, app.Result{}, err)
 			}
 			return emitCall(deps, flags, func() (app.Result, error) {
-				return service.PluginUpgrade(cmd.Context(), args[0], args[1], upgradeDryRun, upgradeWait, app.WaitOptions{Wait: upgradeWait, PollInterval: upgradePollInterval, WaitTimeout: upgradeWaitTimeout}, connectionOptions(flags))
+				return service.PluginUpgrade(cmd.Context(), args[0], args[1], upgradeDryRun, upgradeWait, app.WaitOptions{Wait: upgradeWait, ConfirmPermissions: upgradeConfirm, PollInterval: upgradePollInterval, WaitTimeout: upgradeWaitTimeout}, connectionOptions(flags))
 			})
 		},
 	}
 	newTaskFlags(upgrade, &upgradeDryRun, &upgradeWait, &upgradePollInterval, &upgradeWaitTimeout)
+	upgrade.Flags().BoolVar(&upgradeConfirm, "confirm-permissions", false, i18n.T("Wait for upgrade and confirm all declared plugin permissions"))
 	command.AddCommand(upgrade)
 	return command
 }
@@ -1906,7 +1909,7 @@ func enrichResult(deps Dependencies, flags *globalFlags, value app.Result, err e
 				add(label, base, "install", "--help")
 			} else if e.Message == i18n.T("Server has not explicitly confirmed support for this operation") || e.Message == i18n.T("Server explicitly does not support this operation") {
 				add(i18n.T("Show capabilities supported by current target"), connect, "capabilities")
-			} else {
+			} else if data["readiness"] == nil {
 				add(i18n.T("Check target and Workspace binding"), connect, "context", "show")
 			}
 		case "network", "result_unknown":
@@ -1966,6 +1969,49 @@ func enrichResult(deps Dependencies, flags *globalFlags, value app.Result, err e
 			if id, ok := data["task_id"].(string); ok && id != "" {
 				add(i18n.T("Track task progress"), connect, "task", "get", id, "--wait")
 			}
+		}
+	}
+	if flags.commandPath == "agent.runs.watch" && err != nil && result.AsError(err).Kind != "input" && data["last_sequence"] != nil {
+		processor, _ := data["processor_id"].(string)
+		run, _ := data["run_id"].(string)
+		if processor != "" && run != "" {
+			if flags.asMember {
+				connect = append(connect, "--as-member")
+			}
+			add(i18n.T("Resume observing Agent run events"), connect, "agent", "runs", "watch", processor, run, "--after-sequence", fmt.Sprint(data["last_sequence"]))
+		}
+	}
+	if flags.commandPath == "monitoring.watch" && err != nil && data["start_time"] != nil {
+		if flags.asMember {
+			connect = append(connect, "--as-member")
+		}
+		arguments := []string{"monitoring", "watch", "--bot", fmt.Sprint(data["bot_id"]), "--start-time", fmt.Sprint(data["start_time"]), "--poll-interval", fmt.Sprint(data["poll_interval"]), "--max-pages", fmt.Sprint(data["max_pages"]), "--max-details", fmt.Sprint(data["max_details"])}
+		if flags.output != "" {
+			arguments = append(arguments, "-o", flags.output)
+		}
+		add(i18n.T("Resume observing Bot executions"), connect, arguments...)
+	}
+	if flags.commandPath == "assistant.chat" {
+		if id, ok := data["conversation_id"].(string); ok && id != "" {
+			add(i18n.T("Inspect the latest conversation"), connect, "assistant", "chat", id, "-o", "json")
+			if data["status"] == "approval" {
+				for _, decision := range []string{"approve", "reject"} {
+					add(i18n.T("Review the pending batch"), connect, "assistant", "chat", id, "--"+decision, "--revision", fmt.Sprint(data["revision"]), "--yes")
+				}
+			}
+		} else if data["action"] == "create" {
+			add(i18n.T("List Assistant conversations"), connect, "assistant", "list")
+		}
+	}
+	if flags.commandPath == "plugin.upgrade" && data["readiness"] != nil && err != nil {
+		author, _ := data["author"].(string)
+		name, _ := data["name"].(string)
+		if flags.asMember {
+			connect = append(connect, "--as-member")
+		}
+		add(i18n.T("Inspect the installed plugin"), connect, "plugin", "get", author, name)
+		if data["readiness"] == "pending_confirmation" {
+			add(i18n.T("Review plugin permissions"), connect, "plugin", "permissions", "get", author, name)
 		}
 	}
 	if len(steps) > 0 {

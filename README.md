@@ -386,6 +386,8 @@ lbctl skill install upload --dir ./my-skill
 lbctl skill delete <name> --yes
 ```
 
+For marketplace plugins, `upgrade --wait` reads the running version, initialization state and component count. Pending permissions produce a nonzero exit and a review command. Add `--confirm-permissions` to grant all declared permissions and wait for initialization. An unchanged version is reported explicitly.
+
 Skill installation with `--dry-run` uses a server-side preview. Plugin installation, upgrade, and deletion support `--wait` to follow asynchronous tasks.
 
 `skill install upload --dir` packages a local directory, including relative paths and hidden files. It skips `.git`, rejects symbolic links, and enforces the 10 MB ZIP upload limit. Choose one of `--file` and `--dir`.
@@ -558,9 +560,22 @@ lbctl monitoring llm-calls --pipeline PIPELINE_UUID
 lbctl monitoring tool-calls --session SESSION_ID
 lbctl monitoring embedding-calls --knowledge-base KB_UUID
 lbctl monitoring sessions --active true
+lbctl monitoring trace --bot BOT_UUID --session SESSION_ID --since 2h -o json
+lbctl monitoring watch --bot BOT_UUID --since 15m
+lbctl monitoring watch --bot BOT_UUID --start-time 2026-11-18T00:00:00Z --timeout 1h -o json
 ```
 
+`monitoring trace` collects the selected Bot and session's messages, executions, routing evidence, model/tool calls, generated outputs and platform deliveries. It follows explicit record IDs and pages every execution section. The report contains status/error projections and record locators. Use each locator's operation/input to inspect full details. `--since` selects a lookback window, and linked details preserve their full record chain. The default covers accessible session history, with `--timeout` bounding collection.
+
+`first_error` identifies the earliest timestamped confirmed failure when ordering is established. Unknown failure timestamps or tied earliest records produce `first_error=null` and `error_ordering=undetermined`. `errors` retains all confirmed failures, with untimed evidence also listed in `unordered_errors`. Untimed failures, legacy context, missing links, changed/deleted records and incomplete pages appear in `issues` with `partial=true` and a nonzero exit code. Successful generation and platform delivery have separate records. Unlinked historical replies appear as `session_context`. Related records retain their execution identities and `record_source` distinguishes record namespaces.
+
 Runtime-record queries require `resource.view`. Lists support `--limit 1..500` and `--offset`, subject to Core's limits. `--start-time` and `--end-time` use ISO 8601. See each command's `--help` for filters.
+
+`monitoring watch` emits new and changed executions keyed by source and ID. Its initial replay uses `--since` (default `15m`) or an absolute `--start-time`. Subsequent completed list scans use a rolling 15-minute window. Tracked active executions continue through budgeted detail reads, including a terminal status and reply arriving after their creation time leaves the list window. Agent ledger status and directly recorded delivery evidence have separate fields. Pipeline ledger status is `unknown`. `delivery_status` reports `unknown`, `recorded_success`, `recorded_failure` or `mixed`, with record locators in JSON/YAML.
+
+The default watch continues until Ctrl+C. HTTP requests retain their configured timeout, and an explicit global `--timeout` limits the watch lifetime. Polling defaults to `5s`. Each round fixes its end time and initial list count, reads up to `--max-pages` list pages (default `10`, 100 rows each), and makes up to `--max-details` delivery requests (default `20`). Detail work rotates fairly, carrying long delivery page cursors across rounds. Recent executions, including those with an existing reply, receive delivery refreshes for 15 minutes after their recorded finish time, or creation time when the finish time is missing. Active executions remain eligible within the request budget. Reports include `delivery_watch_until`, `delivery_watch_expired`, the current `scan_start_time`, deferred work and truncation counts.
+
+The cache holds at most `min(max-pages, 10) * 100` executions and 1000 delivery records per execution. Capacity losses, incomplete pages and source failures produce `partial=true`. Normal retirement of terminal executions outside the declared window appears in expiry/eviction counters. `last_complete_start` and `last_complete_end` describe the completed snapshot window. JSON emits a stream of envelopes and YAML emits separate documents, with execution changes, round progress and a final summary. Ctrl+C and timeout return a nonzero result containing a resumable command. Restarting with the printed `--start-time` replays its window and can repeat earlier observations. Transient read failures reconnect using the retained window and in-process deduplication. These are polled observations of execution and delivery records.
 
 ## Sandbox configuration and diagnostics
 
@@ -625,6 +640,21 @@ lbctl agent debug <agent-uuid> --message 'Summarize the attachments' --attach ./
 Repeat `--attach` to upload local files with the same caller identity used for debugging. It also works with `--file`, merging uploaded IDs into `payload.artifact_ids`. Each local file is limited to 10 MiB, with at most 20 distinct references in total. An upload failure prevents the debug run. Timeouts do not trigger an automatic rerun. Debug events stream as they arrive. Core authorizes the attachments and supplies their references to the Runner. The Runner and model determine how their content is read and interpreted.
 
 `agent debug --message` sends text as `payload.text`. Choose one of `--message` and `--file`.
+
+Follow an existing run with `lbctl agent runs watch <agent-uuid> <run-id>`. Each event carries its sequence. Pass the last emitted sequence to `--after-sequence` to continue after an interruption. Set the total observation time with `--timeout 5m`.
+
+Use a saved member session for device login and Assistant conversations.
+
+```bash
+lbctl provider codex login <provider-uuid> --yes
+lbctl assistant chat --message 'List my bots' --yes -o json
+lbctl assistant chat <conversation-id> -o json
+lbctl assistant chat <conversation-id> --approve --revision 1 --yes
+```
+
+Device login prints the verification URL and code before polling. Use `--wait-timeout` to limit the wait. In a terminal, `lbctl assistant chat` prompts for messages and shows each proposed tool batch. For scripts, inspect the pending calls and pass their current revision with `--approve` or `--reject`. A disconnected chat can be inspected by its conversation ID.
+
+To switch one existing Bot route, get its binding ID with `lbctl bot get <bot-uuid>`. Preview with `lbctl bot routes bind <bot-uuid> --binding <id> --agent <agent-uuid> --dry-run`, then apply with `--yes`. Use `--pipeline` for a Pipeline target. This command requires the Core `bot.routes.bind` operation.
 
 `op call` accepts an optional JSON/YAML object via `--file path` or `--file -`, defaulting to `{}`; `op stream` requires `--file`. Generic calls obtain risk and execution mode from `op describe`; catalog-hidden IDs already registered by this CLI use their built-in contracts. Unknown hidden IDs remain unavailable. Writes and high/dangerous-risk operations require interactive confirmation or `--yes`. Friendly commands use their registered operation contracts and the same confirmation rule. Writes require a saved, Workspace-bound context. Stdin cannot simultaneously supply a request body, an API key, or a confirmation answer. Streams emit each event immediately in the selected format, then a completion result; errors or disconnection before `done` fail without retrying.
 

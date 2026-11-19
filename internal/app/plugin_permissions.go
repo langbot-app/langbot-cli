@@ -19,7 +19,7 @@ import (
 )
 
 func (session *OperationSession) ConfirmPlugin(ctx context.Context, author, name string, capabilities, operations []string) (any, error) {
-	if !session.preflight.Capabilities.Operations["plugin.permissions.confirm_api_key"] {
+	if session.Target.UserToken == "" && !session.preflight.Capabilities.Operations["plugin.permissions.confirm_api_key"] {
 		return nil, result.New("incompatible", i18n.T("Core does not yet support confirming plugin permissions with an API Key"))
 	}
 	if err := session.Authorize(map[string]any{"side_effect": true, "permission": "resource.manage"}); err != nil {
@@ -76,6 +76,71 @@ func (session *OperationSession) ConfirmPlugin(ctx context.Context, author, name
 		return value, result.New("server", i18n.T("Plugin not enabled after confirming permissions; inspect plugin permission status"))
 	}
 	return value, nil
+}
+
+func (session *OperationSession) verifyUpgradedPlugin(ctx context.Context, author, name string, options WaitOptions, data map[string]any) error {
+	client, target := session.Client, session.Target
+	data["readiness"] = "unknown"
+	plugin, err := client.PluginGet(ctx, target, author, name)
+	if err != nil {
+		return err
+	}
+	data["plugin"] = plugin
+	if plugin["pending_confirmation"] == true || plugin["status"] == "pending_confirmation" {
+		data["readiness"] = "pending_confirmation"
+		if !options.ConfirmPermissions {
+			permissions, err := client.OperationCall(ctx, target, "plugin.permissions.get", map[string]any{"author": author, "plugin_name": name})
+			if err != nil {
+				return err
+			}
+			data["permissions"] = permissions
+			return result.New("precondition", i18n.T("Upgrade installed. Review pending plugin permissions"))
+		}
+		permissions, err := session.ConfirmPlugin(ctx, author, name, nil, nil)
+		data["permissions"] = permissions
+		data["readiness"] = "unknown"
+		if err != nil {
+			// Confirmation can take effect before the response is lost. Only read back.
+			if latest, readErr := client.PluginGet(ctx, target, author, name); readErr == nil {
+				data["plugin"] = latest
+				if latest["pending_confirmation"] == true || latest["status"] == "pending_confirmation" {
+					data["readiness"] = "pending_confirmation"
+				}
+			}
+			return err
+		}
+		plugin, err = client.PluginGet(ctx, target, author, name)
+		if err != nil {
+			return err
+		}
+		data["plugin"] = plugin
+	}
+	interval := options.PollInterval
+	if interval <= 0 {
+		interval = time.Second
+	}
+	for plugin["enabled"] == true && (plugin["status"] == "mounted" || plugin["status"] == "unmounted") {
+		select {
+		case <-ctx.Done():
+			return result.New("network", i18n.T("Stopped waiting for plugin initialization"))
+		case <-time.After(interval):
+		}
+		plugin, err = client.PluginGet(ctx, target, author, name)
+		if err != nil {
+			return err
+		}
+		data["plugin"] = plugin
+	}
+	version, _ := plugin["version"].(string)
+	installedVersion, _ := plugin["installed_version"].(string)
+	if version == "" || installedVersion != "" && installedVersion != version || plugin["enabled"] != true || plugin["status"] != "initialized" || plugin["pending_confirmation"] == true || plugin["component_count"] == nil {
+		return result.New("precondition", i18n.T("Upgrade installed. Runtime readiness could not be verified"))
+	}
+	data["readiness"] = "ready"
+	if previous, ok := data["previous_version"].(string); ok && previous != "" {
+		data["version_changed"] = previous != version
+	}
+	return nil
 }
 
 func pluginArchiveIdentity(content []byte) (string, string, error) {

@@ -190,6 +190,22 @@ func renderDefaultData(w io.Writer, value any, command string) error {
 		return renderValue(w, value, "")
 	}
 	switch command {
+	case "monitoring.watch":
+		_, err := fmt.Fprintf(w, i18n.T("Retained %s executions and emitted %s changes across %s rounds")+"\n", formatCell(data["executions_retained"]), formatCell(data["changes_emitted"]), formatCell(data["round"]))
+		return err
+	case "monitoring.trace":
+		if err := renderFields(w, data, []string{"bot_id", "session_id", "complete", "partial", "error_ordering"}); err != nil {
+			return err
+		}
+		if err := renderValue(w, data["first_error"], fieldLabel("first_error")); err != nil {
+			return err
+		}
+		if items, ok := data["timeline"].([]any); ok {
+			if err := renderResourceList(w, "timeline", items); err != nil {
+				return err
+			}
+		}
+		return renderValue(w, data["issues"], fieldLabel("issues"))
 	case "list":
 		items, _ := data["instances"].([]any)
 		return renderResourceList(w, "instances", items)
@@ -837,7 +853,11 @@ func renderAction(w io.Writer, data map[string]any) error {
 				if _, err := fmt.Fprintln(w, fmt.Sprintf(i18n.T("%s:"), fieldLabel(key))); err != nil {
 					return err
 				}
-				if err := renderFields(w, resource, []string{"uuid", "author", "name"}); err != nil {
+				fields := []string{"uuid", "author", "name"}
+				if key == "plugin" && data["readiness"] != nil {
+					fields = append(fields, "version", "installed_version", "enabled", "status", "component_count")
+				}
+				if err := renderFields(w, resource, fields); err != nil {
 					return err
 				}
 				continue
@@ -930,6 +950,8 @@ func commandListKey(command string) string {
 
 func resourceFields(key string) []string {
 	switch key {
+	case "timeline":
+		return []string{"time", "stage", "record_source", "id", "status", "error"}
 	case "instances":
 		return []string{"name", "dir", "port", "status", "autostart"}
 	case "deployments":

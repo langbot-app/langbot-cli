@@ -983,6 +983,7 @@ var chinese = map[string]string{
 	"Version":                           "版本",
 	"Version must be a stable Release tag in vX.Y.Z format": "版本必须为 vX.Y.Z 形式的稳定 Release tag",
 	"Edition":        "版本类型",
+	"Stage":          "阶段",
 	"Status":         "状态",
 	"Status unknown": "状态未知",
 	"Unique Compose project name; use different names for multiple instances": "独立的 Compose project 名称；安装多个实例时使用不同名称",

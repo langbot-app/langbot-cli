@@ -26,7 +26,7 @@ var humanFieldLabels = map[string]string{
 	"dir": i18n.Source("Deployment directory"), "endpoint": i18n.Source("URL"), "current": i18n.Source("Current"), "name": i18n.Source("Name"),
 	"server_version": i18n.Source("Core version"), "server_edition": i18n.Source("Edition"), "for_version": i18n.Source("Core version"),
 	"http_status": i18n.Source("HTTP status"), "server_code": i18n.Source("Server error code"), "request_id": i18n.Source("Request ID"),
-	"enable": i18n.Source("Enable"), "enabled": i18n.Source("Enable"), "status": i18n.Source("Status"), "state": i18n.Source("Status"), "health": i18n.Source("Health check"),
+	"enable": i18n.Source("Enable"), "enabled": i18n.Source("Enable"), "status": i18n.Source("Status"), "state": i18n.Source("Status"), "stage": i18n.Source("Stage"), "health": i18n.Source("Health check"),
 	"bots": i18n.Source("Bots"), "pipelines": i18n.Source("Pipelines"), "providers": i18n.Source("Model providers"), "models": i18n.Source("Models"),
 	"bases": i18n.Source("Knowledge bases"), "files": i18n.Source("Files"), "servers": i18n.Source("MCP Servers"), "plugins": i18n.Source("Plugins"),
 	"skills": i18n.Source("Skills"), "tasks": i18n.Source("Tasks"), "operations": i18n.Source("Capabilities"), "checks": i18n.Source("Check result"),
@@ -41,4 +41,8 @@ var humanFieldLabels = map[string]string{
 	"changed": i18n.Source("Changed"), "dry_run": i18n.Source("Preflight"), "verified": i18n.Source("Full verification"), "verification": i18n.Source("Write verification"),
 	"observable_fields_match": i18n.Source("Observable fields match"), "unverified_fields": i18n.Source("Unverified fields"), "checked_fields": i18n.Source("Verified fields"), "scope": i18n.Source("Verification scope"),
 	"saved": i18n.Source("Saved"), "effective": i18n.Source("Effective this time"), "instructions": i18n.Source("Description text"), "permissions": i18n.Source("Permissions"), "schema_version": i18n.Source("Schema version"),
+	"first_error": i18n.Source("First confirmed error"), "timeline": i18n.Source("Trace timeline"),
+	"complete": i18n.Source("Complete evidence"), "partial": i18n.Source("Partial evidence"), "error_ordering": i18n.Source("Failure ordering"),
+	"record_source": i18n.Source("Record source"), "issues": i18n.Source("Evidence gaps"), "time": i18n.Source("Time"),
+	"bot_id": i18n.Source("Bot ID"), "session_id": i18n.Source("Session ID"),
 }

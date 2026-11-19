@@ -153,6 +153,7 @@ var schemaMetaByName = map[string]schemaCommandMeta{
 	"pipeline.extensions.update":        writeMeta(operationIDs("pipeline.extensions.update"), schemaWriteOptions{SupportsDryRun: true, RequiredFlags: []string{"file"}, Readbacks: []schemaOperation{readbackID("pipeline.extensions.get")}}),
 	"pipeline.run":                      writeMeta(operationIDs("pipeline.run"), schemaWriteOptions{SupportsDryRun: true, RequiredFlags: []string{"message"}, Preconditions: []schemaOperation{preconditionID("pipeline.get")}}),
 	"monitoring.messages":               readMeta(operationIDs("monitoring.messages")...),
+	"monitoring.trace":                  readMetaWithFlags(operationIDs("monitoring.messages", "monitoring.executions", "monitoring.execution.detail", "monitoring.llm_calls", "monitoring.tool_calls", "monitoring.errors", preconditionID("operation.invoke")), "bot", "session"),
 	"monitoring.llm-calls":              readMeta(operationIDs("monitoring.llm_calls")...),
 	"monitoring.tool-calls":             readMeta(operationIDs("monitoring.tool_calls")...),
 	"monitoring.embedding-calls":        readMeta(operationIDs("monitoring.embedding_calls")...),
@@ -284,7 +285,7 @@ var schemaMetaByName = map[string]schemaCommandMeta{
 	"plugin.install.github":      writeMeta(operationIDs("plugin.install.github", conditionalID("task.get", flagEquals("wait", true))), schemaWriteOptions{SupportsDryRun: true, SupportsWait: true, RequiredFlags: []string{"file"}}),
 	"plugin.install.marketplace": writeMeta(operationIDs("plugin.install.marketplace", conditionalID("task.get", flagEquals("wait", true))), schemaWriteOptions{SupportsDryRun: true, SupportsWait: true, RequiredFlags: []string{"file"}}),
 	"plugin.install.local":       writeMeta(operationIDs("plugin.install.local", conditionalID("task.get", flagEquals("wait", true))), schemaWriteOptions{SupportsDryRun: true, SupportsWait: true, RequiredFlags: []string{"file"}}),
-	"plugin.upgrade":             writeMeta(operationIDs("plugin.upgrade", "plugin.get", conditionalID("task.get", flagEquals("wait", true))), schemaWriteOptions{SupportsDryRun: true, SupportsWait: true}),
+	"plugin.upgrade":             writeMeta(operationIDs("plugin.upgrade", conditionalID("task.get", flagEquals("wait", true)), conditionalID("task.get", flagEquals("confirm-permissions", true)), conditionalID("plugin.permissions.update", flagEquals("confirm-permissions", true))), schemaWriteOptions{SupportsDryRun: true, SupportsWait: true, Preconditions: []schemaOperation{preconditionID("plugin.get")}, Readbacks: []schemaOperation{readbackID("plugin.get"), readbackID("plugin.permissions.get")}}),
 
 	"skill.list":           readMeta(operationIDs("skill.list")...),
 	"skill.get":            readMeta(operationIDs("skill.get")...),

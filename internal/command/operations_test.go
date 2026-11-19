@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -38,13 +39,22 @@ func operationCLITransport(t *testing.T, server *httptest.Server, input string, 
 
 func operationCLIContext(t *testing.T, ctx context.Context, server *httptest.Server, input string, transport http.RoundTripper, arguments ...string) (int, string) {
 	t.Helper()
+	return operationCLIFormatContext(t, ctx, server, input, "json", transport, arguments...)
+}
+
+func operationCLIFormatContext(t *testing.T, ctx context.Context, server *httptest.Server, input, format string, transport http.RoundTripper, arguments ...string) (int, string) {
+	t.Helper()
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	configuration := fmt.Sprintf("version: 1\ncurrent_context: test\ncontexts:\n  test:\n    endpoint: %s\n    expected_workspace_uuid: workspace\n    credential:\n      type: env\n      name: TEST_KEY\n", server.URL)
 	if err := os.WriteFile(path, []byte(configuration), 0600); err != nil {
 		t.Fatal(err)
 	}
 	var output bytes.Buffer
-	code := executeChinese(ctx, append([]string{"--config", path, "-o", "json"}, arguments...), Dependencies{
+	prefix := []string{"--config", path}
+	if format != "" {
+		prefix = append(prefix, "-o", format)
+	}
+	code := executeChinese(ctx, append(prefix, arguments...), Dependencies{
 		In: strings.NewReader(input), Out: &output, Err: &output, Version: "test",
 		Transport: transport,
 		LookupEnv: func(name string) (string, bool) {
@@ -56,7 +66,9 @@ func operationCLIContext(t *testing.T, ctx context.Context, server *httptest.Ser
 
 func decodeOperationStream(t *testing.T, output, format string) []map[string]any {
 	t.Helper()
-	var decoder interface{ Decode(any) error } = json.NewDecoder(strings.NewReader(output))
+	jsonDecoder := json.NewDecoder(strings.NewReader(output))
+	jsonDecoder.UseNumber()
+	var decoder interface{ Decode(any) error } = jsonDecoder
 	if format == "yaml" {
 		decoder = yaml.NewDecoder(strings.NewReader(output))
 	}
@@ -71,6 +83,274 @@ func decodeOperationStream(t *testing.T, output, format string) []map[string]any
 			t.Fatalf("invalid %s stream output %q: %v", format, output, err)
 		}
 		envelopes = append(envelopes, envelope)
+	}
+}
+
+type agentWatchReply struct {
+	after  int64
+	value  any
+	status int
+	cancel context.CancelFunc
+}
+
+func agentWatchPageValue(status string, sequences ...int64) map[string]any {
+	items := make([]any, 0, len(sequences))
+	for _, sequence := range sequences {
+		items = append(items, map[string]any{"run_id": "run-a", "sequence": sequence, "type": "run.output", "data": map[string]any{"text": "你好🙂"}})
+	}
+	return map[string]any{"run": map[string]any{"run_id": "run-a", "agent_id": "processor-a", "status": status}, "items": items, "next_cursor": nil, "has_more": false}
+}
+
+func agentWatchHTTP(t *testing.T, replies []agentWatchReply) (*httptest.Server, *atomic.Int32, *atomic.Int32) {
+	t.Helper()
+	var calls, requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		requests.Add(1)
+		if request.Header.Get("X-API-Key") != "test-secret" || request.Header.Get("X-LangBot-Client-Command") != "agent.runs.watch" {
+			t.Error("Agent run watch lost its credential or command identity")
+		}
+		if operationPreflight(writer, request, true) {
+			return
+		}
+		if request.Method != http.MethodPost || request.URL.Path != "/api/v1/operations/agent.runs.events" {
+			t.Errorf("watch attempted an unexpected operation %s %s", request.Method, request.URL.Path)
+			writer.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		index := int(calls.Add(1)) - 1
+		if index >= len(replies) {
+			t.Errorf("watch exceeded its expected requests at page %d", index)
+			writer.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		reply := replies[index]
+		var body map[string]any
+		decoder := json.NewDecoder(request.Body)
+		decoder.UseNumber()
+		if err := decoder.Decode(&body); err != nil {
+			t.Error(err)
+		}
+		if body["processor_id"] != "processor-a" || body["run_id"] != "run-a" || fmt.Sprint(body["after_sequence"]) != strconv.FormatInt(reply.after, 10) || len(body) != 3 {
+			t.Errorf("watch page %d body=%#v, expected after_sequence=%d", index, body, reply.after)
+		}
+		if reply.cancel != nil {
+			reply.cancel()
+			<-request.Context().Done()
+			return
+		}
+		if reply.status != 0 {
+			writer.WriteHeader(reply.status)
+		}
+		json.NewEncoder(writer).Encode(map[string]any{"code": 0, "data": reply.value})
+	}))
+	return server, &calls, &requests
+}
+
+func TestAgentRunWatchDrainsPagesAndResumesFromEmittedSequences(t *testing.T) {
+	first := agentWatchPageValue("running", 2, 1, 1)
+	first["has_more"], first["next_cursor"] = true, int64(2)
+	const largeSequence int64 = 9007199254740993
+	for _, test := range []struct {
+		name, format string
+		after        int64
+		replies      []agentWatchReply
+		sequences    []int64
+	}{
+		{name: "overlap unordered pages and late terminal event JSON", format: "json", replies: []agentWatchReply{{value: first}, {after: 2, value: agentWatchPageValue("completed", 2, 3)}, {after: 3, value: agentWatchPageValue("completed", 4)}, {after: 4, value: agentWatchPageValue("completed")}}, sequences: []int64{1, 2, 3, 4}},
+		{name: "empty active pages and nil tail YAML", format: "yaml", replies: []agentWatchReply{{value: agentWatchPageValue("created")}, {value: agentWatchPageValue("queued")}, {value: agentWatchPageValue("claimed", 1)}, {after: 1, value: agentWatchPageValue("running")}, {after: 1, value: agentWatchPageValue("completed", 2)}, {after: 2, value: agentWatchPageValue("completed")}}, sequences: []int64{1, 2}},
+		{name: "terminal changes before confirmation", format: "json", replies: []agentWatchReply{{value: agentWatchPageValue("completed", 1)}, {after: 1, value: agentWatchPageValue("queued")}, {after: 1, value: agentWatchPageValue("running", 2)}, {after: 2, value: agentWatchPageValue("completed")}, {after: 2, value: agentWatchPageValue("completed")}}, sequences: []int64{1, 2}},
+		{name: "large resume sequence", format: "json", after: largeSequence, replies: []agentWatchReply{{after: largeSequence, value: agentWatchPageValue("completed", largeSequence+1)}, {after: largeSequence + 1, value: agentWatchPageValue("completed")}}, sequences: []int64{largeSequence + 1}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server, calls, _ := agentWatchHTTP(t, test.replies)
+			defer server.Close()
+			code, output := operationCLIFormatContext(t, context.Background(), server, "", test.format, nil, "agent", "runs", "watch", "processor-a", "run-a", "--after-sequence", strconv.FormatInt(test.after, 10), "--poll-interval", "1ms")
+			envelopes := decodeOperationStream(t, output, test.format)
+			if code != 0 || int(calls.Load()) != len(test.replies) || len(envelopes) != len(test.sequences)+1 {
+				t.Fatalf("code=%d calls=%d output=%s", code, calls.Load(), output)
+			}
+			for index, sequence := range test.sequences {
+				data := envelopes[index]["data"].(map[string]any)
+				if envelopes[index]["ok"] != true || fmt.Sprint(data["last_sequence"]) != strconv.FormatInt(sequence, 10) || fmt.Sprint(data["event"].(map[string]any)["sequence"]) != strconv.FormatInt(sequence, 10) {
+					t.Fatalf("event %d = %#v", index, envelopes[index])
+				}
+			}
+			last := envelopes[len(envelopes)-1]
+			data := last["data"].(map[string]any)
+			if last["ok"] != true || data["completed"] != true || data["status"] != "completed" || fmt.Sprint(data["last_sequence"]) != strconv.FormatInt(test.sequences[len(test.sequences)-1], 10) {
+				t.Fatalf("watch summary = %#v", last)
+			}
+		})
+	}
+}
+
+func TestAgentRunWatchReportsTerminalOutcomesAndHumanEvents(t *testing.T) {
+	for _, test := range []struct {
+		status string
+		code   int
+	}{{"failed", 10}, {"cancelled", 6}, {"timeout", 7}} {
+		t.Run(test.status, func(t *testing.T) {
+			server, calls, _ := agentWatchHTTP(t, []agentWatchReply{{value: agentWatchPageValue(test.status, 1)}, {after: 1, value: agentWatchPageValue(test.status)}})
+			defer server.Close()
+			code, output := operationCLI(t, server, "", "agent", "runs", "watch", "processor-a", "run-a")
+			envelopes := decodeOperationStream(t, output, "json")
+			if code != test.code || calls.Load() != 2 || len(envelopes) != 2 {
+				t.Fatalf("code=%d calls=%d output=%s", code, calls.Load(), output)
+			}
+			last := envelopes[1]
+			data := last["data"].(map[string]any)
+			if last["ok"] != false || data["completed"] != false || data["status"] != test.status || fmt.Sprint(data["last_sequence"]) != "1" {
+				t.Fatalf("terminal summary = %#v", last)
+			}
+		})
+	}
+	t.Run("human", func(t *testing.T) {
+		server, calls, _ := agentWatchHTTP(t, []agentWatchReply{{value: agentWatchPageValue("completed", 1)}, {after: 1, value: agentWatchPageValue("completed")}})
+		defer server.Close()
+		code, output := operationCLIFormatContext(t, context.Background(), server, "", "", nil, "agent", "runs", "watch", "processor-a", "run-a")
+		if code != 0 || calls.Load() != 2 || strings.Count(output, "[1] run.output") != 1 || !strings.Contains(output, "你好🙂") || !strings.Contains(output, "completed") || strings.Contains(output, `"ok":`) {
+			t.Fatalf("human watch code=%d calls=%d output=%s", code, calls.Load(), output)
+		}
+	})
+}
+
+func TestAgentRunWatchRejectsMalformedPagesWithoutAdvancing(t *testing.T) {
+	for _, kind := range []string{"run identity", "unknown status", "missing status", "items type", "event sequence", "event identity", "missing event type", "has_more type", "cursor type", "cursor skips event", "empty continuation", "stalled continuation"} {
+		t.Run(kind, func(t *testing.T) {
+			page := agentWatchPageValue("completed", 8)
+			event := page["items"].([]any)[0].(map[string]any)
+			switch kind {
+			case "run identity":
+				page["run"].(map[string]any)["run_id"] = "other"
+			case "unknown status":
+				page["run"].(map[string]any)["status"] = "succeeded"
+			case "missing status":
+				delete(page["run"].(map[string]any), "status")
+			case "items type":
+				page["items"] = nil
+			case "event sequence":
+				event["sequence"] = 8.5
+			case "event identity":
+				event["run_id"] = "other"
+			case "missing event type":
+				delete(event, "type")
+			case "has_more type":
+				page["has_more"] = "false"
+			case "cursor type":
+				page["next_cursor"] = "8"
+			case "cursor skips event":
+				page["has_more"], page["next_cursor"] = true, 9
+			case "empty continuation":
+				page["items"], page["has_more"], page["next_cursor"] = []any{}, true, 8
+			case "stalled continuation":
+				event["sequence"] = 7
+				page["has_more"], page["next_cursor"] = true, 7
+			}
+			first := agentWatchPageValue("running", 7)
+			first["has_more"], first["next_cursor"] = true, 7
+			server, calls, _ := agentWatchHTTP(t, []agentWatchReply{{value: first}, {after: 7, value: page}})
+			defer server.Close()
+			code, output := operationCLI(t, server, "", "agent", "runs", "watch", "processor-a", "run-a")
+			envelopes := decodeOperationStream(t, output, "json")
+			if code != 8 || calls.Load() != 2 || len(envelopes) != 2 {
+				t.Fatalf("code=%d calls=%d output=%s", code, calls.Load(), output)
+			}
+			last := envelopes[1]
+			data := last["data"].(map[string]any)
+			if last["ok"] != false || data["completed"] != false || fmt.Sprint(data["last_sequence"]) != "7" {
+				t.Fatalf("malformed page advanced the watch: %#v", last)
+			}
+		})
+	}
+}
+
+func TestAgentRunWatchSourceFailurePreservesUsableResumeCommand(t *testing.T) {
+	first := agentWatchPageValue("running", 5)
+	first["has_more"], first["next_cursor"] = true, 5
+	server, calls, _ := agentWatchHTTP(t, []agentWatchReply{{value: first}, {after: 5, status: http.StatusServiceUnavailable}, {after: 5, value: agentWatchPageValue("completed", 6)}, {after: 6, value: agentWatchPageValue("completed")}})
+	defer server.Close()
+	code, output := operationCLI(t, server, "", "agent", "runs", "watch", "processor-a", "run-a")
+	envelopes := decodeOperationStream(t, output, "json")
+	if code != 10 || calls.Load() != 2 || len(envelopes) != 2 {
+		t.Fatalf("source failure code=%d calls=%d output=%s", code, calls.Load(), output)
+	}
+	last := envelopes[1]
+	data := last["data"].(map[string]any)
+	if last["ok"] != false || fmt.Sprint(data["last_sequence"]) != "5" || data["status"] != "running" {
+		t.Fatalf("source failure lost watch progress: %#v", last)
+	}
+	var resume []string
+	steps, _ := last["meta"].(map[string]any)["next_steps"].([]any)
+	for _, raw := range steps {
+		step := raw.(map[string]any)
+		encoded, _ := json.Marshal(step["argv"])
+		var argv []string
+		if json.Unmarshal(encoded, &argv) == nil && strings.Contains(strings.Join(argv, " "), "agent runs watch processor-a run-a --after-sequence 5") {
+			resume = argv
+		}
+	}
+	if len(resume) == 0 || resume[0] != "lbctl" || !strings.Contains(strings.Join(resume, " "), "--config") {
+		t.Fatalf("usable resume command is missing: %#v", last["meta"])
+	}
+	code, output = operationCLI(t, server, "", resume[1:]...)
+	envelopes = decodeOperationStream(t, output, "json")
+	if code != 0 || calls.Load() != 4 || len(envelopes) != 2 || fmt.Sprint(envelopes[0]["data"].(map[string]any)["event"].(map[string]any)["sequence"]) != "6" {
+		t.Fatalf("resume code=%d calls=%d output=%s", code, calls.Load(), output)
+	}
+}
+
+func TestAgentRunWatchCancellationAndTimeoutPreserveSequence(t *testing.T) {
+	for _, mode := range []string{"cancel", "timeout", "cancel terminal tail"} {
+		t.Run(mode, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			replies := []agentWatchReply{{value: agentWatchPageValue("running", 5)}}
+			args := []string{"agent", "runs", "watch", "processor-a", "run-a", "--poll-interval", "2s", "--timeout", "200ms"}
+			status := "running"
+			if mode == "cancel" {
+				replies[0].value.(map[string]any)["has_more"] = true
+				replies[0].value.(map[string]any)["next_cursor"] = 5
+				replies = append(replies, agentWatchReply{after: 5, cancel: cancel})
+			}
+			if mode == "cancel terminal tail" {
+				status = "completed"
+				replies = []agentWatchReply{{value: agentWatchPageValue(status, 5)}, {after: 5, value: agentWatchPageValue(status)}}
+			}
+			server, calls, _ := agentWatchHTTP(t, replies)
+			defer server.Close()
+			var transport http.RoundTripper
+			if mode == "cancel terminal tail" {
+				transport = operationTransport(func(request *http.Request) (*http.Response, error) {
+					response, err := http.DefaultTransport.RoundTrip(request)
+					if err == nil && request.URL.Path == "/api/v1/operations/agent.runs.events" && calls.Load() == 2 {
+						response.Body = cancelOnResponseClose{ReadCloser: response.Body, cancel: cancel}
+					}
+					return response, err
+				})
+			}
+			code, output := operationCLIContext(t, ctx, server, "", transport, args...)
+			envelopes := decodeOperationStream(t, output, "json")
+			if code != 7 || int(calls.Load()) != len(replies) || len(envelopes) != 2 {
+				t.Fatalf("watch interruption code=%d calls=%d output=%s", code, calls.Load(), output)
+			}
+			last := envelopes[1]
+			if last["ok"] != false || fmt.Sprint(last["data"].(map[string]any)["last_sequence"]) != "5" || last["data"].(map[string]any)["status"] != status || last["data"].(map[string]any)["completed"] != false {
+				t.Fatalf("watch interruption lost progress: %#v", last)
+			}
+		})
+	}
+}
+
+func TestAgentRunWatchRejectsInvalidFlagsBeforeRequests(t *testing.T) {
+	for _, flags := range [][]string{{"--after-sequence", "-1"}, {"--after-sequence", "invalid"}, {"--poll-interval", "0"}, {"--poll-interval", "-1s"}, {"--poll-interval", "invalid"}, {"--timeout", "0"}, {"--timeout", "invalid"}, {"--timeout", ""}} {
+		t.Run(strings.Join(flags, " "), func(t *testing.T) {
+			server, calls, requests := agentWatchHTTP(t, nil)
+			defer server.Close()
+			code, output := operationCLI(t, server, "", append([]string{"agent", "runs", "watch", "processor-a", "run-a"}, flags...)...)
+			if code != 2 || calls.Load() != 0 || requests.Load() != 0 {
+				t.Fatalf("invalid watch flags code=%d requests=%d output=%s", code, requests.Load(), output)
+			}
+		})
 	}
 }
 
@@ -966,6 +1246,77 @@ func TestFriendlyOperationContracts(t *testing.T) {
 				t.Errorf("%s has unknown input %s", spec.id, field)
 			}
 		}
+	}
+}
+
+func TestBotBindPreviewsOneRouteAndVerifiesTheWrite(t *testing.T) {
+	for _, mode := range []string{"preview", "success", "conflict", "different readback", "ambiguous", "missing confirmation"} {
+		t.Run(mode, func(t *testing.T) {
+			selected := map[string]any{"id": "r", "target_uuid": "old", "target_type": "agent", "filters": []any{"private"}, "order": 2}
+			other := map[string]any{"id": "other", "enabled": false}
+			var saved map[string]any
+			reads, binds := 0, 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if operationPreflight(w, r, true) {
+					return
+				}
+				switch r.URL.Path {
+				case "/api/v1/operations/bot.get":
+					reads++
+					binding := selected
+					if saved != nil && mode != "different readback" {
+						binding = saved
+					}
+					json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": map[string]any{"uuid": "bot", "adapter_config": map[string]any{"token": "unrelated-adapter-token"}, "event_bindings": []any{binding, other}}})
+				case "/api/v1/operations/bot.routes.bind":
+					binds++
+					var body map[string]any
+					if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+						t.Error(err)
+					}
+					old, _ := body["expected_binding"].(map[string]any)
+					if old["id"] != "r" || old["target_uuid"] != "old" || old["order"] != float64(2) || body["target_uuid"] != "new" || body["target_type"] != "pipeline" || body["bot_uuid"] != "bot" || body["dry_run"] != (mode == "preview") {
+						t.Errorf("binding request %v", body)
+					}
+					if mode == "conflict" {
+						w.WriteHeader(409)
+						fmt.Fprint(w, `{"code":"binding_conflict"}`)
+						return
+					}
+					saved = map[string]any{"id": "r", "target_uuid": "new", "target_type": "pipeline", "filters": []any{"private"}, "order": 2}
+					json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": map[string]any{"bot_uuid": "bot", "before": old, "binding": saved, "changed": true, "dry_run": mode == "preview"}})
+				default:
+					t.Errorf("unexpected request %s", r.URL.Path)
+				}
+			}))
+			defer server.Close()
+			args := []string{"bot", "routes", "bind", "bot", "--pipeline", "new"}
+			if mode != "ambiguous" {
+				args = append(args, "--binding", "r")
+			}
+			if mode == "preview" {
+				args = append(args, "--dry-run")
+			} else if mode != "missing confirmation" {
+				args = append(args, "--yes")
+			}
+			code, out := operationCLI(t, server, "", args...)
+			wantCode, wantReads, wantBinds := 0, 1, 1
+			switch mode {
+			case "success":
+				wantReads = 2
+			case "conflict":
+				wantCode = 6
+			case "different readback":
+				wantReads, wantCode = 2, 6
+			case "ambiguous":
+				wantBinds, wantCode = 0, 2
+			case "missing confirmation":
+				wantBinds, wantCode = 0, 6
+			}
+			if binds != wantBinds || reads != wantReads || code != wantCode || strings.Contains(out, "unrelated-adapter-token") {
+				t.Fatalf("binds=%d reads=%d code=%d %s", binds, reads, code, out)
+			}
+		})
 	}
 }
 
