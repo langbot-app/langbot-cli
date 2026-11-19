@@ -24,6 +24,8 @@ func (c Client) WorkspaceSandbox(ctx context.Context, target Target, action stri
 		resp, err = c.do(ctx, target, http.MethodGet, path, nil, false)
 	case "update":
 		resp, err = c.write(ctx, target, http.MethodPut, workspaceSandboxPath, body)
+	case "reset":
+		resp, err = c.write(ctx, target, http.MethodDelete, workspaceSandboxPath, nil)
 	case "check":
 		resp, err = c.readPost(ctx, target, workspaceSandboxPath+"/check", body)
 	case "test":
@@ -47,6 +49,12 @@ func (c Client) WorkspaceSandbox(ctx context.Context, target Target, action stri
 			failure.ServerCode = redactConnectionSecret(failure.ServerCode, secret)
 		}
 		return nil, &failure
+	}
+	if action == "reset" {
+		if resp.Data["reset"] != true {
+			return nil, classifyWriteError(protocolError(i18n.T("Server did not acknowledge the sandbox configuration reset"), resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret())))
+		}
+		return map[string]any{"reset": true}, nil
 	}
 	if resp.Data == nil {
 		err = protocolError(i18n.T("Server did not return sandbox configuration; verify operation result"), resp.StatusCode, "")

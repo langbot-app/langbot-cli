@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -195,6 +197,15 @@ func TestImageDownloadAndOperationDecode(t *testing.T) {
 	code, output = memberCLI(t, path, `{"file_key":"sample"}`, environment, "op", "call", "file.image.get", "--file", "-", "--decode-binary", "content", "-O", destination)
 	if code != 0 {
 		t.Fatalf("%d %s", code, output)
+	}
+	var envelope struct {
+		Data map[string]any `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(output), &envelope); err != nil {
+		t.Fatalf("invalid decoded output %q: %v", output, err)
+	}
+	if !reflect.DeepEqual(envelope.Data, map[string]any{"file": destination, "bytes": float64(len(image))}) {
+		t.Fatalf("generic decoded output changed: %#v", envelope.Data)
 	}
 	data, err = os.ReadFile(destination)
 	if err != nil || !bytes.Equal(data, image) {

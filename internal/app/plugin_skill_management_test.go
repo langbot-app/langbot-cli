@@ -26,6 +26,10 @@ type managementServer struct {
 	skillPresent      atomic.Bool
 	skillContent      atomic.Value
 	skillDesc         atomic.Value
+	skillRevision     atomic.Value
+	skillWriteBody    atomic.Value
+	skillWrites       atomic.Int32
+	skillRevisionRace atomic.Bool
 	deleteData        atomic.Bool
 	deleteCalls       atomic.Int32
 	configUnavailable atomic.Int32
@@ -39,6 +43,26 @@ func newManagementService(t *testing.T, state *managementServer) (*Service, func
 	state.pluginConfig.Store(map[string]any{"token": "***", "mode": "safe"})
 	state.skillContent.Store("old content")
 	state.skillDesc.Store("Demo")
+	checkSkillRevision := func(w http.ResponseWriter, body map[string]any) bool {
+		state.skillWrites.Add(1)
+		state.skillWriteBody.Store(body)
+		revision, _ := state.skillRevision.Load().(string)
+		if revision == "" {
+			return true
+		}
+		if state.skillRevisionRace.Swap(false) {
+			revision += "-concurrent"
+			state.skillRevision.Store(revision)
+		}
+		if body["base_revision"] != revision {
+			w.Header().Set("X-Request-ID", "skill-conflict-request")
+			w.WriteHeader(http.StatusConflict)
+			fmt.Fprint(w, `{"code":-1,"msg":"connection-secret stale revision"}`)
+			return false
+		}
+		state.skillRevision.Store(revision + "-next")
+		return true
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Path == "/api/v1/system/context" {
@@ -48,6 +72,10 @@ func newManagementService(t *testing.T, state *managementServer) (*Service, func
 		if r.URL.Path == "/api/v1/system/capabilities" {
 			fmt.Fprintf(w, `{"code":0,"data":%s}`, managementCapabilities)
 			return
+		}
+		revisionField := ""
+		if revision, ok := state.skillRevision.Load().(string); ok {
+			revisionField = fmt.Sprintf(`,"revision":%q`, revision)
 		}
 		switch r.URL.Path {
 		case "/api/v1/plugins/author/plugin":
@@ -97,7 +125,7 @@ func newManagementService(t *testing.T, state *managementServer) (*Service, func
 		case "/api/v1/skills":
 			if r.Method == http.MethodGet {
 				if state.skillPresent.Load() {
-					fmt.Fprintf(w, `{"code":0,"data":{"skills":[{"name":"demo","description":%q}]}}`, state.skillDesc.Load().(string))
+					fmt.Fprintf(w, `{"code":0,"data":{"skills":[{"name":"demo","description":%q%s}]}}`, state.skillDesc.Load().(string), revisionField)
 				} else {
 					fmt.Fprint(w, `{"code":0,"data":{"skills":[]}}`)
 				}
@@ -115,11 +143,14 @@ func newManagementService(t *testing.T, state *managementServer) (*Service, func
 			}
 			switch r.Method {
 			case http.MethodGet:
-				fmt.Fprintf(w, `{"code":0,"data":{"skill":{"name":"demo","description":%q,"instructions":"Use it"}}}`, state.skillDesc.Load().(string))
+				fmt.Fprintf(w, `{"code":0,"data":{"skill":{"name":"demo","description":%q,"instructions":"Use it"%s}}}`, state.skillDesc.Load().(string), revisionField)
 			case http.MethodPut:
 				var body map[string]any
 				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 					t.Errorf("decode skill update: %v", err)
+				}
+				if !checkSkillRevision(w, body) {
+					return
 				}
 				if description, ok := body["description"].(string); ok {
 					state.skillDesc.Store(description)
@@ -133,12 +164,15 @@ func newManagementService(t *testing.T, state *managementServer) (*Service, func
 			fmt.Fprint(w, `{"code":0,"data":{"entries":[{"path":"README.md"}]}}`)
 		case "/api/v1/skills/demo/files/README.md":
 			if r.Method == http.MethodGet {
-				fmt.Fprintf(w, `{"code":0,"data":{"path":"README.md","content":%q}}`, state.skillContent.Load().(string))
+				fmt.Fprintf(w, `{"code":0,"data":{"path":"README.md","content":%q%s}}`, state.skillContent.Load().(string), revisionField)
 				return
 			}
 			var body map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				t.Errorf("decode skill file: %v", err)
+			}
+			if !checkSkillRevision(w, body) {
+				return
 			}
 			state.skillContent.Store(body["content"].(string))
 			fmt.Fprint(w, `{"code":0,"data":{"path":"README.md"}}`)
@@ -271,5 +305,122 @@ func TestSkillManagementReadsWritesAndVerifiesFileContent(t *testing.T) {
 	}
 	if _, err := service.SkillDelete(context.Background(), "demo", true, false, options); err != nil {
 		t.Fatalf("delete error = %v", err)
+	}
+}
+
+func TestSkillWritesUseCurrentOrExplicitRevisionAndRejectConcurrentChanges(t *testing.T) {
+	tests := []struct {
+		name         string
+		revision     string
+		hasRevision  bool
+		baseRevision string
+		race         bool
+		wantConflict bool
+	}{
+		{name: "legacy without revision"},
+		{name: "legacy empty revision", hasRevision: true},
+		{name: "automatic current revision", hasRevision: true, revision: "r1"},
+		{name: "explicit current revision", hasRevision: true, revision: "r1", baseRevision: "r1"},
+		{name: "explicit stale revision", hasRevision: true, revision: "r1", baseRevision: "r0", wantConflict: true},
+		{name: "changed after pre-read", hasRevision: true, revision: "r1", race: true, wantConflict: true},
+	}
+	for _, operation := range []string{"update", "file write"} {
+		for _, test := range tests {
+			t.Run(operation+"/"+test.name, func(t *testing.T) {
+				state := &managementServer{}
+				if test.hasRevision {
+					state.skillRevision.Store(test.revision)
+				}
+				state.skillRevisionRace.Store(test.race)
+				service, closeServer := newManagementService(t, state)
+				defer closeServer()
+				options := CheckOptions{ContextSet: true, Context: "managed"}
+				body := map[string]any{"description": "Updated"}
+				var value Result
+				var err error
+				if operation == "update" {
+					if test.baseRevision != "" {
+						body["base_revision"] = test.baseRevision
+					}
+					value, err = service.SkillUpdate(context.Background(), "demo", body, false, options)
+					if body["base_revision"] != nil && body["base_revision"] != test.baseRevision {
+						t.Fatalf("SkillUpdate mutated caller body: %#v", body)
+					}
+				} else {
+					value, err = service.SkillFileWrite(context.Background(), "demo", "README.md", "new content", false, options, test.baseRevision)
+				}
+				if state.skillWrites.Load() != 1 {
+					t.Fatalf("skill write count = %d, want 1", state.skillWrites.Load())
+				}
+				written := state.skillWriteBody.Load().(map[string]any)
+				wantRevision := test.baseRevision
+				if wantRevision == "" {
+					wantRevision = test.revision
+				}
+				if wantRevision == "" {
+					if _, exists := written["base_revision"]; exists {
+						t.Fatalf("legacy write added base_revision: %#v", written)
+					}
+				} else if written["base_revision"] != wantRevision {
+					t.Fatalf("base_revision = %#v, want %q", written["base_revision"], wantRevision)
+				}
+				if test.wantConflict {
+					failure := result.AsError(err)
+					if failure == nil || failure.Kind != "precondition" || failure.Type != "skill_revision_conflict" || failure.HTTPStatus != http.StatusConflict || failure.RequestID != "skill-conflict-request" || fmt.Sprint(failure.ServerCode) != "-1" {
+						t.Fatalf("conflict error = %#v", failure)
+					}
+					if !strings.Contains(failure.Message, "lbctl skill get") || !strings.Contains(failure.Message, "lbctl skill file read") || !strings.Contains(failure.Message, "base_revision") || strings.Contains(failure.Message, "connection-secret") {
+						t.Fatalf("conflict guidance = %q", failure.Message)
+					}
+					if state.skillDesc.Load() != "Demo" || state.skillContent.Load() != "old content" {
+						t.Fatal("conflicting write replaced Skill content")
+					}
+					return
+				}
+				if err != nil || value.Data.(map[string]any)["verified"] != true {
+					t.Fatalf("skill write = %#v, error = %v", value, err)
+				}
+				if operation == "update" && test.revision != "" && value.Data.(map[string]any)["skill"].(map[string]any)["revision"] != test.revision+"-next" {
+					t.Fatalf("update readback lost revision: %#v", value.Data)
+				}
+				if operation == "file write" && test.revision != "" && value.Data.(map[string]any)["file"].(map[string]any)["revision"] != test.revision+"-next" {
+					t.Fatalf("file readback lost revision: %#v", value.Data)
+				}
+			})
+		}
+	}
+}
+
+func TestSkillUpdateValidatesExplicitRevisionBeforeRequests(t *testing.T) {
+	service := New(Dependencies{})
+	for _, revision := range []any{nil, "", " ", 1, true} {
+		_, err := service.SkillUpdate(context.Background(), "demo", map[string]any{"description": "Updated", "base_revision": revision}, false, CheckOptions{})
+		if err == nil || result.AsError(err).Kind != "input" {
+			t.Fatalf("base_revision %#v error = %v, want input", revision, err)
+		}
+	}
+	if _, err := service.SkillUpdate(context.Background(), "demo", map[string]any{"base_revision": "r1"}, false, CheckOptions{}); err == nil || result.AsError(err).Kind != "input" {
+		t.Fatalf("revision-only update error = %v, want input", err)
+	}
+}
+
+func TestSkillRevisionDryRunsPreserveCallerBodyAndSkipWrites(t *testing.T) {
+	state := &managementServer{}
+	state.skillRevision.Store("r1")
+	service, closeServer := newManagementService(t, state)
+	defer closeServer()
+	options := CheckOptions{ContextSet: true, Context: "managed"}
+	body := map[string]any{"description": "Updated"}
+	if _, err := service.SkillUpdate(context.Background(), "demo", body, true, options); err != nil {
+		t.Fatalf("update dry-run error = %v", err)
+	}
+	if _, exists := body["base_revision"]; exists {
+		t.Fatalf("update dry-run mutated caller body: %#v", body)
+	}
+	if _, err := service.SkillFileWrite(context.Background(), "demo", "README.md", "new content", true, options, "r0"); err != nil {
+		t.Fatalf("file write dry-run error = %v", err)
+	}
+	if state.skillWrites.Load() != 0 {
+		t.Fatalf("dry-runs wrote Skill %d times", state.skillWrites.Load())
 	}
 }

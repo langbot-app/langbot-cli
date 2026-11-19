@@ -35,7 +35,7 @@ func TestCompactSchemaAndExamplesStayOffline(t *testing.T) {
 func TestSandboxConfigurationSchemaIsOfflineAndSeparatesCheckFromTest(t *testing.T) {
 	result := executeSchemaForTest(t, "schema", "--command", "sandbox.config")
 	var envelope schemaEnvelope
-	if json.Unmarshal([]byte(result.output), &envelope) != nil || len(envelope.Data.Commands) != 5 {
+	if json.Unmarshal([]byte(result.output), &envelope) != nil || len(envelope.Data.Commands) != 6 {
 		t.Fatal("sandbox config group or children missing")
 	}
 	for _, command := range envelope.Data.Commands {
@@ -44,9 +44,12 @@ func TestSandboxConfigurationSchemaIsOfflineAndSeparatesCheckFromTest(t *testing
 			if command.Mutating || command.RequiresYes || !command.RequiresSavedContext || !command.RequiresWorkspaceBind || !strings.Contains(command.Examples, "--e2b-api-key-env") {
 				t.Fatalf("incorrect draft check contract: %#v", command)
 			}
-		case "sandbox.config.test", "sandbox.config.update":
+		case "sandbox.config.test", "sandbox.config.update", "sandbox.config.reset":
 			if !command.Mutating || !command.RequiresYes || !command.SupportsDryRun || !hasFlag(command.Flags, "yes", "local", false) {
 				t.Fatalf("confirmation or dry-run contract missing: %#v", command)
+			}
+			if command.Name == "sandbox.config.reset" && (!command.Destructive || !command.RequiresSavedContext || !command.RequiresWorkspaceBind || !reflect.DeepEqual(command.Operations, operationIDs("workspace.sandbox.reset", readbackID("workspace.sandbox.get")))) {
+				t.Fatalf("reset write/readback contract missing: %#v", command)
 			}
 		}
 	}
@@ -165,6 +168,29 @@ func TestSchemaIsOfflineStableAndDescribesCommands(t *testing.T) {
 	}
 	if len(ingest.InputConflicts) != 1 || !hasConflictOperand(ingest.InputConflicts[0].Operands, "dry-run", true) || !hasConflictOperand(ingest.InputConflicts[0].Operands, "wait", true) {
 		t.Fatalf("dry-run and wait conflict is missing: %#v", ingest.InputConflicts)
+	}
+	upload := commands["skill.install.upload"]
+	if !reflect.DeepEqual(upload.RequiredOneOf, [][]string{{"file", "dir"}}) || !hasFlag(upload.Flags, "file", "local", false) || !hasFlag(upload.Flags, "dir", "local", false) || !strings.Contains(upload.Examples, "--dir") {
+		t.Fatalf("Skill upload input alternatives are missing: %#v", upload)
+	}
+	if len(upload.InputConflicts) != 1 || !reflect.DeepEqual(upload.InputConflicts[0].Operands, []schemaOperand{{Flag: "file", Present: true}, {Flag: "dir", Present: true}}) {
+		t.Fatalf("Skill upload file/dir conflict is missing: %#v", upload.InputConflicts)
+	}
+	if !hasFlag(commands["skill.file.write"].Flags, "base-revision", "local", false) || !strings.Contains(commands["skill.file.write"].Examples, "--base-revision") || !hasFlag(commands["skill.package.get"].Flags, "out-file", "local", false) {
+		t.Fatal("Skill revision or package download flags are missing")
+	}
+	if !strings.Contains(commands["skill.update"].Examples, "base_revision") || !strings.Contains(commands["bot.get"].Examples, "event_bindings") || strings.Contains(commands["bot.get"].Examples, "use_pipeline_uuid") {
+		t.Fatal("Skill revision or bot binding examples are inaccurate")
+	}
+	debug := commands["agent.debug"]
+	if !strings.Contains(debug.Examples, "--message") || !strings.Contains(debug.Examples, "--file") {
+		t.Fatalf("Agent debug input examples are missing: %#v", debug.Examples)
+	}
+	if !debug.Mutating || !debug.RequiresYes || !debug.RequiresSavedContext || !debug.RequiresWorkspaceBind || !reflect.DeepEqual(debug.RequiredOneOf, [][]string{{"message", "file"}}) || !hasFlag(debug.Flags, "message", "local", false) || !hasFlag(debug.Flags, "file", "local", false) {
+		t.Fatalf("Agent debug input alternatives are incomplete: %#v", debug)
+	}
+	if len(debug.InputConflicts) != 2 || !reflect.DeepEqual(debug.InputConflicts[0].Operands, []schemaOperand{{Flag: "message", Present: true}, {Flag: "file", Present: true}}) || !hasConflictOperand(debug.InputConflicts[1].Operands, "api-key-stdin", true) || !hasConflictOperand(debug.InputConflicts[1].Operands, "file", "-") {
+		t.Fatalf("Agent debug input conflicts are incomplete: %#v", debug.InputConflicts)
 	}
 	if !commands["model.create"].OperationTemplateIsModel() {
 		t.Fatalf("model.create must describe its type-dependent operation: %#v", commands["model.create"])

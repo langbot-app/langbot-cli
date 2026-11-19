@@ -15,19 +15,21 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"go.yaml.in/yaml/v3"
 )
 
 const sandboxWorkspaceKey = "fixture-workspace-private-key"
 const sandboxE2BKey = "fixture-e2b-private-key"
 
 type sandboxContract struct {
-	mu                        sync.Mutex
-	mode                      string
-	permissions               []string
-	settings                  map[string]any
-	requests                  []string
-	puts, checks, tests, gets int
-	lastBody                  map[string]any
+	mu                                sync.Mutex
+	mode                              string
+	permissions                       []string
+	settings                          map[string]any
+	requests                          []string
+	puts, resets, checks, tests, gets int
+	lastBody                          map[string]any
 }
 
 func newSandboxContract() *sandboxContract {
@@ -62,7 +64,10 @@ func (f *sandboxContract) serve(w http.ResponseWriter, request *http.Request) {
 	case "/api/v1/system/capabilities":
 		operations := map[string]any{}
 		if f.mode != "old-core" {
-			for _, action := range []string{"get", "update", "check", "test"} {
+			for _, action := range []string{"get", "update", "reset", "check", "test"} {
+				if f.mode == "reset-no-readback" && action == "get" {
+					continue
+				}
 				operations["workspace.sandbox."+action] = map[string]any{"supported": true}
 			}
 		}
@@ -70,8 +75,41 @@ func (f *sandboxContract) serve(w http.ResponseWriter, request *http.Request) {
 		return
 	}
 	const path = "/api/v1/workspaces/current/sandbox"
+	if request.URL.Path == path && request.Method == http.MethodDelete {
+		f.resets++
+		if f.mode == "reset-unknown" {
+			w.WriteHeader(http.StatusInternalServerError)
+			fmt.Fprint(w, `{"code":"fixture_error","data":null}`)
+			return
+		}
+		if f.mode != "reset-ignored" {
+			f.settings["backend"], f.settings["limits"] = nil, map[string]any{}
+			f.settings["e2b"] = map[string]any{"source": "deployment", "api_key_configured": true, "api_key": "fixture-stored-key-must-not-escape"}
+		}
+		if f.mode == "reset-e2b-retained" {
+			f.settings["e2b"].(map[string]any)["source"] = "workspace"
+		}
+		if f.mode == "reset-limits-retained" {
+			f.settings["limits"] = map[string]any{"timeout_sec": 60}
+		}
+		if f.mode == "reset-bad-ack" {
+			respond(map[string]any{})
+			return
+		}
+		respond(map[string]any{"reset": true})
+		return
+	}
 	if request.URL.Path == path && request.Method == "GET" {
 		f.gets++
+		if f.mode == "reset-readback-failed" && f.resets > 0 {
+			w.WriteHeader(http.StatusInternalServerError)
+			fmt.Fprint(w, `{"code":"fixture_error","data":null}`)
+			return
+		}
+		if f.mode == "reset-readback-malformed" && f.resets > 0 {
+			respond(map[string]any{"backends": []any{}})
+			return
+		}
 		if f.mode == "old-sdk" {
 			w.WriteHeader(400)
 			fmt.Fprint(w, `{"code":"validation_error","msg":"Workspace sandbox settings require an upgraded Box SDK and Runtime","data":null}`)
@@ -195,6 +233,9 @@ func runSandboxBinary(t *testing.T, binary, config, input, format string, args .
 	if format == "json" && json.Unmarshal(stdout.Bytes(), &data) != nil {
 		t.Fatalf("invalid result envelope: %s %s", &stdout, &stderr)
 	}
+	if format == "yaml" && yaml.Unmarshal(stdout.Bytes(), &data) != nil {
+		t.Fatalf("invalid YAML result envelope: %s %s", &stdout, &stderr)
+	}
 	return execution{code: code, out: stdout.String(), data: data}
 }
 
@@ -209,13 +250,33 @@ func TestCompiledSandboxConfigHTTPContract(t *testing.T) {
 		t.Fatalf("build failed: %v %s", err, output)
 	}
 	for _, test := range []struct {
-		name, action, body, mode        string
-		input, format                   string
-		flags                           []string
-		permissions                     []string
-		code, gets, puts, checks, tests int
+		name, action, body, mode                string
+		input, format                           string
+		flags                                   []string
+		permissions                             []string
+		code, gets, puts, resets, checks, tests int
+		repetitions                             int
 	}{
 		{name: "query refresh", action: "get", flags: []string{"--refresh"}, gets: 1},
+		{name: "reset overrides", action: "reset", flags: []string{"--yes"}, gets: 1, resets: 1},
+		{name: "reset YAML", action: "reset", format: "yaml", flags: []string{"--yes"}, gets: 1, resets: 1},
+		{name: "reset repeated", action: "reset", flags: []string{"--yes"}, gets: 2, resets: 2, repetitions: 2},
+		{name: "reset preview", action: "reset", flags: []string{"--dry-run"}},
+		{name: "reset confirmation", action: "reset", code: 2},
+		{name: "reset rejects file input", action: "reset", body: `{}`, flags: []string{"--yes"}, code: 2},
+		{name: "reset permission", action: "reset", flags: []string{"--yes"}, permissions: []string{"workspace.view"}, code: 4},
+		{name: "reset readback permission", action: "reset", flags: []string{"--yes"}, permissions: []string{"workspace.update"}, code: 4},
+		{name: "reset old Core", action: "reset", mode: "old-core", flags: []string{"--yes"}, code: 6},
+		{name: "reset missing readback capability", action: "reset", mode: "reset-no-readback", flags: []string{"--yes"}, code: 6},
+		{name: "reset wrong workspace", action: "reset", mode: "wrong-workspace", flags: []string{"--yes"}, code: 6},
+		{name: "reset temporary endpoint", action: "reset", flags: []string{"--yes", "--endpoint", "http://invalid.example.test"}, code: 6},
+		{name: "reset ignored", action: "reset", mode: "reset-ignored", flags: []string{"--yes"}, code: 10, gets: 1, resets: 1},
+		{name: "reset E2B override retained", action: "reset", mode: "reset-e2b-retained", flags: []string{"--yes"}, code: 10, gets: 1, resets: 1},
+		{name: "reset limit override retained", action: "reset", mode: "reset-limits-retained", flags: []string{"--yes"}, code: 10, gets: 1, resets: 1},
+		{name: "reset unknown", action: "reset", mode: "reset-unknown", flags: []string{"--yes"}, code: 7, resets: 1},
+		{name: "reset missing acknowledgement", action: "reset", mode: "reset-bad-ack", flags: []string{"--yes"}, code: 7, resets: 1},
+		{name: "reset readback failed", action: "reset", mode: "reset-readback-failed", flags: []string{"--yes"}, code: 10, resets: 1, gets: 1},
+		{name: "reset malformed readback", action: "reset", mode: "reset-readback-malformed", flags: []string{"--yes"}, code: 8, resets: 1, gets: 1},
 		{name: "YAML query", action: "get", format: "yaml", gets: 1},
 		{name: "human check", action: "check", format: "human", checks: 1},
 		{name: "save limits", action: "update", body: `{"backend":"docker","limits":{"timeout_sec":60,"idle_ttl_sec":120,"max_sessions":2,"cpus":0.5,"memory_mb":64,"pids_limit":16,"workspace_quota_mb":128}}`, flags: []string{"--yes"}, gets: 2, puts: 1},
@@ -281,11 +342,33 @@ func TestCompiledSandboxConfigHTTPContract(t *testing.T) {
 			} else if format == "human" {
 				format = ""
 			}
-			got := runSandboxBinary(t, binary, config, test.input, format, args...)
+			repetitions := test.repetitions
+			if repetitions == 0 {
+				repetitions = 1
+			}
+			var got execution
+			for range repetitions {
+				got = runSandboxBinary(t, binary, config, test.input, format, args...)
+			}
 			fixture.mu.Lock()
 			defer fixture.mu.Unlock()
-			if got.code != test.code || fixture.gets != test.gets || fixture.puts != test.puts || fixture.checks != test.checks || fixture.tests != test.tests {
-				t.Fatalf("exit=%d requests=%v get/put/check/test=%d/%d/%d/%d result=%s", got.code, fixture.requests, fixture.gets, fixture.puts, fixture.checks, fixture.tests, got.out)
+			if got.code != test.code || fixture.gets != test.gets || fixture.puts != test.puts || fixture.resets != test.resets || fixture.checks != test.checks || fixture.tests != test.tests {
+				t.Fatalf("exit=%d requests=%v get/put/reset/check/test=%d/%d/%d/%d/%d result=%s", got.code, fixture.requests, fixture.gets, fixture.puts, fixture.resets, fixture.checks, fixture.tests, got.out)
+			}
+			if test.action == "reset" && test.resets > 0 {
+				data, _ := got.data["data"].(map[string]any)
+				if test.mode == "reset-unknown" || test.mode == "reset-bad-ack" {
+					if data["server_write"] != "unknown" || data["saved"] != "unknown" || data["reset"] == true {
+						t.Fatalf("unconfirmed reset result = %#v", data)
+					}
+				} else {
+					if data["server_write"] != true || data["saved"] != true || data["reset"] != true {
+						t.Fatalf("acknowledged reset result = %#v", data)
+					}
+					if (data["verified"] == true) != (test.code == 0) {
+						t.Fatalf("reset readback verification = %#v", data)
+					}
+				}
 			}
 			if test.name == "query refresh" {
 				if !strings.Contains(got.out, `"api_key_configured": true`) || fixture.requests[len(fixture.requests)-1] != "GET /api/v1/workspaces/current/sandbox?refresh=true" {

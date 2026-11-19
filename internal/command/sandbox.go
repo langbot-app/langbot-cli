@@ -37,6 +37,18 @@ func newSandboxConfigCommand(service *app.Service, deps Dependencies, flags *glo
 		}}
 	get.Flags().BoolVar(&refresh, "refresh", false, i18n.T("Refresh backend availability without creating a sandbox"))
 	root.AddCommand(get)
+	var resetDryRun, resetYes bool
+	reset := &cobra.Command{Use: "reset", Short: i18n.T("Clear workspace sandbox overrides and restore deployment defaults"), Args: cobra.NoArgs,
+		Long:    i18n.T("Clear the saved workspace backend, E2B connection credentials and resource limits with --yes. New tasks inherit deployment defaults."),
+		Example: "  lbctl sandbox config reset --dry-run\n  lbctl sandbox config reset --yes",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return emitCall(deps, flags, func() (app.Result, error) {
+				return service.SandboxConfig(cmd.Context(), "reset", nil, false, resetDryRun, resetYes, connectionOptions(flags))
+			})
+		}}
+	reset.Flags().BoolVar(&resetYes, "yes", false, i18n.T("Confirm clearing workspace backend, E2B credentials and resource limit overrides"))
+	reset.Flags().BoolVar(&resetDryRun, "dry-run", false, i18n.T("Check prerequisites without writing"))
+	root.AddCommand(reset)
 	for _, action := range []string{"update", "check", "test"} {
 		var file, keyEnv string
 		var dryRun, yes bool

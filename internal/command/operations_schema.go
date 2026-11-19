@@ -21,6 +21,11 @@ func init() {
 		details := friendlyOperationDetails[spec.id]
 		meta.Operations = append(meta.Operations, preconditionID("operation.invoke"))
 		meta.InputConflicts = []schemaConflict{{Operands: []schemaOperand{{Flag: "file", Equals: "-"}, {Flag: "api-key-stdin", Equals: true}}, Reason: i18n.T("stdin can only have one reader")}}
+		if spec.id == "agent.debug.stream" {
+			meta.Operations = append(meta.Operations, conditionalID("artifact.create", &schemaCondition{Flag: "attach", NotEquals: []string{}}))
+			meta.RequiredOneOf = [][]string{{"message", "file"}}
+			meta.InputConflicts = []schemaConflict{{Operands: []schemaOperand{{Flag: "message", Present: true}, {Flag: "file", Present: true}}, Reason: i18n.Source("Provide exactly one --message or --file")}}
+		}
 		if spec.stream {
 			meta.Operations = append(meta.Operations, preconditionID("operation.stream"))
 		}

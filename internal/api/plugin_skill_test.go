@@ -18,7 +18,9 @@ func TestPluginAndSkillReadsUseSafeProjectionsAndValidatedPaths(t *testing.T) {
 		case pluginsPath + "/a/p/config":
 			body = `{"code":0,"data":{"config":{"token":"secret","timeout":3}}}`
 		case skillsPath:
-			body = `{"code":0,"data":{"skills":[{"name":"demo","description":"secret","private_key":"secret"}]}}`
+			body = `{"code":0,"data":{"skills":[{"name":"demo","description":"secret","revision":"r1","private_key":"secret"}]}}`
+		case skillsPath + "/demo":
+			body = `{"code":0,"data":{"skill":{"name":"demo","revision":"r1","instructions":"Use it"}}}`
 		case skillsPath + "/demo/files":
 			body = `{"code":0,"data":{"entries":[{"path":"README.md"}]}}`
 		default:
@@ -39,11 +41,14 @@ func TestPluginAndSkillReadsUseSafeProjectionsAndValidatedPaths(t *testing.T) {
 		t.Fatalf("PluginConfig() = %#v, error = %v", config, err)
 	}
 	skills, err := client.Skills(context.Background(), target)
-	if err != nil || len(skills) != 1 || skills[0]["name"] != "demo" {
+	if err != nil || len(skills) != 1 || skills[0]["name"] != "demo" || skills[0]["revision"] != "r1" {
 		t.Fatalf("Skills() = %#v, error = %v", skills, err)
 	}
 	if _, leaked := skills[0]["private_key"]; leaked {
 		t.Fatal("Skills() exposed unknown sensitive field")
+	}
+	if skill, err := client.SkillGet(context.Background(), target, "demo"); err != nil || skill["revision"] != "r1" {
+		t.Fatalf("SkillGet() = %#v, error = %v", skill, err)
 	}
 	if _, err := client.SkillFiles(context.Background(), target, "demo", "../", false); err == nil {
 		t.Fatal("SkillFiles() accepted traversal path")
@@ -68,15 +73,15 @@ func TestPluginAndSkillWritesUseOnlyDeclaredPathsAndVerifyFileContentInternally(
 			}
 			body = `{"code":0,"data":{"task_id":9}}`
 		case "POST /api/v1/skills":
-			body = `{"code":0,"data":{"skill":{"name":"demo","instructions":"created"}}}`
+			body = `{"code":0,"data":{"skill":{"name":"demo","instructions":"created","revision":"r1"}}}`
 		case "PUT /api/v1/skills/demo":
-			body = `{"code":0,"data":{"skill":{"name":"demo","description":"updated"}}}`
+			body = `{"code":0,"data":{"skill":{"name":"demo","description":"updated","revision":"r2"}}}`
 		case "DELETE /api/v1/skills/demo":
 			body = `{"code":0,"data":null}`
 		case "PUT /api/v1/skills/demo/files/SKILL.md":
 			body = `{"code":0,"data":{"skill":"demo","path":"SKILL.md","bytes_written":23}}`
 		case "GET /api/v1/skills/demo/files/SKILL.md":
-			body = `{"code":0,"data":{"skill":"demo","path":"SKILL.md","content":"token=connection-secret"}}`
+			body = `{"code":0,"data":{"skill":"demo","path":"SKILL.md","content":"token=connection-secret","revision":"r3"}}`
 		default:
 			return nil, fmt.Errorf("unexpected request: %s", key)
 		}
@@ -90,17 +95,17 @@ func TestPluginAndSkillWritesUseOnlyDeclaredPathsAndVerifyFileContentInternally(
 	if err != nil || taskID != "9" {
 		t.Fatalf("PluginDelete() task = %q, error = %v", taskID, err)
 	}
-	if skill, err := client.SkillCreate(context.Background(), target, map[string]any{"name": "demo"}); err != nil || skill["name"] != "demo" {
+	if skill, err := client.SkillCreate(context.Background(), target, map[string]any{"name": "demo"}); err != nil || skill["name"] != "demo" || skill["revision"] != "r1" {
 		t.Fatalf("SkillCreate() = %#v, error = %v", skill, err)
 	}
-	if skill, err := client.SkillUpdate(context.Background(), target, "demo", map[string]any{"description": "updated"}); err != nil || skill["name"] != "demo" {
+	if skill, err := client.SkillUpdate(context.Background(), target, "demo", map[string]any{"description": "updated"}); err != nil || skill["name"] != "demo" || skill["revision"] != "r2" {
 		t.Fatalf("SkillUpdate() = %#v, error = %v", skill, err)
 	}
 	if _, err := client.SkillFileWrite(context.Background(), target, "demo", "SKILL.md", "token=connection-secret"); err != nil {
 		t.Fatalf("SkillFileWrite() error = %v", err)
 	}
 	file, matches, err := client.SkillFileMatches(context.Background(), target, "demo", "SKILL.md", "token=connection-secret")
-	if err != nil || !matches || file.(map[string]any)["content"] != "token=***" {
+	if err != nil || !matches || file.(map[string]any)["content"] != "token=***" || file.(map[string]any)["revision"] != "r3" {
 		t.Fatalf("SkillFileMatches() = %#v, %v, error = %v", file, matches, err)
 	}
 	if err := client.SkillDelete(context.Background(), target, "demo"); err != nil {

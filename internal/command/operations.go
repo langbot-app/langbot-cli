@@ -2,9 +2,11 @@ package command
 
 import (
 	"bufio"
+	"context"
 	"encoding/base64"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/langbot-app/langbot-cli/internal/api"
@@ -227,7 +229,8 @@ func confirmOperation(deps Dependencies, yes bool, stdinUsed bool) error {
 
 func addOperationCommand(parent *cobra.Command, spec operationCommand, service *app.Service, deps Dependencies, flags *globalFlags) {
 	var decodeField, destination string
-	var file string
+	var file, message string
+	var attachmentPaths []string
 	var yes bool
 	fields := strings.Fields(spec.arguments)
 	use := spec.path
@@ -240,16 +243,27 @@ func addOperationCommand(parent *cobra.Command, spec operationCommand, service *
 	}
 	cmd.Flags().StringVar(&file, "file", "", i18n.T("Operation input JSON/YAML object; - reads stdin; see op describe for fields"))
 	cmd.Flags().BoolVar(&yes, "yes", false, i18n.T("Confirm write"))
+	if spec.id == "agent.debug.stream" {
+		cmd.Flags().StringVar(&message, "message", "", i18n.T("Agent debug message text"))
+		cmd.Flags().StringArrayVar(&attachmentPaths, "attach", nil, i18n.T("Local attachment; repeat for more files (10 MiB per file, 20 total references)"))
+	}
 	if spec.id == "" && !spec.stream {
 		cmd.Flags().StringVar(&decodeField, "decode-binary", "", i18n.T("Decode the specified base64 output field to a file"))
 		cmd.Flags().StringVarP(&destination, "out-file", "O", "", i18n.T("Decoded output path; use with --decode-binary"))
+	}
+	if spec.id == "skill.package.get" {
+		cmd.Flags().StringVarP(&destination, "out-file", "O", "", i18n.T("Save Skill package to a ZIP file, replacing an existing file"))
 	}
 	if spec.stream && spec.id == "" {
 		_ = cmd.MarkFlagRequired("file")
 	}
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		return emitCall(deps, flags, func() (app.Result, error) {
-			if (decodeField == "") != (destination == "") {
+			outputField := decodeField
+			if spec.id == "skill.package.get" && destination != "" {
+				outputField = "content"
+			}
+			if (outputField == "") != (destination == "") {
 				return app.Result{}, result.New("input", i18n.T("--decode-binary and -O must be used together"))
 			}
 			identifier := spec.id
@@ -260,6 +274,19 @@ func addOperationCommand(parent *cobra.Command, spec operationCommand, service *
 				return app.Result{}, err
 			}
 			body := map[string]any{}
+			if spec.id == "agent.debug.stream" {
+				if cmd.Flags().Changed("message") && cmd.Flags().Changed("file") {
+					return app.Result{}, result.New("input", i18n.T("Provide exactly one --message or --file"))
+				}
+				if cmd.Flags().Changed("message") {
+					if strings.TrimSpace(message) == "" {
+						return app.Result{}, result.New("input", i18n.T("message must not be empty"))
+					}
+					body["payload"] = map[string]any{"text": message}
+				} else if file == "" {
+					return app.Result{}, result.New("input", i18n.T("Provide exactly one --message or --file"))
+				}
+			}
 			if file != "" {
 				var err error
 				body, err = loadRequestBody(cmd.Context(), file, flags.apiKeyStdin, deps.In)
@@ -275,9 +302,18 @@ func addOperationCommand(parent *cobra.Command, spec operationCommand, service *
 					body[field] = args[index]
 				}
 			}
-			session, err := service.OpenOperations(cmd.Context(), connectionOptions(flags), spec.stream)
+			attachments, err := prepareDebugAttachments(body, attachmentPaths)
 			if err != nil {
 				return app.Result{}, err
+			}
+			defer attachments.close()
+			var beforeDebug any
+			if len(attachments) > 0 {
+				beforeDebug = attachments.report("not_started")
+			}
+			session, err := service.OpenOperations(cmd.Context(), connectionOptions(flags), spec.stream)
+			if err != nil {
+				return app.Result{Data: beforeDebug}, err
 			}
 			var description map[string]any
 			if spec.id != "" {
@@ -298,14 +334,29 @@ func addOperationCommand(parent *cobra.Command, spec operationCommand, service *
 				return session.Result(nil), result.New("input", i18n.T("Operation execution mode mismatch; use op call or op stream"))
 			}
 			if err := session.Authorize(description); err != nil {
-				return session.Result(nil), err
+				return session.Result(beforeDebug), err
+			}
+			if len(attachments) > 0 {
+				for _, permission := range []string{"resource.manage", "resource.view"} {
+					if err := session.Authorize(map[string]any{"permission": permission}); err != nil {
+						return session.Result(beforeDebug), err
+					}
+				}
 			}
 			if app.OperationWrites(description) {
 				if err := confirmOperation(deps, yes, file == "-" || flags.apiKeyStdin); err != nil {
-					return session.Result(nil), err
+					return session.Result(beforeDebug), err
 				}
 			}
 			if spec.stream {
+				if len(attachments) > 0 {
+					if err := attachments.upload(cmd.Context(), session, body["payload"].(map[string]any)); err != nil {
+						return session.Result(beforeDebug), err
+					}
+					if cmd.Context().Err() != nil {
+						return session.Result(beforeDebug), result.New("network", i18n.T("Request cancelled"))
+					}
+				}
 				err = session.Client.OperationStream(cmd.Context(), session.Target, identifier, body, func(event any) error {
 					if flags.output == "yaml" || flags.output == "yml" {
 						fmt.Fprintln(deps.Out, "---")
@@ -315,12 +366,19 @@ func addOperationCommand(parent *cobra.Command, spec operationCommand, service *
 				if flags.output == "yaml" || flags.output == "yml" {
 					fmt.Fprintln(deps.Out, "---")
 				}
+				if len(attachments) > 0 {
+					status := "completed"
+					if err != nil {
+						status = debugFailureStatus(err)
+					}
+					return session.Result(attachments.report(status)), err
+				}
 				return session.Result(map[string]any{"completed": err == nil}), err
 			}
 			value, err := session.Client.OperationCall(cmd.Context(), session.Target, identifier, body)
-			if err == nil && decodeField != "" {
+			if err == nil && outputField != "" {
 				object, _ := value.(map[string]any)
-				encoded, ok := object[decodeField].(string)
+				encoded, ok := object[outputField].(string)
 				if !ok {
 					return session.Result(nil), result.New("input", i18n.T("Output does not contain the specified base64 field"))
 				}
@@ -328,10 +386,38 @@ func addOperationCommand(parent *cobra.Command, spec operationCommand, service *
 				if decodeErr != nil {
 					return session.Result(nil), result.New("incompatible", i18n.T("Output field is not valid base64"))
 				}
-				if os.WriteFile(destination, decoded, 0o600) != nil {
+				outputFile, saveErr := os.CreateTemp(filepath.Dir(destination), ".lbctl-output-*")
+				if saveErr != nil {
 					return session.Result(nil), result.New("input", i18n.T("Unable to save decoded file"))
 				}
-				value = map[string]any{"file": destination, "bytes": len(decoded)}
+				defer os.Remove(outputFile.Name())
+				defer outputFile.Close()
+				_, writeErr := outputFile.Write(decoded)
+				if writeErr == nil {
+					writeErr = outputFile.Sync()
+				}
+				closeErr := outputFile.Close()
+				if writeErr != nil || closeErr != nil {
+					return session.Result(nil), result.New("input", i18n.T("Unable to save decoded file"))
+				}
+				if cancelErr := cmd.Context().Err(); cancelErr != nil {
+					message := "Request cancelled"
+					if cancelErr == context.DeadlineExceeded {
+						message = "Request timed out"
+					}
+					return session.Result(nil), result.New("network", i18n.T(message))
+				}
+				if os.Rename(outputFile.Name(), destination) != nil {
+					return session.Result(nil), result.New("input", i18n.T("Unable to save decoded file"))
+				}
+				saved := map[string]any{}
+				if spec.id == "skill.package.get" {
+					saved = object
+					delete(saved, outputField)
+				}
+				saved["file"] = destination
+				saved["bytes"] = len(decoded)
+				value = saved
 			}
 			return session.Result(value), err
 		})
