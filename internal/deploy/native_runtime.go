@@ -39,6 +39,13 @@ var UVAssets = map[string]UVAsset{
 	"windows/arm64": {"uv-aarch64-pc-windows-msvc.zip", "04964328f8e8a4e868153f65a29a927c5d3d8f16c343686bbab5147c72858903"},
 }
 
+var (
+	uvGitHubBase           = "https://github.com/astral-sh/uv/releases/download"
+	uvMirrorBase           = "https://download.langbot.app/tools/uv"
+	uvDownloadStallTimeout = 60 * time.Second
+	uvDownloadMaxDuration  = 15 * time.Minute
+)
+
 func EnsureUV(ctx context.Context, tools, region string, out io.Writer) (string, error) {
 	asset, ok := UVAssets[CurrentPlatform()]
 	if !ok {
@@ -65,29 +72,38 @@ func EnsureUV(ctx context.Context, tools, region string, out io.Writer) (string,
 	if regularFile(target) {
 		return target, nil
 	}
-	client := &http.Client{Timeout: 3 * time.Minute}
+	// A whole-request deadline cut off slow but steady links (CN users on the
+	// mirror took >3 minutes for the ~20 MB archive); only give up on a stall,
+	// with a generous cap per source.
+	client := &http.Client{Timeout: uvDownloadMaxDuration}
 	var archive []byte
 	addresses := []string{
-		"https://github.com/astral-sh/uv/releases/download/" + UVVersion + "/" + asset.Name,
-		"https://download.langbot.app/tools/uv/" + UVVersion + "/" + asset.Name,
+		uvGitHubBase + "/" + UVVersion + "/" + asset.Name,
+		uvMirrorBase + "/" + UVVersion + "/" + asset.Name,
 	}
 	if region == "cn" {
 		addresses[0], addresses[1] = addresses[1], addresses[0]
 	}
+	var failures []error
 	for _, address := range addresses {
 		fmt.Fprintln(out, i18n.Human("Downloading"), address)
-		archive, err = Fetch(ctx, client, address, 100<<20)
+		archive, err = FetchWithStallTimeout(ctx, client, address, 100<<20, uvDownloadStallTimeout)
 		if err == nil {
 			sum := sha256.Sum256(archive)
-			if hex.EncodeToString(sum[:]) != asset.SHA256 {
-				err = errors.New(i18n.T("uv checksum mismatch"))
-				continue
+			if hex.EncodeToString(sum[:]) == asset.SHA256 {
+				break
 			}
+			err = fmt.Errorf("%s: %s", address, i18n.T("uv checksum mismatch"))
+		}
+		failures = append(failures, err)
+		if ctx.Err() != nil {
 			break
 		}
 	}
 	if err != nil {
-		return "", err
+		// Report every source: the primary source's failure used to be
+		// overwritten by the fallback's, hiding why the mirror failed.
+		return "", errors.Join(failures...)
 	}
 	binary, err := extractUV(archive, asset.Name, name)
 	if err != nil {

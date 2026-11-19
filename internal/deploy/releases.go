@@ -74,6 +74,44 @@ func LatestCore(ctx context.Context, client *http.Client) (string, error) {
 }
 
 func Fetch(ctx context.Context, client *http.Client, address string, limit int64) ([]byte, error) {
+	return fetch(ctx, client, address, limit, nil)
+}
+
+var errDownloadStalled = errors.New("download stalled")
+
+// FetchWithStallTimeout downloads like Fetch but gives up only when no bytes
+// arrive for stall (covering connect, headers and body). Slow but steady links
+// still finish, which a whole-request deadline would cut off; the caller's
+// context and client still bound the total time.
+func FetchWithStallTimeout(ctx context.Context, client *http.Client, address string, limit int64, stall time.Duration) ([]byte, error) {
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	timer := time.AfterFunc(stall, func() { cancel(errDownloadStalled) })
+	defer timer.Stop()
+	data, err := fetch(ctx, client, address, limit, func(body io.Reader) io.Reader {
+		return stallReader{reader: body, timer: timer, stall: stall}
+	})
+	if err != nil && errors.Is(context.Cause(ctx), errDownloadStalled) {
+		return nil, fmt.Errorf(i18n.T("%s: no data received for %s"), address, stall)
+	}
+	return data, err
+}
+
+type stallReader struct {
+	reader io.Reader
+	timer  *time.Timer
+	stall  time.Duration
+}
+
+func (reader stallReader) Read(p []byte) (int, error) {
+	n, err := reader.reader.Read(p)
+	if n > 0 {
+		reader.timer.Reset(reader.stall)
+	}
+	return n, err
+}
+
+func fetch(ctx context.Context, client *http.Client, address string, limit int64, wrap func(io.Reader) io.Reader) ([]byte, error) {
 	telemetry.RecordSource(ctx, address)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, address, nil)
 	if err != nil {
@@ -88,7 +126,11 @@ func Fetch(ctx context.Context, client *http.Client, address string, limit int64
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf(i18n.T("%s: HTTP %d"), address, resp.StatusCode)
 	}
-	data, err := io.ReadAll(io.LimitReader(progress.Download(ctx, resp.Body, resp.ContentLength), limit+1))
+	var body io.Reader = resp.Body
+	if wrap != nil {
+		body = wrap(body)
+	}
+	data, err := io.ReadAll(io.LimitReader(progress.Download(ctx, body, resp.ContentLength), limit+1))
 	if int64(len(data)) > limit {
 		return nil, errors.New(i18n.T("download exceeds size limit"))
 	}
