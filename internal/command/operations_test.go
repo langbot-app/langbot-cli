@@ -1770,6 +1770,109 @@ func TestGenericOperationsModesAndConfirmation(t *testing.T) {
 	}
 }
 
+func TestPluginPermissionApprovalHint(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		pending bool
+		format  string
+		member  bool
+		generic bool
+	}{
+		{"pending JSON", true, "json", false, false},
+		{"pending YAML", true, "yaml", false, false},
+		{"pending human", true, "", false, false},
+		{"approved JSON", false, "json", false, false},
+		{"approved YAML", false, "yaml", false, false},
+		{"approved human", false, "", false, false},
+		{"member", true, "json", true, false},
+		{"generic", true, "json", false, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			calls := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch r.URL.Path {
+				case "/api/v1/system/context":
+					fmt.Fprint(w, `{"code":0,"data":{"instance_uuid":"instance","workspace_uuid":"review-workspace","api_key_id":"key","permissions":["resource.view"]}}`)
+					return
+				case "/api/v1/workspaces/current":
+					fmt.Fprint(w, `{"code":0,"data":{"workspace":{"uuid":"review-workspace"},"permissions":["resource.view"]}}`)
+					return
+				}
+				if operationPreflight(w, r, true) {
+					return
+				}
+				if r.URL.Path != "/api/v1/operations/plugin.permissions.get" {
+					t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+					w.WriteHeader(http.StatusNotFound)
+					return
+				}
+				if r.Method == http.MethodGet {
+					fmt.Fprint(w, `{"id":"plugin.permissions.get","permission":"resource.view","risk":"read","streaming":false}`)
+					return
+				}
+				if r.Method != http.MethodPost {
+					t.Errorf("unexpected method %s", r.Method)
+				}
+				calls++
+				fmt.Fprintf(w, `{"code":0,"data":{"pending_confirmation":%t,"enabled":%t,"can_confirm":true,"permissions":[{"id":"bot.list","granted":false}]}}`, test.pending, !test.pending)
+			}))
+			defer server.Close()
+			args := []string{"plugin", "permissions", "get", "author", "name"}
+			if test.generic {
+				args = []string{"op", "call", "plugin.permissions.get", "--file", "-"}
+			}
+			if test.member {
+				args = append(args, "--as-member")
+			}
+			configPath := filepath.Join(t.TempDir(), "config.yaml")
+			configuration := fmt.Sprintf("version: 1\ncurrent_context: test\ncontexts:\n  test:\n    endpoint: %s/\n    credential:\n      type: env\n      name: TEST_KEY\n", server.URL)
+			if err := os.WriteFile(configPath, []byte(configuration), 0600); err != nil {
+				t.Fatal(err)
+			}
+			prefix := []string{"--config", configPath}
+			if test.format != "" {
+				prefix = append(prefix, "-o", test.format)
+			}
+			var buffer bytes.Buffer
+			code := executeChinese(context.Background(), append(prefix, args...), Dependencies{
+				In: strings.NewReader(`{"author":"author","plugin_name":"name"}`), Out: &buffer, Err: &buffer,
+				LookupEnv: func(name string) (string, bool) {
+					return "test-secret", name == "TEST_KEY" || name == "LANGBOT_USER_TOKEN"
+				},
+			})
+			output := buffer.String()
+			if code != 0 || calls != 1 || strings.Contains(output, "test-secret") {
+				t.Fatalf("code=%d calls=%d output=%s", code, calls, output)
+			}
+			if !test.pending {
+				if strings.Contains(output, "approval") || strings.Contains(output, "/home/extensions") {
+					t.Fatalf("approved plugin still has an approval hint: %s", output)
+				}
+				return
+			}
+			if test.format == "" {
+				if !strings.Contains(output, server.URL+"/home/extensions") || !strings.Contains(output, "review-workspace") || !strings.Contains(output, "plugin permissions confirm") {
+					t.Fatal(output)
+				}
+				return
+			}
+			var envelope struct {
+				Data struct {
+					Approval map[string]any `json:"approval" yaml:"approval"`
+				} `json:"data" yaml:"data"`
+			}
+			if err := yaml.Unmarshal([]byte(output), &envelope); err != nil {
+				t.Fatal(err)
+			}
+			approval := envelope.Data.Approval
+			if approval["url"] != server.URL+"/home/extensions" || approval["workspace_uuid"] != "review-workspace" || approval["required_principal"] != nil || !strings.Contains(fmt.Sprint(approval["message"]), "plugin permissions confirm") {
+				t.Fatalf("unexpected approval hint: %s", output)
+			}
+		})
+	}
+}
+
 func TestPermissionConfirmation(t *testing.T) {
 	for _, compat := range []bool{false, true} {
 		for _, explicit := range []bool{false, true} {

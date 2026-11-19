@@ -434,6 +434,11 @@ func addOperationCommand(parent *cobra.Command, spec operationCommand, service *
 				return session.Result(map[string]any{"completed": err == nil}), err
 			}
 			value, err := session.Client.OperationCall(cmd.Context(), session.Target, identifier, body)
+			if err == nil && identifier == "plugin.permissions.get" {
+				if permissions, ok := value.(map[string]any); ok && permissions["pending_confirmation"] == true {
+					permissions["approval"] = session.PluginApprovalHint()
+				}
+			}
 			if err == nil && outputField != "" {
 				object, _ := value.(map[string]any)
 				encoded, ok := object[outputField].(string)

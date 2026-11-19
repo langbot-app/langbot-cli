@@ -719,6 +719,8 @@ lbctl plugin permissions confirm <author> <name> --yes
 lbctl plugin permissions confirm <author> <name> --capability storage.plugin --operation agent.list --yes
 ```
 
+`plugin permissions get` 返回待确认状态时，默认、JSON 和 YAML 输出会包含可选的 WebUI 扩展页面地址和目标 Workspace。可使用有权管理插件的账户在该页面审阅权限，也可使用 `plugin permissions confirm`。审批后再次运行命令核对状态。
+
 默认确认全部声明权限，也可逐项指定；compat 模式始终提交完整权限集合。Core 按 API Key 自身权限逐项校验，不能提权。`--confirm-permissions` 隐含等待安装成功、确认权限并核验启用状态，需要 `plugin.permissions.confirm_api_key` 和 `operation.invoke`；安装失败不继续确认。本地和 GitHub 安装从包内 manifest 确定插件身份，不把文件名或仓库名当作插件名；GitHub 确认会下载选定的公开 release asset 检查 manifest，不向 GitHub 发送 Workspace Key。
 
 ### Core 权限边界
