@@ -424,6 +424,27 @@ func TestAdoptRequiresLocalEndpointAndMatchingPublishedPort(t *testing.T) {
 	}
 }
 
+func TestDirectoryDiagnosticsUseSelectedDeployment(t *testing.T) {
+	dir := t.TempDir()
+	record := deploy.Record{DeploymentID: "selected", Endpoint: "http://127.0.0.1:5331", Port: 5331, Driver: deploy.DriverDockerCompose, ComposeProject: "selected", ComposeFile: filepath.Join(dir, "compose.yaml"), Profile: "basic"}
+	if err := (deploy.Store{Dir: dir}).Write(context.Background(), record); err != nil {
+		t.Fatal(err)
+	}
+	runner := &lifecycleTestRunner{state: "running", port: record.Port}
+	service := New(Dependencies{LocalDir: t.TempDir(), LocalRunner: runner, Transport: lifecycleTransport{runner: runner}})
+	t.Setenv("LANGBOT_ENDPOINT", "https://other.invalid")
+	t.Setenv("LANGBOT_API_KEY", "other-context-key")
+	options := CheckOptions{LocalDir: dir}
+	resolved, err := service.discoverActiveEnvironment(context.Background(), options, false)
+	if err != nil || resolved.Environment.Runtime.Dir != dir || resolved.Environment.Name != record.DeploymentID || resolved.Connection.Endpoint != record.Endpoint || resolved.Connection.CredentialSource != "" {
+		t.Fatalf("directory discovery = %+v, err = %v", resolved.Environment, err)
+	}
+	options.EndpointSet = true
+	if _, err := service.discoverActiveEnvironment(context.Background(), options, false); err == nil || result.AsError(err).Kind != "input" {
+		t.Fatalf("conflicting target error = %v", err)
+	}
+}
+
 func TestFollowLogsUsesJSONLines(t *testing.T) {
 	port := freeLifecyclePort(t)
 	root := t.TempDir()
