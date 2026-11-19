@@ -334,7 +334,49 @@ lbctl knowledge-base ingest <uuid> --dir ./documents --wait
 
 Directory scans skip dot-prefixed files/directories and symbolic links. Each file remains subject to the existing 10 MiB upload limit, including request metadata. The CLI checks all local paths before uploading and submitting files sequentially. `--wait` follows each task, with `--wait-timeout` applied separately to each file. Batch JSON/YAML output retains per-file status, file IDs, task IDs, and errors in `files`, with counts in `summary`; human output shows the same per-file outcomes. Without `--wait`, success means tasks were submitted.
 
-Confirmed file-specific failures allow the remaining files to proceed. An unknown submission, incomplete wait, authentication/permission failure, or incompatible target stops further submissions, preserves completed and unstarted items, and exits nonzero. Re-running uploads again; there is no cross-run deduplication or automatic retry. Single-file ZIP submission remains supported, but Core returns only one child task ID. Batch `--wait` rejects ZIP inputs before uploading: extract the archive and use `--dir` instead.
+Confirmed file-specific failures allow the remaining files to proceed. An unknown submission, incomplete wait, authentication/permission failure, or incompatible target stops further submissions, preserves completed and unstarted items, and exits nonzero. A default invocation uploads again when repeated. Single-file ZIP submission remains supported, but Core returns only one child task ID. Batch `--wait` rejects ZIP inputs before uploading. Extract the archive and use `--dir` instead.
+
+Use a durable journal to continue the same input group across CLI restarts.
+
+```sh
+lbctl knowledge-base ingest <uuid> --dir ./documents --journal ./ingest.json --wait
+lbctl knowledge-base ingest <uuid> --dir ./documents --journal ./ingest.json --resume --wait
+```
+
+The journal records the instance, Workspace, knowledge base, parser, relative input paths, sizes, SHA-256 hashes, upload IDs, stable document UUIDs, task IDs and confirmation phases. It stores progress without credentials. Each upload and submission has a durable intent recorded before the request, followed by confirmed evidence. Atomic replacement and a cross-process lock protect the journal. An existing journal requires `--resume`, which requires the original complete input group, content, parser and target.
+
+Resume preserves completed documents and reuses confirmed uploads. Submitted and uncertain submissions are checked against knowledge-base documents using the original upload ID stored in `file_name`, then the bound stable document UUID. Journal waiting polls these document records. Task IDs can be reused after a Core restart. An upload without a confirmed ID, missing document or ambiguous submission remains unresolved and exits nonzero with its journal preserved. Journal mode requires `knowledge_base.file.list` and individual documents. Extract ZIP archives before using it. The journal and lock are excluded when stored inside `--dir`. `--dry-run` validates the plan without creating a journal or uploading.
+
+#### Retrieval evaluation
+
+Create `cases.yaml` with stable case IDs and expected matches.
+
+```yaml
+top_k: 5
+cases:
+  - case_id: installation
+    query: How do I install LangBot?
+    expect:
+      text_contains: docker compose
+      metadata: {source: install.md}
+  - case_id: refund-policy
+    query: What is the refund policy?
+    top_k: 3
+    expect: {id: policy-chunk-42}
+```
+
+```sh
+lbctl knowledge-base evaluate <uuid> --cases cases.yaml -o json > before.json
+lbctl knowledge-base evaluate <uuid> --cases cases.yaml --baseline before.json
+```
+
+Each case sends one retrieval request using `resource.view`. `top_k` defaults to 5 and is enforced locally on the returned ranking. A single result must satisfy every supplied expectation. `text_contains` is a case-sensitive substring of text content, `id` matches the result ID, and `metadata` recursively matches the supplied keys and values. Metadata arrays use exact ordered equality.
+
+The report retains every case with `passed`, `failed`, `error`, `cancelled` or `not_started` status. Hit rate is passed cases divided by successfully evaluated cases, including empty retrievals as misses. `empty_result` identifies empty retrievals, while `score_missing_count` counts returned results whose score is absent or null. Assertion failures exit nonzero. Service errors and cancellation preserve completed and remaining case records.
+
+The baseline accepts this command's JSON envelope, including a prior run with failed assertions. It validates the instance, Workspace, knowledge base, case IDs, queries, expectations and effective top-k before submitting retrievals. Case ordering may change. Comparison reports improved, regressed and stable cases, plus cases with incomplete execution as `not_comparable`. The hit-rate delta is null when the two runs completed different sets of cases.
+
+Member sessions use the instance identity reported by the current Workspace. Baseline comparison requires confirmed instance and Workspace identities in both runs and validates them before retrieval requests. Older member responses with no instance identity support standalone evaluation. Journal ingestion requires the instance identity before uploading.
 
 ### Provider and Model
 
@@ -383,6 +425,8 @@ lbctl skill install github --file skill.yaml
 lbctl skill install upload --file skill.zip
 lbctl skill install upload --dir ./my-skill --dry-run
 lbctl skill install upload --dir ./my-skill
+lbctl skill push <name> --dir ./my-skill --base-revision <revision> --dry-run
+lbctl skill push <name> --dir ./my-skill --base-revision <revision>
 lbctl skill delete <name> --yes
 ```
 
@@ -391,6 +435,8 @@ For marketplace plugins, `upgrade --wait` reads the running version, initializat
 Skill installation with `--dry-run` uses a server-side preview. Plugin installation, upgrade, and deletion support `--wait` to follow asynchronous tasks.
 
 `skill install upload --dir` packages a local directory, including relative paths and hidden files. It skips `.git`, rejects symbolic links, and enforces the 10 MB ZIP upload limit. Choose one of `--file` and `--dir`.
+
+`skill push` updates an existing Skill from a complete local directory, including binary resources and executable modes. Files absent from the directory are deleted in the new publication. Read the current revision before editing and pass it explicitly with `--base-revision`. The `name` in `SKILL.md` must match the command argument. `--dry-run` validates the package and reports added, modified and deleted paths, the proposed revision and publication permissions. Publishing requires `resource.manage` and `resource.view`, then verifies the resulting revision with a readback. A revision conflict requires reviewing and merging the latest package before retrying. Core must advertise `skill.package.preview` and `skill.package.publish`.
 
 Skill reads include `revision` when provided by Core. For edits based on a previous read, pass that revision with `--base-revision` for file writes or `base_revision` in an update request. A conflict preserves the server content and returns `skill_revision_conflict`. Read the latest content, merge your changes, and retry with the latest revision. Omitted revisions use a fresh read before writing. `skill package get -O` saves the ZIP and replaces an existing destination file.
 
@@ -721,6 +767,28 @@ lbctl auth logout
 Login requires a saved context. Password and TOTP/recovery-code prompts hide input; `--totp` completes Core's challenge, including when the password comes from stdin and a controlling terminal is available. Tokens are stored as the optional `user_token` field in the current context's credential-bearing configuration file, atomically written with mode `0600`. API keys remain references to environment variables or private local deployment files. `LANGBOT_USER_TOKEN` overrides the saved token. Tokens are masked in output; never pass passwords or tokens as command-line arguments.
 
 Cloud disables password login (`password_login_disabled`). Sign into the target Workspace's WebUI, open browser developer tools → Application/Storage → Local Storage for that origin, and copy the `token` value. Paste it into `lbctl auth set-token --stdin` (finish stdin with EOF), or supply it through a protected stdin pipe. Treat it as a password and do not share it in logs or screenshots. The CLI does not refresh sessions: when the token expires or Core rejects a member request with 401/403, the error is `requires_member_session` (exit 3); log in again or import a fresh WebUI token. Missing tokens fail before any network request. `auth logout` removes the saved token; also unset `LANGBOT_USER_TOKEN` if exported. It does not revoke other browser sessions. Member permissions and Workspace binding are checked against `/api/v1/workspaces/current`; API-key-only system discovery endpoints are not used for member operation calls.
+
+### Collect explicit Artifacts
+
+Create a JSON/YAML manifest with IDs returned by Core and optional local filenames.
+
+```yaml
+artifacts:
+  - id: art_0123456789abcdef0123456789abcdef
+    name: report.pdf
+  - id: art_fedcba9876543210fedcba9876543210
+```
+
+```sh
+lbctl artifact collect --manifest outputs.yaml --dir ./delivery
+lbctl --as-member artifact collect --manifest outputs.yaml --dir ./delivery
+```
+
+`--manifest -` reads stdin. Names default to `ID.bin`, with a SHA-256-of-ID fallback for unsafe filenames. Explicit names are portable single filenames of at most 255 bytes. Paths, device names and trailing dots/spaces are rejected. Names must be unique ignoring case. Duplicate IDs with the same filename are fetched once and retain an occurrence count. Conflicting filenames for the same ID fail input validation before network access.
+
+Collection uses `resource.view` and the same captured API-key or member identity for each metadata and content request. Core authorizes every ID in both phases. Server-supplied names are retained as metadata. Local output paths derive from the manifest. Downloads are bounded by Core's 10 MiB limit and verified against metadata size and SHA-256, including binary and empty content. Verified temporary files are published with a no-replace hard link inside the output directory, requiring filesystem hard-link support. Existing matching files are authorized, downloaded and verified again. Existing different files produce `artifact_destination_conflict`.
+
+Human and JSON/YAML reports retain each ID, destination, stage, expected size/digest, received byte count/digest and structured error. Failed items leave completed files available, and HTTP 400/403/404/410, size limits and interrupted transfers retain their evidence. Cancellation preserves completed and unstarted item records. A partial failure exits nonzero.
 
 ### Binary files
 

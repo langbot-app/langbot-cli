@@ -268,11 +268,15 @@ var schemaMetaByName = map[string]schemaCommandMeta{
 	"knowledge-base.update":      writeMeta(operationIDs("knowledge_base.update"), schemaWriteOptions{SupportsDryRun: true, RequiredFlags: []string{"file"}, Readbacks: []schemaOperation{readbackID("knowledge_base.get")}}),
 	"knowledge-base.delete":      writeMeta(operationIDs("knowledge_base.delete"), schemaWriteOptions{SupportsDryRun: true, Destructive: true, RequiresYes: true, Readbacks: []schemaOperation{readbackID("knowledge_base.get")}}),
 	"knowledge-base.retrieve":    readMetaWithFlags(operationIDs("knowledge_base.retrieve"), "file"),
+	"knowledge-base.evaluate":    readMetaWithFlags(operationIDs("knowledge_base.retrieve"), "cases"),
 	"knowledge-base.file.list":   readMeta(operationIDs("knowledge_base.file.list")...),
 	"knowledge-base.file.delete": writeMeta(operationIDs("knowledge_base.file.delete"), schemaWriteOptions{SupportsDryRun: true, Destructive: true, RequiresYes: true, Readbacks: []schemaOperation{readbackID("knowledge_base.file.list")}}),
 	"knowledge-base.ingest": func() schemaCommandMeta {
-		meta := writeMeta(operationIDs("knowledge_base.file.store", "file.document.upload", "knowledge_base.get", conditionalID("task.get", flagEquals("wait", true))), schemaWriteOptions{SupportsDryRun: true, SupportsWait: true})
+		meta := writeMeta(operationIDs("knowledge_base.file.store", "file.document.upload", "knowledge_base.get", conditionalID("task.get", flagEquals("wait", true)), conditionalID("knowledge_base.file.list", &schemaCondition{Flag: "journal", NotEquals: ""})), schemaWriteOptions{SupportsDryRun: true, SupportsWait: true})
 		meta.RequiredOneOf = [][]string{{"file", "dir"}}
+		meta.FlagApplicability = map[string]schemaFlagApplicability{"resume": {
+			Status: "conditional", When: &schemaCondition{Flag: "journal", NotEquals: ""}, Reason: i18n.Source("Resume requires the same journal and input group"),
+		}}
 		return meta
 	}(),
 
@@ -296,6 +300,7 @@ var schemaMetaByName = map[string]schemaCommandMeta{
 	"skill.file.read":      readMeta(operationIDs("skill.files.read")...),
 	"skill.file.write":     writeMeta(operationIDs("skill.files.write"), schemaWriteOptions{SupportsDryRun: true, RequiredFlags: []string{"file"}, Readbacks: []schemaOperation{readbackID("skill.files.read")}}),
 	"skill.preview":        readMeta(operationIDs("skill.preview")...),
+	"skill.push":           writeMeta(operationIDs(conditionalID("skill.package.preview", flagEquals("dry-run", true)), conditionalID("skill.package.publish", flagEquals("dry-run", false)), conditionalID("skill.get", flagEquals("dry-run", false))), schemaWriteOptions{SupportsDryRun: true, RequiredFlags: []string{"dir", "base-revision"}}),
 	"skill.install.github": writeMeta(operationIDs("skill.install.github"), schemaWriteOptions{SupportsDryRun: true, RequiredFlags: []string{"file"}}),
 	"skill.install.upload": func() schemaCommandMeta {
 		meta := writeMeta(operationIDs("skill.install.upload"), schemaWriteOptions{SupportsDryRun: true})

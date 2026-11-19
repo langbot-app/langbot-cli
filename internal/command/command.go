@@ -629,6 +629,7 @@ func newTaskCommand(service *app.Service, deps Dependencies, flags *globalFlags)
 
 func newKnowledgeBaseCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
 	command := &cobra.Command{Use: "knowledge-base", Aliases: []string{"kb"}, Short: i18n.T("Manage knowledge bases"), Args: cobra.NoArgs}
+	command.AddCommand(newKnowledgeEvaluateCommand(service, deps, flags))
 	command.AddCommand(&cobra.Command{Use: "list", Short: i18n.T("List knowledge bases"), Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		return emitCall(deps, flags, func() (app.Result, error) { return service.KnowledgeBaseList(cmd.Context(), connectionOptions(flags)) })
 	}})
@@ -705,6 +706,8 @@ func newKnowledgeBaseCommand(service *app.Service, deps Dependencies, flags *glo
 	var filenames []string
 	var directory string
 	var parserPluginID string
+	var journalPath string
+	var resume bool
 	var dryRun bool
 	var wait bool
 	var pollInterval time.Duration
@@ -720,6 +723,11 @@ func newKnowledgeBaseCommand(service *app.Service, deps Dependencies, flags *glo
 				return emitCommand(deps, flags, app.Result{}, result.New("input", i18n.T("Polling interval and wait timeout must be positive")))
 			}
 			return emitCall(deps, flags, func() (app.Result, error) {
+				if journalPath != "" || resume {
+					return service.KnowledgeBaseIngestJournal(cmd.Context(), args[0], filenames, directory, parserPluginID, journalPath, resume, dryRun, app.WaitOptions{
+						Wait: wait, PollInterval: pollInterval, WaitTimeout: waitTimeout,
+					}, connectionOptions(flags))
+				}
 				return service.KnowledgeBaseIngestFiles(cmd.Context(), args[0], filenames, directory, parserPluginID, dryRun, app.WaitOptions{
 					Wait: wait, PollInterval: pollInterval, WaitTimeout: waitTimeout,
 				}, connectionOptions(flags))
@@ -729,6 +737,8 @@ func newKnowledgeBaseCommand(service *app.Service, deps Dependencies, flags *glo
 	ingest.Flags().StringArrayVar(&filenames, "file", nil, i18n.T("Local file; repeatable; provide this or --dir; stdin not supported"))
 	ingest.Flags().StringVar(&directory, "dir", "", i18n.T("Recursively import a directory, skipping dotfiles and symbolic links; can combine with --file"))
 	ingest.Flags().StringVar(&parserPluginID, "parser-plugin-id", "", i18n.T("Optional parser plugin ID"))
+	ingest.Flags().StringVar(&journalPath, "journal", "", i18n.T("Durable local ingestion progress journal"))
+	ingest.Flags().BoolVar(&resume, "resume", false, i18n.T("Resume the same input group with --journal"))
 	ingest.Flags().BoolVar(&dryRun, "dry-run", false, i18n.T("Check prerequisites without uploading or submitting"))
 	ingest.Flags().BoolVar(&wait, "wait", false, i18n.T("Wait for each input file ingestion task; batch wait does not support ZIP, extract first"))
 	ingest.Flags().DurationVar(&pollInterval, "poll-interval", time.Second, i18n.T("Task polling interval"))
@@ -903,6 +913,7 @@ func newPluginCommand(service *app.Service, deps Dependencies, flags *globalFlag
 
 func newSkillCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
 	command := &cobra.Command{Use: "skill", Short: i18n.T("Manage Skills"), Args: cobra.NoArgs}
+	command.AddCommand(newSkillPushCommand(service, deps, flags))
 	command.AddCommand(&cobra.Command{Use: "list", Short: i18n.T("List Skills"), Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		return emitCall(deps, flags, func() (app.Result, error) { return service.SkillList(cmd.Context(), connectionOptions(flags)) })
 	}})
@@ -2026,4 +2037,24 @@ func enrichResult(deps Dependencies, flags *globalFlags, value app.Result, err e
 func hasEnvironmentConfig(deps Dependencies) bool {
 	_, ok := deps.LookupEnv("LANGBOT_CONFIG")
 	return ok
+}
+
+func newSkillPushCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
+	var directory, revision string
+	var dryRun bool
+	command := &cobra.Command{
+		Use: "push <name>", Short: i18n.T("Publish a complete local Skill directory"), Args: cobra.ExactArgs(1),
+		Example: "  lbctl skill get demo -o json\n  lbctl skill push demo --dir ./demo --base-revision <revision> --dry-run\n  lbctl skill push demo --dir ./demo --base-revision <revision>",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return emitCall(deps, flags, func() (app.Result, error) {
+				return service.SkillPush(cmd.Context(), args[0], directory, revision, dryRun, connectionOptions(flags))
+			})
+		},
+	}
+	command.Flags().StringVar(&directory, "dir", "", i18n.T("Local Skill directory; packaged as ZIP before upload"))
+	command.Flags().StringVar(&revision, "base-revision", "", i18n.T("Reviewed revision required for complete package replacement"))
+	command.Flags().BoolVar(&dryRun, "dry-run", false, i18n.T("Validate the package and preview added, modified and deleted files"))
+	_ = command.MarkFlagRequired("dir")
+	_ = command.MarkFlagRequired("base-revision")
+	return command
 }

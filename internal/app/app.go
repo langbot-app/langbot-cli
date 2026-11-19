@@ -2371,11 +2371,7 @@ func (s *Service) PipelineDelete(ctx context.Context, uuid string, confirmed, dr
 }
 
 func (s *Service) writeClient(preflight WritePreflight) (api.Client, api.Target) {
-	return api.Client{Transport: s.deps.Transport}, api.Target{
-		Endpoint: preflight.Connection.Endpoint,
-		APIKey:   preflight.Connection.APIKey,
-		Timeout:  preflight.Connection.Timeout,
-	}
+	return api.Client{Transport: s.deps.Transport}, readTarget(preflight)
 }
 
 func writePlan(preflight WritePreflight, operation, uuid string) Result {

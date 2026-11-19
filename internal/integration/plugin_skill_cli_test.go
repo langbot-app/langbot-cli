@@ -177,3 +177,116 @@ func TestPluginSkillManagementCommandsEnforceSafety(t *testing.T) {
 		t.Fatalf("skill rename was accepted: %s", rename.out)
 	}
 }
+
+func TestSkillPushDirectoryPreviewPublishConflictAndReadback(t *testing.T) {
+	for _, scenario := range []string{"preview", "publish", "conflict", "readback-failure", "readback-mismatch", "permission"} {
+		t.Run(scenario, func(t *testing.T) {
+			directory := filepath.Join(t.TempDir(), "packet")
+			if err := os.MkdirAll(directory, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			binary := []byte{0, 255, 1, 2}
+			for name, content := range map[string][]byte{"SKILL.md": []byte("---\nname: packet\ndescription: Package\n---\nupdated"), "resource.bin": binary} {
+				if err := os.WriteFile(filepath.Join(directory, name), content, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			updates, reads := 0, 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch r.URL.Path {
+				case "/api/v1/system/context":
+					permissions := `["resource.view","resource.manage"]`
+					if scenario == "permission" {
+						permissions = `["resource.view"]`
+					}
+					fmt.Fprintf(w, `{"code":0,"data":{"instance_uuid":"instance-a","workspace_uuid":"workspace-a","api_key_id":"key-a","permissions":%s}}`, permissions)
+				case "/api/v1/system/capabilities":
+					fmt.Fprint(w, `{"code":0,"data":{"schema_version":1,"operations":{"skill.package.preview":{"supported":true},"skill.package.publish":{"supported":true},"skill.get":{"supported":true}}}}`)
+				case "/api/v1/skills/packet/package", "/api/v1/skills/packet/package/preview":
+					updates++
+					preview := scenario == "preview"
+					if strings.HasSuffix(r.URL.Path, "/preview") != preview || r.Method != http.MethodPost {
+						t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+					}
+					file, _, err := r.FormFile("file")
+					if err != nil {
+						t.Error(err)
+						return
+					}
+					defer file.Close()
+					content, _ := io.ReadAll(file)
+					archive, err := zip.NewReader(bytes.NewReader(content), int64(len(content)))
+					if err != nil {
+						t.Error(err)
+						return
+					}
+					reader, err := archive.Open("resource.bin")
+					if err != nil {
+						t.Error(err)
+						return
+					}
+					got, _ := io.ReadAll(reader)
+					reader.Close()
+					if !bytes.Equal(got, binary) || r.FormValue("base_revision") != "sha256:old" {
+						t.Errorf("binary=%v revision=%q", got, r.FormValue("base_revision"))
+					}
+					if scenario == "conflict" {
+						w.WriteHeader(409)
+						fmt.Fprint(w, `{"code":-1,"msg":"stale revision"}`)
+						return
+					}
+					fmt.Fprintf(w, `{"code":0,"data":{"skill_name":"packet","base_revision":"sha256:old","proposed_revision":"sha256:new","dry_run":%t,"changes":{"added":["resource.bin"],"modified":["SKILL.md"],"deleted":["old.bin"]},"can_publish":true,"required_permissions":["resource.view","resource.manage"],"skill":{"name":"packet","revision":"sha256:new"}}}`, preview)
+				case "/api/v1/skills/packet":
+					reads++
+					if scenario == "readback-failure" {
+						w.WriteHeader(503)
+						return
+					}
+					revision := "sha256:new"
+					if scenario == "readback-mismatch" {
+						revision = "sha256:other"
+					}
+					fmt.Fprintf(w, `{"code":0,"data":{"skill":{"name":"packet","revision":%q}}}`, revision)
+				default:
+					t.Errorf("unexpected request %s", r.URL.Path)
+					w.WriteHeader(404)
+				}
+			}))
+			defer server.Close()
+			configPath := filepath.Join(t.TempDir(), "config.yaml")
+			env := map[string]string{"KEY": "package-key"}
+			requireSuccess(t, run(t, configPath, env, "", "context", "add", "managed", "--endpoint", server.URL, "--api-key-env", "KEY", "--expect-workspace", "workspace-a"))
+			args := []string{"--context", "managed", "skill", "push", "packet", "--dir", directory, "--base-revision", "sha256:old"}
+			if scenario == "preview" {
+				args = append(args, "--dry-run")
+			}
+			value := run(t, configPath, env, "", args...)
+			success := scenario == "preview" || scenario == "publish"
+			if success {
+				requireSuccess(t, value)
+			} else if value.code == 0 {
+				t.Fatalf("expected failure: %s", value.out)
+			}
+			if scenario == "conflict" && !strings.Contains(value.out, "skill_revision_conflict") {
+				t.Fatal(value.out)
+			}
+			if scenario == "publish" && !strings.Contains(value.out, `"verified": true`) {
+				t.Fatal(value.out)
+			}
+			if scenario == "preview" && (!strings.Contains(value.out, "old.bin") || !strings.Contains(value.out, `"dry_run": true`)) {
+				t.Fatal(value.out)
+			}
+			wantUpdates, wantReads := 1, 0
+			if scenario == "permission" {
+				wantUpdates = 0
+			}
+			if scenario == "publish" || strings.HasPrefix(scenario, "readback-") {
+				wantReads = 1
+			}
+			if updates != wantUpdates || reads != wantReads {
+				t.Fatalf("updates=%d reads=%d", updates, reads)
+			}
+		})
+	}
+}

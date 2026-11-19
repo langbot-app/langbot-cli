@@ -307,7 +307,49 @@ lbctl knowledge-base ingest <uuid> --dir ./documents --wait
 
 目录扫描跳过点开头的文件、目录和符号链接；每个文件受现有 10 MiB 上传限制约束（含请求元数据）。CLI 先检查全部本地路径，再按顺序上传和提交；`--wait` 逐个等待任务，`--wait-timeout` 对每个文件分别计时。JSON/YAML 的批量结果在 `files` 保留各文件的状态、文件 ID、任务 ID 和错误，并在 `summary` 汇总；人工输出显示同样的逐文件结论。不加 `--wait` 只表示任务已提交。
 
-已确认的单文件失败会继续处理其他文件；提交结果未知、等待未完成、鉴权或权限等目标级错误会停止后续提交，保留已完成和未开始项，并返回非零退出码。重复执行会重新上传，当前不做跨次去重或自动重试。ZIP 仍可按单文件方式提交，但 Core 只返回其中一个子任务 ID；批量 `--wait` 遇到 ZIP 会在上传前拒绝，请先解压后使用 `--dir`。
+已确认的单文件失败会继续处理其他文件。提交结果未知、等待未完成、鉴权或权限等目标级错误会停止后续提交，保留已完成和未开始项，并返回非零退出码。默认调用重复执行会重新上传。ZIP 仍可按单文件方式提交，但 Core 只返回其中一个子任务 ID。批量 `--wait` 遇到 ZIP 会在上传前拒绝，请先解压后使用 `--dir`。
+
+通过持久化进度记录，可在 CLI 重启后继续同一组入库文件。
+
+```sh
+lbctl knowledge-base ingest <uuid> --dir ./documents --journal ./ingest.json --wait
+lbctl knowledge-base ingest <uuid> --dir ./documents --journal ./ingest.json --resume --wait
+```
+
+记录包含实例、Workspace、知识库、解析器、相对文件路径、大小、SHA-256、上传文件 ID、稳定文档 UUID、任务 ID 和确认阶段，仅保存进度。每次上传和提交均先持久化意图，成功后保存证据，通过原子替换和跨进程锁保护。已有记录需使用 `--resume`，恢复时要求完整文件组、内容、解析器和目标一致。
+
+恢复时保留已完成文档，复用已确认上传。已提交和结果未知的提交通过知识库文档的 `file_name` 核对原上传 ID，绑定稳定文档 UUID 后优先核对该 UUID。记录模式下的等待轮询真实文档记录，Core 重启后任务 ID 可能复用。缺少确认上传 ID、对应文档缺失或提交存在歧义时，会保留记录并以未确定结果退出。此模式需要 `knowledge_base.file.list`，输入采用独立文档，ZIP 请先解压。进度文件与锁文件放在 `--dir` 内时会自动排除。`--dry-run` 校验计划，不创建进度记录。
+
+#### 检索效果回归
+
+创建 `cases.yaml`，为每条用例提供稳定 ID 和命中断言。
+
+```yaml
+top_k: 5
+cases:
+  - case_id: installation
+    query: 如何安装 LangBot？
+    expect:
+      text_contains: docker compose
+      metadata: {source: install.md}
+  - case_id: refund-policy
+    query: 退款规则是什么？
+    top_k: 3
+    expect: {id: policy-chunk-42}
+```
+
+```sh
+lbctl knowledge-base evaluate <uuid> --cases cases.yaml -o json > before.json
+lbctl knowledge-base evaluate <uuid> --cases cases.yaml --baseline before.json
+```
+
+每条用例使用 `resource.view` 权限发起一次检索。`top_k` 默认 5，CLI 同时按返回顺序限制断言范围。同一条检索结果必须满足所有已给出的断言。`text_contains` 按大小写敏感的子串匹配文本内容，`id` 精确匹配结果 ID，`metadata` 按给出的键和值递归匹配，元数据数组按顺序精确匹配。
+
+报告为每条用例保留 `passed`、`failed`、`error`、`cancelled` 或 `not_started` 状态。命中率等于通过用例数除以已成功执行检索的用例数，空结果计为未命中。`empty_result` 标识空结果，`score_missing_count` 统计返回条目中缺少 score 或 score 为 null 的数量。断言失败时退出码非零。服务错误与取消会保留已完成和剩余用例的记录。
+
+基线接受本命令的 JSON 结果封套，也接受断言失败的历史结果。执行检索前会核对实例、Workspace、知识库、用例 ID、查询、断言及实际 top-k。允许调整用例顺序。对照结果列出改善、退化、稳定的用例，执行不完整的条目标记为 `not_comparable`。两次成功执行检索的用例集合一致时才给出命中率变化，否则该字段为 null。
+
+成员会话使用当前 Workspace 返回的实例身份。基线对照要求两次结果均含已确认的实例及 Workspace，并在发起检索前完成核对。旧版成员响应缺少实例身份时仍支持独立评估。入库进度记录模式要求在上传前确认实例身份。
 
 ### Provider 与 Model
 
@@ -356,6 +398,8 @@ lbctl skill install github --file skill.yaml
 lbctl skill install upload --file skill.zip
 lbctl skill install upload --dir ./my-skill --dry-run
 lbctl skill install upload --dir ./my-skill
+lbctl skill push <name> --dir ./my-skill --base-revision <revision> --dry-run
+lbctl skill push <name> --dir ./my-skill --base-revision <revision>
 lbctl skill delete <name> --yes
 ```
 
@@ -364,6 +408,8 @@ lbctl skill delete <name> --yes
 Skill 安装的 `--dry-run` 调用服务端预览，不产生安装。Plugin 安装、升级和删除可用 `--wait` 跟踪异步任务。
 
 `skill install upload --dir` 将本地目录打包，保留相对路径和普通隐藏文件，跳过 `.git`，拒绝符号链接，并按现有 10 MB ZIP 上传上限检查。`--file` 和 `--dir` 选择其中一项。
+
+`skill push` 用本地完整目录更新已有 Skill，包含二进制资源和可执行权限。目录中缺少的文件会从新发布版本删除。编辑前读取当前修订，并显式传入 `--base-revision`，`SKILL.md` 中的 `name` 必须与命令参数一致。`--dry-run` 校验包，列出新增、修改、删除的路径、预计修订及发布权限。发布需要 `resource.manage` 和 `resource.view`，随后读取并验证发布修订。发生修订冲突时，请查看并合并最新包后重试。Core 需要声明 `skill.package.preview` 与 `skill.package.publish` 能力。
 
 Core 提供修订号时，Skill 查询会返回 `revision`。基于先前读取内容编辑时，文件写入可传 `--base-revision`，更新请求可带 `base_revision`。发生冲突返回 `skill_revision_conflict`，请读取最新内容、合并修改，再携最新修订号重试。省略修订号时，CLI 在写入前读取当前修订。`skill package get -O` 保存 ZIP 并覆盖已有目标文件。
 
@@ -694,6 +740,28 @@ lbctl auth logout
 登录要求已保存的 context。密码、TOTP/恢复码均隐藏输入；`--totp` 完成 Core 返回的 challenge，密码来自 stdin 时仍需可用的控制终端输入验证码。成员 token 保存到当前 context 配置文件的可选 `user_token` 字段，凭据配置原子写入且权限为 `0600`；API Key 仍只保存环境变量引用。`LANGBOT_USER_TOKEN` 优先于保存的 token。输出会打码；不要将密码或 token 放入命令行参数。
 
 Cloud 禁用密码登录，返回 `password_login_disabled`。先登录目标 Workspace 的 WebUI，在浏览器开发者工具 → Application/Storage → 对应域名的 Local Storage 中复制 `token`，粘贴到 `lbctl auth set-token --stdin` 并以 EOF 结束，或通过受保护的 stdin 管道传入。token 等同密码，不要放进日志或截图。CLI 不自动续期：过期或成员请求被 Core 返回 401/403 时统一报 `requires_member_session`（退出码 3），需重新登录或导入新的 WebUI token；缺少 token 时发请求之前即报错。`auth logout` 清除保存的 token；若使用环境变量还需 `unset LANGBOT_USER_TOKEN`，它不会撤销其他浏览器会话。成员操作通过 `/api/v1/workspaces/current` 核验权限和 Workspace 绑定，不使用仅允许 API Key 的 system 身份探测接口。
+
+### 按显式清单交付 Artifact
+
+创建 JSON/YAML 清单，填写 Core 返回的 ID，也可指定本地文件名。
+
+```yaml
+artifacts:
+  - id: art_0123456789abcdef0123456789abcdef
+    name: report.pdf
+  - id: art_fedcba9876543210fedcba9876543210
+```
+
+```sh
+lbctl artifact collect --manifest outputs.yaml --dir ./delivery
+lbctl --as-member artifact collect --manifest outputs.yaml --dir ./delivery
+```
+
+`--manifest -` 读取标准输入。默认文件名为 `ID.bin`，不安全的名称使用 ID 的 SHA-256 生成。显式名称须为最多 255 字节的可移植单个文件名，路径、设备名和尾部空格/点会在本地校验时拒绝。文件名按忽略大小写校验唯一性。同一 ID 与文件名重复时只获取一次，并记录出现次数。同一 ID 指向不同文件名时，会在网络访问前返回输入错误。
+
+收取使用 `resource.view` 权限，每个 ID 的元数据与内容请求使用同一份 API Key 或成员身份快照，并分别由 Core 授权。服务端名称保留为元数据，本地输出路径由清单决定。下载遵循 Core 的 10 MiB 限额，按元数据大小与 SHA-256 校验二进制和空内容。校验通过的临时文件通过输出目录内的无覆盖硬链接原子发布，因此文件系统需要支持硬链接。已有同内容文件仍会重新授权、下载和校验。已有异内容文件返回 `artifact_destination_conflict`。
+
+Human 和 JSON/YAML 报告保留逐项 ID、目标、阶段、预期大小/摘要、实际接收字节数/摘要和结构化错误。失败条目会保留已完成文件，HTTP 400/403/404/410、超限和传输中断证据保存在逐项结果中。取消会保留已完成和未开始记录。部分失败时退出码非零。
 
 ### 二进制文件
 

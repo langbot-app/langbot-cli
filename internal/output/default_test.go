@@ -6,6 +6,49 @@ import (
 	"testing"
 )
 
+func TestArtifactCollectHumanOutputRetainsPartialDeliveryEvidence(t *testing.T) {
+	var out bytes.Buffer
+	value := map[string]any{"ok": false, "error": map[string]any{"message": "Artifact transfer failed"}, "data": map[string]any{
+		"operation": "artifact.collect", "directory": "delivery",
+		"summary": map[string]any{"saved": 1, "error": 1},
+		"files": []any{
+			map[string]any{"id": "art_complete", "file": "delivery/complete.bin", "status": "saved", "verified": true},
+			map[string]any{"id": "art_denied", "file": "delivery/denied.bin", "status": "error", "stage": "download", "size": 5, "received_bytes": 2,
+				"digest": "expected-sha", "received_sha256": "received-sha", "error": map[string]any{"http_status": 410, "server_code": "artifact_expired", "request_id": "request-evidence"}},
+		},
+	}}
+	if err := RenderCommand(&out, value, FormatDefault, "artifact.collect"); err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{"art_complete", "complete.bin", "art_denied", "denied.bin", "download", "expected-sha", "received-sha", "410", "artifact_expired", "request-evidence"} {
+		if !strings.Contains(out.String(), expected) {
+			t.Fatalf("human output lost %q: %s", expected, out.String())
+		}
+	}
+}
+
+func TestJournalIngestOutputShowsConfirmationPhases(t *testing.T) {
+	var out bytes.Buffer
+	value := map[string]any{"ok": false, "error": map[string]any{"type": "journal_unresolved", "message": "保留进度记录"}, "data": map[string]any{
+		"batch": true, "operation": "knowledge_base.ingest", "journal": "progress.json",
+		"summary": map[string]int{"total": 4, "completed": 1, "submitted": 0, "uploaded": 1, "planned": 1, "failed": 0, "unresolved": 1},
+		"files": []map[string]any{
+			{"path": "docs/a.txt", "phase": "completed", "document_uuid": "document-a", "task_id": "1"},
+			{"path": "docs/b.txt", "phase": "uploaded"},
+			{"path": "docs/c.txt", "phase": "planned"},
+			{"path": "docs/d.txt", "phase": "store_intent", "problem": "submission_unresolved"},
+		},
+	}}
+	if err := RenderCommand(&out, value, FormatDefault, "knowledge-base.ingest"); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"progress.json", "已完成", "已上传", "待上传", "结果未知", "docs/a.txt", "docs/d.txt"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("missing journal phase %q: %s", want, out.String())
+		}
+	}
+}
+
 func TestBatchIngestOutputKeepsPartialResultsVisible(t *testing.T) {
 	var out bytes.Buffer
 	value := map[string]any{"ok": false, "error": map[string]any{"type": "batch_incomplete", "message": "批量入库未全部成功"}, "data": map[string]any{
@@ -117,5 +160,26 @@ func TestLongHumanListsPreserveIDsAndMachineNames(t *testing.T) {
 	}
 	if strings.Contains(human.String(), name) || !strings.Contains(human.String(), id) || !strings.Contains(machine.String(), name) {
 		t.Fatalf("list lost identity or machine content: %s / %s", &human, &machine)
+	}
+}
+
+func TestSkillPushPreviewShowsChangesRevisionAndPermissions(t *testing.T) {
+	var out bytes.Buffer
+	err := renderDefault(&out, map[string]any{
+		"ok": true,
+		"data": map[string]any{
+			"operation": "skill.package.preview", "dry_run": true,
+			"base_revision": "sha256:base", "proposed_revision": "sha256:proposed", "can_publish": false,
+			"required_permissions": []any{"resource.view", "resource.manage"},
+			"changes":              map[string]any{"added": []any{"new.bin"}, "modified": []any{"SKILL.md"}, "deleted": []any{"old.bin"}},
+		},
+	}, "skill.push")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range []string{"sha256:base", "sha256:proposed", "resource.manage", "new.bin", "SKILL.md", "old.bin"} {
+		if !strings.Contains(out.String(), value) {
+			t.Fatalf("preview omitted %q: %s", value, out.String())
+		}
 	}
 }

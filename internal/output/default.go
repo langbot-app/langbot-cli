@@ -383,6 +383,12 @@ func renderDefaultData(w io.Writer, value any, command string) error {
 
 func renderIngestBatch(w io.Writer, data map[string]any) error {
 	summary, _ := data["summary"].(map[string]any)
+	journal, _ := data["journal"].(string)
+	if journal != "" {
+		if _, err := fmt.Fprintln(w, i18n.T("Ingestion journal")+" "+displayCell(journal)); err != nil {
+			return err
+		}
+	}
 	if data["dry_run"] == true {
 		outcome := i18n.T("Batch preflight passed")
 		if data["outcome_error"] == true {
@@ -391,17 +397,29 @@ func renderIngestBatch(w io.Writer, data map[string]any) error {
 		if _, err := fmt.Fprintf(w, i18n.T("%s, %s files; not uploaded, server business validation not performed.\n"), outcome, formatCell(summary["total"])); err != nil {
 			return err
 		}
+	} else if journal != "" {
+		if _, err := fmt.Fprintf(w, i18n.T("%s files, %s completed, %s submitted, %s uploaded, %s ready, %s failed, %s unresolved.\n"),
+			formatCell(summary["total"]), formatCell(summary["completed"]), formatCell(summary["submitted"]), formatCell(summary["uploaded"]), formatCell(summary["planned"]), formatCell(summary["failed"]), formatCell(summary["unresolved"])); err != nil {
+			return err
+		}
 	} else {
 		if _, err := fmt.Fprintf(w, i18n.T("%s files: %s completed, %s submitted, %s failed, %s unknown, %s pending, %s not started.\n"),
 			formatCell(summary["total"]), formatCell(summary["completed"]), formatCell(summary["submitted"]), formatCell(summary["failed"]), formatCell(summary["unknown"]), formatCell(summary["pending"]), formatCell(summary["not_started"])); err != nil {
 			return err
 		}
 	}
-	states := map[string]string{"planned": i18n.T("Ready to upload"), "submitted": i18n.T("Submitted"), "completed": i18n.T("Completed"), "failed": i18n.T("Failed"), "unknown": i18n.T("Result unknown"), "pending": i18n.T("Pending"), "not_started": i18n.T("Not started")}
+	states := map[string]string{"planned": i18n.T("Ready to upload"), "uploaded": i18n.T("Uploaded"), "submitted": i18n.T("Submitted"), "completed": i18n.T("Completed"), "failed": i18n.T("Failed"), "unknown": i18n.T("Result unknown"), "pending": i18n.T("Pending"), "not_started": i18n.T("Not started")}
 	items, _ := data["files"].([]any)
 	for _, item := range items {
 		row, _ := item.(map[string]any)
-		if _, err := fmt.Fprintf(w, "%s  %s", states[formatCell(row["status"])], displayCell(row["path"])); err != nil {
+		state, _ := row["status"].(string)
+		if journal != "" {
+			state, _ = row["phase"].(string)
+			if row["problem"] != nil || state == "upload_intent" || state == "store_intent" {
+				state = "unknown"
+			}
+		}
+		if _, err := fmt.Fprintf(w, "%s  %s", states[state], displayCell(row["path"])); err != nil {
 			return err
 		}
 		if id, ok := row["task_id"]; ok {

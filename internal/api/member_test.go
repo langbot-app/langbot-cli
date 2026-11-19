@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/langbot-app/langbot-cli/internal/result"
@@ -46,5 +47,95 @@ func TestLoginCloudPasswordDisabled(t *testing.T) {
 	_, err := (Client{}).Login(context.Background(), Target{Endpoint: server.URL}, "local@example.test", "password", nil)
 	if err == nil || result.AsError(err).Type != "password_login_disabled" {
 		t.Fatalf("%v", err)
+	}
+}
+
+func TestMemberContextPreservesOptionalInstanceIdentity(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		value any
+		want  string
+	}{
+		{"current response", "instance-a", "instance-a"},
+		{"legacy response", nil, ""},
+		{"blank", " ", ""},
+		{"wrong type", 12, ""},
+		{"invalid segment", "instance/other", ""},
+		{"redacted identity", "instance-member-token", ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			calls := 0
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				calls++
+				if request.URL.Path != "/api/v1/workspaces/current" || request.Header.Get("Authorization") != "Bearer member-token" || request.Header.Get("X-API-Key") != "" {
+					t.Errorf("member identity request path=%s headers=%v", request.URL.Path, request.Header)
+				}
+				workspace := map[string]any{"uuid": "workspace-a"}
+				if test.value != nil {
+					workspace["instance_uuid"] = test.value
+				}
+				_ = json.NewEncoder(writer).Encode(map[string]any{"code": 0, "data": map[string]any{"workspace": workspace, "permissions": []string{"resource.view"}}})
+			}))
+			defer server.Close()
+			identity, err := (Client{}).MemberContext(context.Background(), Target{Endpoint: server.URL, UserToken: "member-token"})
+			if err != nil || identity.InstanceUUID != test.want || identity.WorkspaceUUID != "workspace-a" || len(identity.Permissions) != 1 || calls != 1 {
+				t.Fatalf("identity=%+v err=%v calls=%d", identity, err, calls)
+			}
+		})
+	}
+}
+
+func TestMemberCapabilitiesRecognizesKnowledgeCatalogNames(t *testing.T) {
+	for _, canonical := range []bool{true, false} {
+		t.Run(fmt.Sprintf("canonical_%t", canonical), func(t *testing.T) {
+			identifiers := []string{"knowledge_base.get", "knowledge_base.retrieve", "knowledge_base.file.list", "knowledge_base.file.store", "file.document.upload"}
+			if canonical {
+				identifiers = []string{"knowledge.base.get", "knowledge.base.retrieve", "knowledge.file.list", "knowledge.file.store", "file.document.upload"}
+			}
+			calls := 0
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				calls++
+				if request.URL.Path != "/api/v1/operations" || request.Header.Get("Authorization") != "Bearer member-token" || request.Header.Get("X-API-Key") != "" {
+					t.Error("invalid member catalog request")
+				}
+				operations := make([]map[string]string, len(identifiers))
+				for index, identifier := range identifiers {
+					operations[index] = map[string]string{"id": identifier}
+				}
+				_ = json.NewEncoder(writer).Encode(map[string]any{"operations": operations})
+			}))
+			defer server.Close()
+			capabilities, err := (Client{}).MemberCapabilities(context.Background(), Target{Endpoint: server.URL, UserToken: "member-token"})
+			if err != nil || calls != 1 {
+				t.Fatalf("catalog error=%v calls=%d", err, calls)
+			}
+			for _, identifier := range append(identifiers, "knowledge_base.get", "knowledge_base.retrieve", "knowledge_base.file.list", "knowledge_base.file.store") {
+				if !capabilities.Operations[identifier] {
+					t.Errorf("catalog operation missing %s", identifier)
+				}
+			}
+			if capabilities.Operations["knowledge_base.create"] || capabilities.Operations["knowledge_base.file.delete"] {
+				t.Fatal("catalog inferred unadvertised knowledge operations")
+			}
+		})
+	}
+}
+
+func TestMemberRejectionRetainsStatusForResumingWrites(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Request-ID", "upload-denied")
+		w.WriteHeader(http.StatusForbidden)
+		fmt.Fprint(w, `{"code":"permission_denied","data":null}`)
+	}))
+	defer server.Close()
+	client := Client{}
+	target := Target{Endpoint: server.URL, UserToken: "member"}
+	_, nativeErr := client.UploadDocument(context.Background(), target, "note.md", strings.NewReader("example"))
+	_, opErr := client.OperationCall(context.Background(), target, "plugin.permissions.update", nil)
+	for _, err := range []error{nativeErr, opErr} {
+		failure := result.AsError(err)
+		if failure == nil || failure.Type != "requires_member_session" || failure.HTTPStatus != 403 || failure.RequestID != "upload-denied" {
+			t.Fatalf("authorization response: %+v", failure)
+		}
 	}
 }

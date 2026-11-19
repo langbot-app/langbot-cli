@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/langbot-app/langbot-cli/internal/i18n"
 	"github.com/langbot-app/langbot-cli/internal/result"
@@ -27,11 +28,21 @@ func (c Client) MemberCapabilities(ctx context.Context, target Target) (Capabili
 		return Capabilities{}, result.New("incompatible", i18n.T("Invalid member operation catalog response"))
 	}
 	capabilities := Capabilities{SchemaVersion: 1, Operations: map[string]bool{"operation.invoke": true}}
+	// These HTTP adapters call the same knowledge service as the member catalog.
+	knowledgeCapabilities := map[string]string{
+		"knowledge.base.get":      "knowledge_base.get",
+		"knowledge.base.retrieve": "knowledge_base.retrieve",
+		"knowledge.file.list":     "knowledge_base.file.list",
+		"knowledge.file.store":    "knowledge_base.file.store",
+	}
 	for _, value := range operations {
 		operation, _ := value.(map[string]any)
 		identifier, _ := operation["id"].(string)
 		if identifier != "" {
 			capabilities.Operations[identifier] = true
+			if alias, exists := knowledgeCapabilities[identifier]; exists {
+				capabilities.Operations[alias] = true
+			}
 		}
 	}
 	return capabilities, nil
@@ -50,6 +61,10 @@ func (c Client) MemberContext(ctx context.Context, target Target) (Context, erro
 		return Context{}, result.New("incompatible", i18n.T("Invalid member Workspace response"))
 	}
 	identity := Context{WorkspaceUUID: identifier}
+	instanceUUID, _ := workspace["instance_uuid"].(string)
+	if strings.TrimSpace(instanceUUID) == instanceUUID && !strings.Contains(instanceUUID, "***") && ValidateResourceID(instanceUUID) == nil {
+		identity.InstanceUUID = instanceUUID
+	}
 	for _, value := range permissions {
 		permission, ok := value.(string)
 		if !ok {
