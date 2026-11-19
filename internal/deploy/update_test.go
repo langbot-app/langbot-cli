@@ -1,6 +1,8 @@
 package deploy
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"fmt"
@@ -91,7 +93,7 @@ func TestUpdateCacheRefreshesEachReleaseIndependently(t *testing.T) {
 }
 
 func TestSelfUpdateChecksChecksumAndReplacesBinary(t *testing.T) {
-	for _, mode := range []string{"update", "check", "bad-checksum", "brew"} {
+	for _, mode := range []string{"update", "check", "bad-checksum", "brew", "gzip", "bad-gzip", "bad-gzip-checksum", "bad-expanded-checksum"} {
 		t.Run(mode, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "lbctl")
 			if mode == "brew" {
@@ -103,20 +105,49 @@ func TestSelfUpdateChecksChecksumAndReplacesBinary(t *testing.T) {
 			if err := os.WriteFile(path, []byte("old binary"), 0o755); err != nil {
 				t.Fatal(err)
 			}
+			const asset = "lbctl_linux_amd64"
+			compressed := strings.Contains(mode, "gzip") || mode == "bad-expanded-checksum"
+			binary := []byte("new binary")
+			var archive bytes.Buffer
+			gzipWriter := gzip.NewWriter(&archive)
+			if _, err := gzipWriter.Write(binary); err != nil {
+				t.Fatal(err)
+			}
+			if err := gzipWriter.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if mode == "bad-gzip" {
+				archive.Truncate(archive.Len() - 1)
+			}
 			downloads := 0
 			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 				switch request.URL.Path {
 				case "/latest.json":
 					fmt.Fprint(writer, `{"version":"v0.5.0"}`)
 				case "/releases/v0.5.0/checksums.txt":
-					digest := fmt.Sprintf("%x", sha256.Sum256([]byte("new binary")))
-					if mode == "bad-checksum" {
+					digest := fmt.Sprintf("%x", sha256.Sum256(binary))
+					if mode == "bad-checksum" || mode == "bad-expanded-checksum" {
 						digest = strings.Repeat("0", 64)
 					}
-					fmt.Fprintf(writer, "%s  lbctl_linux_amd64\n", digest)
-				case "/releases/v0.5.0/lbctl_linux_amd64":
+					fmt.Fprintf(writer, "%s  %s\n", digest, asset)
+					if compressed {
+						digest := fmt.Sprintf("%x", sha256.Sum256(archive.Bytes()))
+						if mode == "bad-gzip-checksum" {
+							digest = strings.Repeat("0", 64)
+						}
+						fmt.Fprintf(writer, "%s  %s.gz\n", digest, asset)
+					}
+				case "/releases/v0.5.0/" + asset + ".gz":
+					if !compressed {
+						t.Error("requested an unlisted archive")
+					}
+					writer.Write(archive.Bytes())
+				case "/releases/v0.5.0/" + asset:
+					if compressed {
+						t.Error("requested the raw binary despite a listed archive")
+					}
 					downloads++
-					fmt.Fprint(writer, "new binary")
+					writer.Write(binary)
 				default:
 					t.Errorf("unexpected URL %s", request.URL.Path)
 					http.NotFound(writer, request)
@@ -128,15 +159,15 @@ func TestSelfUpdateChecksChecksumAndReplacesBinary(t *testing.T) {
 			if readErr != nil {
 				t.Fatal(readErr)
 			}
-			if mode == "update" {
+			if mode == "update" || mode == "gzip" {
 				if err != nil || !result.Updated || string(data) != "new binary" {
 					t.Fatalf("%+v %s %v", result, data, err)
 				}
 			} else if result.Updated || string(data) != "old binary" {
 				t.Fatalf("changed binary: %+v %s", result, data)
 			}
-			if mode == "bad-checksum" && err == nil {
-				t.Fatal("accepted invalid checksum")
+			if strings.HasPrefix(mode, "bad-") && err == nil {
+				t.Fatal("accepted invalid download")
 			}
 			if (mode == "check" || mode == "brew") && downloads != 0 {
 				t.Fatal("downloaded binary during check/package-managed update")

@@ -1,12 +1,15 @@
 package deploy
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -112,20 +115,43 @@ func (updater Updater) Update(ctx context.Context, current string, check bool) (
 	if err != nil {
 		return result, err
 	}
-	expected := ""
+	checksums := make(map[string]string)
 	for _, line := range strings.Split(string(manifest), "\n") {
 		fields := strings.Fields(line)
-		if len(fields) == 2 && strings.TrimPrefix(fields[1], "*") == asset {
-			expected = strings.ToLower(fields[0])
-			break
+		if len(fields) == 2 && len(fields[0]) == 64 {
+			checksums[strings.TrimPrefix(fields[1], "*")] = strings.ToLower(fields[0])
 		}
 	}
-	if len(expected) != 64 {
+	expected, ok := checksums[asset]
+	if !ok {
 		return result, fmt.Errorf(i18n.T("release checksum absent for %s"), asset)
 	}
-	data, err := Fetch(ctx, updater.client(), base+asset, 200<<20)
+	download := asset
+	if _, ok := checksums[asset+".gz"]; ok {
+		download += ".gz"
+	}
+	const maxBinarySize = 200 << 20
+	data, err := Fetch(ctx, updater.client(), base+download, maxBinarySize)
 	if err != nil {
 		return result, err
+	}
+	if download != asset {
+		sum := sha256.Sum256(data)
+		if hex.EncodeToString(sum[:]) != checksums[download] {
+			return result, errors.New(i18n.T("lbctl checksum mismatch"))
+		}
+		reader, err := gzip.NewReader(bytes.NewReader(data))
+		if err != nil {
+			return result, err
+		}
+		defer reader.Close()
+		data, err = io.ReadAll(io.LimitReader(reader, maxBinarySize+1))
+		if err != nil {
+			return result, err
+		}
+		if len(data) > maxBinarySize {
+			return result, errors.New(i18n.T("download exceeds size limit"))
+		}
 	}
 	sum := sha256.Sum256(data)
 	if hex.EncodeToString(sum[:]) != expected {
