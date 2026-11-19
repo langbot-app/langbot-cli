@@ -244,6 +244,8 @@ lbctl restart
 lbctl logs --follow --tail 100
 ```
 
+To inspect a specific managed local deployment, pass its directory to `status`, `doctor`, or `logs`, for example `lbctl status --dir ./langbot`.
+
 Install a new local deployment, or uninstall a deployment while retaining its data:
 
 ```sh

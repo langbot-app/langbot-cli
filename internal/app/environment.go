@@ -145,6 +145,21 @@ func (s *Service) Doctor(ctx context.Context, options CheckOptions) (Result, err
 
 func (s *Service) discoverActiveEnvironment(ctx context.Context, options CheckOptions, inspectRuntime bool) (environmentResolution, error) {
 	resolved := environmentResolution{Environment: newActiveEnvironment()}
+	if options.LocalDir != "" {
+		record, diagnostics, err := s.lifecycleTarget(ctx, options)
+		if err != nil {
+			return resolved, err
+		}
+		timeout, err := localOperationTimeout(options, s.deps.LookupEnv)
+		if err != nil {
+			return resolved, err
+		}
+		resolved.Diagnostics = &diagnostics
+		resolved.Connection = config.Connection{Endpoint: record.Endpoint, Timeout: timeout}
+		resolved.Environment.Connection.Endpoint = record.Endpoint
+		resolved.Environment.Name = record.DeploymentID
+		return s.probeEnvironment(ctx, resolved, inspectRuntime)
+	}
 	file, err := s.load()
 	if err != nil {
 		return resolved, err
@@ -190,6 +205,11 @@ func (s *Service) discoverActiveEnvironment(ctx context.Context, options CheckOp
 		return resolved, err
 	}
 
+	return s.probeEnvironment(ctx, resolved, inspectRuntime)
+}
+
+func (s *Service) probeEnvironment(ctx context.Context, resolved environmentResolution, inspectRuntime bool) (environmentResolution, error) {
+	conn := resolved.Connection
 	callCtx, cancel := context.WithTimeout(ctx, conn.Timeout)
 	defer cancel()
 	info, infoErr := s.info(callCtx, conn)
@@ -342,7 +362,13 @@ func (s *Service) completeRuntime(ctx context.Context, resolved environmentResol
 
 func (s *Service) resolveRuntime(ctx context.Context, environment ActiveEnvironment, identity api.Context, identityVerified, inspect bool, resolved *environmentResolution) (EnvironmentRuntime, error) {
 	runtimeInfo := EnvironmentRuntime{Location: "unknown", Driver: "unbound", Management: "unavailable", Binding: "none"}
-	diagnostics, err := s.matchingLocalDiagnostics(environment.Connection.Endpoint, identity, identityVerified)
+	var diagnostics deploy.Diagnostics
+	var err error
+	if resolved.Diagnostics != nil {
+		diagnostics = *resolved.Diagnostics
+	} else {
+		diagnostics, err = s.matchingLocalDiagnostics(environment.Connection.Endpoint, identity, identityVerified)
+	}
 	if err != nil {
 		runtimeInfo.Binding = "unavailable"
 		var problem *result.Error

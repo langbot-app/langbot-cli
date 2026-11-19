@@ -217,6 +217,8 @@ lbctl restart
 lbctl logs --follow --tail 100
 ```
 
+要查看指定的本机部署，可以给 `status`、`doctor` 或 `logs` 传入部署目录，例如 `lbctl status --dir ./langbot`。
+
 安装新的本机部署，或卸载部署并保留数据：
 
 ```sh

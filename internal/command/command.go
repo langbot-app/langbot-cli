@@ -1342,35 +1342,36 @@ func newContextCheck(service *app.Service, deps Dependencies, flags *globalFlags
 }
 
 func newStatusCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
-	return &cobra.Command{
+	var dir string
+	cmd := &cobra.Command{
 		Use: "status", Short: i18n.T("Show current environment status"), Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return emitCall(deps, flags, func() (app.Result, error) {
-				return service.Status(cmd.Context(), app.CheckOptions{
-					Human:   !flags.outputSet,
-					Context: flags.context, Endpoint: flags.endpoint, Timeout: flags.timeout,
-					ContextSet: flags.contextSet, EndpointSet: flags.endpointSet, TimeoutSet: flags.timeoutSet,
-					APIKeyStdin: flags.apiKeyStdin,
-				})
+				options := connectionOptions(flags)
+				options.LocalDir = dir
+				options.Human = !flags.outputSet
+				return service.Status(cmd.Context(), options)
 			})
 		},
 	}
+	cmd.Flags().StringVar(&dir, "dir", "", i18n.T("Local deployment directory"))
+	return cmd
 }
 
 func newDoctorCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
-	var region string
+	var dir, region string
 	cmd := &cobra.Command{
 		Use: "doctor", Short: i18n.T("Diagnose the current environment"), Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return emitCall(deps, flags, func() (app.Result, error) {
-				return service.Doctor(cmd.Context(), app.CheckOptions{
-					Context: flags.context, Endpoint: flags.endpoint, Timeout: flags.timeout,
-					ContextSet: flags.contextSet, EndpointSet: flags.endpointSet, TimeoutSet: flags.timeoutSet,
-					APIKeyStdin: flags.apiKeyStdin, Region: region,
-				})
+				options := connectionOptions(flags)
+				options.LocalDir = dir
+				options.Region = region
+				return service.Doctor(cmd.Context(), options)
 			})
 		},
 	}
+	cmd.Flags().StringVar(&dir, "dir", "", i18n.T("Local deployment directory"))
 	cmd.Flags().StringVar(&region, "region", "", i18n.T("Region: auto, cn or global"))
 	return cmd
 }
@@ -1541,7 +1542,7 @@ func newUninstallCommand(service *app.Service, deps Dependencies, flags *globalF
 }
 
 func newLocalLogsCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
-	var serviceName, since string
+	var dir, serviceName, since string
 	var tail int
 	var follow bool
 	cmd := &cobra.Command{
@@ -1554,6 +1555,7 @@ func newLocalLogsCommand(service *app.Service, deps Dependencies, flags *globalF
 			options := app.LocalLogsOptions{
 				CheckOptions: connectionOptions(flags), Service: serviceName, Tail: tail, Since: since, Follow: follow, Format: format,
 			}
+			options.LocalDir = dir
 			if !follow {
 				return emitCall(deps, flags, func() (app.Result, error) { return service.LocalLogs(cmd.Context(), options) })
 			}
@@ -1576,6 +1578,7 @@ func newLocalLogsCommand(service *app.Service, deps Dependencies, flags *globalF
 			return emitCommand(deps, flags, app.Result{}, err)
 		},
 	}
+	cmd.Flags().StringVar(&dir, "dir", "", i18n.T("Local deployment directory"))
 	cmd.Flags().StringVar(&serviceName, "service", "", i18n.T("Service name: langbot, langbot_plugin_runtime or langbot_box"))
 	cmd.Flags().IntVar(&tail, "tail", 200, i18n.T("Number of trailing log lines, maximum 5000"))
 	cmd.Flags().StringVar(&since, "since", "", i18n.T("Read logs only after the specified time"))
