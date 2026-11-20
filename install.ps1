@@ -11,6 +11,13 @@ function Get-Message([string]$English, [string]$Chinese) {
     if ($isChinese) { $Chinese } else { $English }
 }
 
+function Assert-AssetChecksum([string]$Path, [string]$Expected) {
+    if ((Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash -ine $Expected) {
+        $name = Split-Path -Leaf $Path
+        throw (Get-Message "Checksum verification failed for $name" "$name $([char]0x6821)$([char]0x9A8C)$([char]0x5931)$([char]0x8D25)")
+    }
+}
+
 $heading = Get-Message "LangBot $([char]0x00B7) Production-grade platform for building agentic IM bots $([char]0x00B7) Open source" "LangBot $([char]0x00B7) $([char]0x751F)$([char]0x4EA7)$([char]0x7EA7) AI $([char]0x5373)$([char]0x65F6)$([char]0x901A)$([char]0x4FE1)$([char]0x673A)$([char]0x5668)$([char]0x4EBA)$([char]0x5F00)$([char]0x53D1)$([char]0x5E73)$([char]0x53F0) $([char]0x00B7) $([char]0x5F00)$([char]0x6E90)"
 if (-not [Console]::IsOutputRedirected -and $null -eq $env:NO_COLOR -and $env:TERM -ne "dumb") {
     Write-Host $heading -ForegroundColor Cyan
@@ -61,28 +68,40 @@ try {
     New-Item -ItemType Directory -Path $tempDir | Out-Null
     [Net.ServicePointManager]::SecurityProtocol = `
         [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
-    Write-Output (Get-Message "[1/3] Downloading $asset ..." "[1/3] $([char]0x4E0B)$([char]0x8F7D) $asset ...")
-    Invoke-WebRequest -UseBasicParsing -Uri "$downloadBase/$asset" -OutFile $assetPath
     Invoke-WebRequest -UseBasicParsing -Uri "$downloadBase/checksums.txt" -OutFile $checksumsPath
-    Write-Output (Get-Message "[2/3] Verifying download ..." "[2/3] $([char]0x9A8C)$([char]0x8BC1)$([char]0x4E0B)$([char]0x8F7D) ...")
 
     $escapedAsset = [regex]::Escape($asset)
-    $checksumPattern = "^(?<hash>[0-9a-fA-F]{64})\s+\*?$escapedAsset$"
-    $expected = $null
+    $checksumPattern = "^(?<hash>[0-9a-fA-F]{64})\s+\*?(?<name>$escapedAsset(?:\.gz)?)$"
+    $checksums = @{}
     foreach ($line in Get-Content -LiteralPath $checksumsPath) {
         $match = [regex]::Match($line.Trim(), $checksumPattern)
         if ($match.Success) {
-            $expected = $match.Groups["hash"].Value
-            break
+            $checksums[$match.Groups["name"].Value] = $match.Groups["hash"].Value
         }
     }
-    if (-not $expected) {
+    if (-not $checksums.ContainsKey($asset)) {
         throw (Get-Message "Checksum not found for $asset" "$([char]0x672A)$([char]0x627E)$([char]0x5230) $asset $([char]0x7684)$([char]0x6821)$([char]0x9A8C)$([char]0x548C)")
     }
 
-    $actual = (Get-FileHash -LiteralPath $assetPath -Algorithm SHA256).Hash
-    if ($actual -ine $expected) {
-        throw (Get-Message "Checksum verification failed for $asset" "$asset $([char]0x6821)$([char]0x9A8C)$([char]0x5931)$([char]0x8D25)")
+    $download = if ($checksums.ContainsKey("$asset.gz")) { "$asset.gz" } else { $asset }
+    $downloadPath = Join-Path $tempDir $download
+    Write-Output (Get-Message "[1/3] Downloading $download ..." "[1/3] $([char]0x4E0B)$([char]0x8F7D) $download ...")
+    Invoke-WebRequest -UseBasicParsing -Uri "$downloadBase/$download" -OutFile $downloadPath
+    Write-Output (Get-Message "[2/3] Verifying download ..." "[2/3] $([char]0x9A8C)$([char]0x8BC1)$([char]0x4E0B)$([char]0x8F7D) ...")
+    Assert-AssetChecksum $downloadPath $checksums[$download]
+    if ($download -ne $asset) {
+        $archive = $decoder = $binary = $null
+        try {
+            $archive = [System.IO.File]::OpenRead($downloadPath)
+            $decoder = [System.IO.Compression.GZipStream]::new($archive, [System.IO.Compression.CompressionMode]::Decompress, $true)
+            $binary = [System.IO.File]::Create($assetPath)
+            $decoder.CopyTo($binary)
+        } finally {
+            if ($binary) { $binary.Dispose() }
+            if ($decoder) { $decoder.Dispose() }
+            if ($archive) { $archive.Dispose() }
+        }
+        Assert-AssetChecksum $assetPath $checksums[$asset]
     }
 
     $resolvedInstallDir = [System.IO.Path]::GetFullPath($installDir)
