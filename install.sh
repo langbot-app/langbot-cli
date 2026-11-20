@@ -68,33 +68,56 @@ fi
 temp_dir="$(mktemp -d)"
 trap 'rm -rf "$temp_dir"' EXIT HUP INT TERM
 
-message "[1/3] Downloading ${asset} ..." "[1/3] 下载 ${asset} ..."
-if ! curl -fsSL "${download_base}/${asset}" -o "${temp_dir}/${asset}" ||
-   ! curl -fsSL "${download_base}/checksums.txt" -o "${temp_dir}/checksums.txt"; then
-  message "[FAIL] Download failed; retry the installer." "[失败] 下载失败；请重试安装。" >&2
-  exit 1
-fi
-message "[2/3] Verifying download ..." "[2/3] 验证下载 ..."
+download_asset() {
+  if ! curl -fsSL "${download_base}/$1" -o "${temp_dir}/$1"; then
+    message "[FAIL] Download failed; retry the installer." "[失败] 下载失败；请重试安装。" >&2
+    exit 1
+  fi
+}
 
-expected="$(awk -v asset="$asset" '$2 == asset { print $1; exit }' "${temp_dir}/checksums.txt")"
+asset_checksum() {
+  awk -v name="$1" '($2 == name || $2 == "*" name) && length($1) == 64 && $1 !~ /[^[:xdigit:]]/ { print tolower($1); exit }' "${temp_dir}/checksums.txt"
+}
+
+verify_asset() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    actual="$(sha256sum "${temp_dir}/$1" | awk '{ print $1 }')"
+  elif command -v shasum >/dev/null 2>&1; then
+    actual="$(shasum -a 256 "${temp_dir}/$1" | awk '{ print $1 }')"
+  else
+    message "[FAIL] sha256sum or shasum is required" "[失败] 需要 sha256sum 或 shasum" >&2
+    exit 1
+  fi
+  if [ "$actual" != "$2" ]; then
+    message "[FAIL] Checksum verification failed for $1" "[失败] $1 校验失败" >&2
+    exit 1
+  fi
+}
+
+download_asset checksums.txt
+expected="$(asset_checksum "$asset")"
 if [ -z "$expected" ]; then
   message "[FAIL] Checksum not found for ${asset}" "[失败] 未找到 ${asset} 的校验和" >&2
   exit 1
 fi
 
-if command -v sha256sum >/dev/null 2>&1; then
-  actual="$(sha256sum "${temp_dir}/${asset}" | awk '{ print $1 }')"
-elif command -v shasum >/dev/null 2>&1; then
-  actual="$(shasum -a 256 "${temp_dir}/${asset}" | awk '{ print $1 }')"
-else
-  message "[FAIL] sha256sum or shasum is required" "[失败] 需要 sha256sum 或 shasum" >&2
-  exit 1
+download="$asset"
+compressed_checksum="$(asset_checksum "${asset}.gz")"
+if [ -n "$compressed_checksum" ] && command -v gzip >/dev/null 2>&1; then
+  download="${asset}.gz"
 fi
 
-if [ "$actual" != "$expected" ]; then
-  message "[FAIL] Checksum verification failed for ${asset}" "[失败] ${asset} 校验失败" >&2
-  exit 1
+message "[1/3] Downloading ${download} ..." "[1/3] 下载 ${download} ..."
+download_asset "$download"
+message "[2/3] Verifying download ..." "[2/3] 验证下载 ..."
+if [ "$download" != "$asset" ]; then
+  verify_asset "$download" "$compressed_checksum"
+  if ! gzip -dc "${temp_dir}/${download}" > "${temp_dir}/${asset}"; then
+    message "[FAIL] Could not decompress ${download}" "[失败] 无法解压 ${download}" >&2
+    exit 1
+  fi
 fi
+verify_asset "$asset" "$expected"
 
 mkdir -p "$install_dir"
 cp "${temp_dir}/${asset}" "${install_dir}/${binary_name}"
