@@ -15,6 +15,7 @@ for target in darwin/amd64 darwin/arm64 linux/amd64 linux/arm64 windows/amd64 wi
     CGO_ENABLED=0 GOOS="$target_os" GOARCH="$target_arch" "$GO" build -trimpath \
         -ldflags "-s -w -X main.version=$VERSION -X main.commit=$COMMIT -X main.buildDate=$BUILD_DATE" \
         -o "dist/$artifact" ./cmd/lbctl
+    gzip -n -9 -c "dist/$artifact" > "dist/$artifact.gz"
 done
 cd dist
 if command -v sha256sum >/dev/null 2>&1; then
