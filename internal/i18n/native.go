@@ -19,7 +19,7 @@ func init() {
 		"native logs do not support --since; use --tail":                                   "原生日志不支持 --since；请使用 --tail",
 		"invalid data directory":                                                           "数据目录无效", "native supervisor did not start; inspect %s": "原生守护进程未启动；请查看 %s",
 		"not a native deployment": "不是原生部署", "native instance already running": "原生实例已在运行",
-		"unsupported platform %s": "不支持的平台 %s", "uv lock: %v": "uv 锁：%v", "uv checksum mismatch": "uv 校验和不匹配",
+		"unsupported platform %s": "不支持的平台 %s", "uv lock: %v": "uv 锁：%v", "uv checksum mismatch": "uv 校验和不匹配", "%s: no data received for %s": "%s：%s 内未收到数据",
 		"uv executable absent from archive": "压缩包中没有 uv 可执行文件", "invalid stable version": "稳定版本号无效",
 		"unsupported extra %s": "不支持的可选依赖 %s", "LangBot wheel not found on PyPI": "PyPI 上未找到 LangBot wheel",
 		"unknown autostart action": "未知自启操作", "--name and --dir are mutually exclusive": "--name 与 --dir 不能同时使用",
