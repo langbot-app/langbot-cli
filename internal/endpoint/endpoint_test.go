@@ -34,3 +34,21 @@ func TestRejectAmbiguousTargets(t *testing.T) {
 		})
 	}
 }
+
+func FuzzNormalizeIdempotent(f *testing.F) {
+	f.Add("http://LOCALHOST:05300/")
+	f.Add("https://example.com:443/proxy/")
+	f.Add("http://[::1]:80")
+	f.Add("https://example.com/%E5%BC%80%E5%8F%91/")
+	f.Add("https://example.com/a%20b")
+	f.Fuzz(func(t *testing.T, input string) {
+		normalized, err := Normalize(input)
+		if err != nil {
+			return
+		}
+		again, err := Normalize(normalized)
+		if err != nil || again != normalized {
+			t.Fatalf("Normalize(%q) = %q, then %q, %v", input, normalized, again, err)
+		}
+	})
+}

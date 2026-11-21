@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -126,8 +127,10 @@ func nativeFixture(t *testing.T) (string, Record) {
 }
 
 func TestNativeUpgradeRestoresVersionAndData(t *testing.T) {
-	for _, failure := range []string{"", "prepare", "health"} {
+	for _, failure := range []string{"", "prepare", "health", "canceled"} {
 		t.Run(failure, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
 			dir, record := nativeFixture(t)
 			record.Autostart = new(false)
 			if err := (Store{Dir: dir}).Write(context.Background(), record); err != nil {
@@ -149,9 +152,9 @@ func TestNativeUpgradeRestoresVersionAndData(t *testing.T) {
 					}
 					return nil
 				},
-				stop: func(_ context.Context, _ string, record Record) error {
+				stop: func(ctx context.Context, _ string, record Record) error {
 					calls = append(calls, "stop:"+record.CoreVersion)
-					return nil
+					return ctx.Err()
 				},
 				start: func(_ context.Context, _ string, record Record) error {
 					if record.Autostart == nil || *record.Autostart {
@@ -163,14 +166,18 @@ func TestNativeUpgradeRestoresVersionAndData(t *testing.T) {
 					}
 					return nil
 				},
-				health: func(_ context.Context, record Record, _ *http.Client) error {
+				health: func(ctx context.Context, record Record, _ *http.Client) error {
+					if failure == "canceled" && record.CoreVersion == "v4.11.8" {
+						cancel()
+						return ctx.Err()
+					}
 					if failure == "health" && record.CoreVersion == "v4.11.8" {
 						return fmt.Errorf("healthz 503")
 					}
 					return nil
 				},
 			}
-			backup, err := upgradeNative(context.Background(), dir, record, "v4.11.8", io.Discard, nil, operations)
+			backup, err := upgradeNative(ctx, dir, record, "v4.11.8", io.Discard, nil, operations)
 			current, readErr := (Store{Dir: dir}).Read()
 			if readErr != nil {
 				t.Fatal(readErr)
@@ -194,6 +201,9 @@ func TestNativeUpgradeRestoresVersionAndData(t *testing.T) {
 			}
 			if failure == "health" && !strings.Contains(err.Error(), "previous version and data restored") {
 				t.Fatal(err)
+			}
+			if failure == "canceled" && !errors.Is(err, context.Canceled) {
+				t.Fatalf("upgrade error = %v, want context cancellation", err)
 			}
 		})
 	}

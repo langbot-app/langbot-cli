@@ -23,7 +23,10 @@ jobs:
         with:
           go-version: '1.26.8'
           cache: true
-      - run: go vet ./...
+      - if: runner.os == 'Linux'
+        run: make lint
+      - if: runner.os != 'Linux'
+        run: go vet ./...
       - name: Verify wildcard and loopback port conflicts
         run: go test -v ./internal/deploy -run '^TestProbeNativePortRejectsListeningSockets$'
       - run: go test -race ./...
@@ -134,7 +137,7 @@ jobs:
         with:
           go-version: '1.26.8'
           cache: true
-      - run: make check cross-build
+      - run: make cross-build
       - uses: actions/upload-artifact@v4
         with:
           name: lbctl-binaries
