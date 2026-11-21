@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -77,4 +78,44 @@ func TestRemoveNativeFiles(t *testing.T) {
 			t.Fatalf("err=%v", err)
 		}
 	})
+}
+
+func TestRemoveNativeFilesReadOnlyPluginArtifacts(t *testing.T) {
+	data := filepath.Join(t.TempDir(), "data")
+	code := filepath.Join(data, "plugin-runtime", "artifacts", "sha256", "abc", "code")
+	if err := os.MkdirAll(filepath.Join(code, "pkg"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"requirements.txt", filepath.Join("pkg", "main.py")} {
+		if err := os.WriteFile(filepath.Join(code, name), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	outside := filepath.Join(t.TempDir(), "outside.txt")
+	if err := os.WriteFile(outside, []byte("x"), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	// Symlinks may be unavailable on Windows without developer mode.
+	linked := os.Symlink(outside, filepath.Join(code, "link")) == nil
+	// Seal the artifact the way the Plugin Runtime does.
+	for _, path := range []string{filepath.Join(code, "requirements.txt"), filepath.Join(code, "pkg", "main.py")} {
+		if err := os.Chmod(path, 0o444); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, path := range []string{filepath.Join(code, "pkg"), code} {
+		if err := os.Chmod(path, 0o555); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := RemoveNativeFiles(t.Context(), data); err != nil {
+		t.Fatalf("remove sealed plugin artifacts: %v", err)
+	}
+	if _, err := os.Lstat(data); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("data directory still exists: %v", err)
+	}
+	info, err := os.Stat(outside)
+	if err != nil || (linked && info.Mode().Perm()&0o200 != 0) {
+		t.Fatalf("symlink target was modified: mode=%v err=%v", info, err)
+	}
 }
