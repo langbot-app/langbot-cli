@@ -82,7 +82,8 @@ func (s *Service) Uninstall(ctx context.Context, options UninstallOptions) (Resu
 			return diagnostics.Store.Write(operationCtx, current)
 		})
 		return Result{Data: map[string]any{"action": "uninstall", "driver": record.Driver, "data_preserved": !options.PurgeData,
-			"backups_preserved": true, "record_preserved": true, "project_removed": err == nil, "purge_data": options.PurgeData}}, nativeMutationError(err)
+			"backups_preserved": true, "record_preserved": true, "project_removed": err == nil, "purge_data": options.PurgeData,
+			"data_purged": options.PurgeData && err == nil}}, nativeMutationError(err)
 	}
 	err = deploy.WithMutationLock(operationCtx, diagnostics.Dir, func() error {
 		if err := deploy.CheckUpgradeInterrupted(diagnostics.Dir); err != nil {

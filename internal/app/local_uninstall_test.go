@@ -264,3 +264,26 @@ func TestUninstallPurgeRejectsAdoptedComposeBeforeDown(t *testing.T) {
 		t.Fatalf("数据目录状态异常: %v", statErr)
 	}
 }
+
+func TestNativeUninstallPurgeReportsDataPurged(t *testing.T) {
+	// A retired native deployment skips service teardown, so purge exercises
+	// only the data removal and the reported summary.
+	service, _, record, dir := uninstallFixture(t, false)
+	record.Driver, record.Uninstalled = deploy.DriverNative, true
+	if err := (deploy.Store{Dir: dir}).Write(context.Background(), record); err != nil {
+		t.Fatal(err)
+	}
+	value, err := service.Uninstall(context.Background(), UninstallOptions{
+		CheckOptions: CheckOptions{LocalDir: dir}, PurgeData: true, Yes: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := value.Data.(map[string]any)
+	if data["project_removed"] != true || data["data_purged"] != true {
+		t.Fatalf("result=%#v", data)
+	}
+	if _, err := os.Stat(record.DataDir); !os.IsNotExist(err) {
+		t.Fatalf("data dir not removed: %v", err)
+	}
+}
