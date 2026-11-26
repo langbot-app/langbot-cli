@@ -4,7 +4,22 @@ import "github.com/langbot-app/langbot-cli/internal/i18n"
 
 // Labels apply only to human rendering. Protocol keys and resource names stay unchanged.
 var humanFieldLabels = map[string]string{
-	"metadata_id": i18n.Source("Metadata ID"), "digest": "SHA-256", "received_sha256": i18n.Source("Received SHA-256"),
+	"handling":                  i18n.Source("Handling"),
+	"policy_layer":              i18n.Source("Policy layer"),
+	"policy_item":               i18n.Source("Policy item"),
+	"command_kind":              i18n.Source("Command kind"),
+	"command_name":              i18n.Source("Command name"),
+	"command_denied":            i18n.Source("Command denied"),
+	"hook":                      i18n.Source("Event hook"),
+	"items":                     i18n.Source("Items"),
+	"reports":                   i18n.Source("Reports"),
+	"confirmed":                 i18n.Source("Confirmed"),
+	"actions":                   i18n.Source("Actions"),
+	"changes_unrouted_commands": i18n.Source("Changes handling of unrouted commands"),
+	"route_ids":                 i18n.Source("Route IDs"),
+	"message_policy":            i18n.Source("Message policy"),
+	"command_settings":          i18n.Source("Command settings"),
+	"metadata_id":               i18n.Source("Metadata ID"), "digest": "SHA-256", "received_sha256": i18n.Source("Received SHA-256"),
 	"received_bytes": i18n.Source("Received bytes"), "occurrences": i18n.Source("Manifest occurrences"),
 	"cases": i18n.Source("Evaluation cases"), "case_id": i18n.Source("Case ID"), "query": i18n.Source("Query"), "expect": i18n.Source("Expected match"),
 	"hit_rate": i18n.Source("Hit rate"), "evaluated": i18n.Source("Evaluated"), "passed": i18n.Source("Passed"), "failed": i18n.Source("Failed"),

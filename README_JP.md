@@ -35,12 +35,12 @@
 
 ---
 
-LangBot の独立したコマンドラインツール `lbctl`。HTTP 経由で Workspace のリソースを管理し、複数の context、認証・機能の検出、リソース管理、RAG 設定の検出、Pipeline の拡張と試行実行、実行記録と Sandbox の診断、非同期タスクの待機、およびローカル Docker Compose のインストール・管理・アップグレードを提供します。
+LangBot の独立したコマンドラインツール `lbctl`。HTTP 経由で Workspace のリソースを管理し、複数の context、認証・機能の検出、リソース管理、RAG 設定の検出、Chat の拡張と試行実行、実行記録と Sandbox の診断、非同期タスクの待機、およびローカル Docker Compose のインストール・管理・アップグレードを提供します。
 
 次の機能を提供する LangBot Core と組み合わせて使用します：
 
 - API Key 認証付きの `/api/v1/system/context` と `/api/v1/system/capabilities`。
-- Bot、Pipeline、Knowledge Base、Provider、Model、Plugin、Skill、MCP Server、タスクの API。
+- Bot、Chat、Knowledge Base、Provider、Model、Plugin、Skill、MCP Server、タスクの API。
 - Provider/Model の機密情報をマスクする `include_secret=false`。
 
 `lbctl` は Core が宣言する capability、Workspace の紐付け、権限に基づいて操作します。
@@ -171,7 +171,7 @@ lbctl upgrade --version <newer-vX.Y.Z> --yes -o json
 
 自動アップグレードは `rockchin/langbot:<tag>` を直接指定し、全データが Compose ディレクトリの `data` バインドマウントにあり、ローカル SQLite、Chroma、local storage を使う構成に対応します。事前に Compose、バックアップ範囲、バージョンを検証し、新しいバージョンへ更新します。`--dry-run` は計画を表示し、実行時にイメージを検証します。Compose を手動変更した後は同じ対象で `adopt` を再実行して新しいダイジェストを確認します。
 
-ローカルのライフサイクル操作はデプロイインスタンスを対象とします。Bot、Pipeline、Skill などは以下の共通コマンドで context の Workspace を管理します。
+ローカルのライフサイクル操作はデプロイインスタンスを対象とします。Bot、Chat、Skill などは以下の共通コマンドで context の Workspace を管理します。
 
 <a id="resources"></a>
 
@@ -179,7 +179,7 @@ lbctl upgrade --version <newer-vX.Y.Z> --yes -o json
 
 複雑なリクエスト本文は LangBot HTTP API と同じフィールドの JSON または YAML ファイルで指定します。`--file -` は stdin を読み取ります。
 
-### Bot と Pipeline
+### Bot と Chat
 
 ```sh
 lbctl bot list
@@ -300,7 +300,7 @@ lbctl mcp-server delete <name> --yes
 - 結果が不明な場合は `result_unknown` を返し、確認してから次の操作を判断できます。
 - 複数段階の操作は作成済みリソースや `task_id` を保持して進捗を追跡できます。
 
-Bot/Pipeline の読み取りでは通常の設定を保持し、認証情報を `***` で隠します。作成、更新、Pipeline のコピー後に取得可能なフィールドを照合し、不一致は `verification_failed` を返します。`verification.observable_fields_match` は照合結果、`unverified_fields` は隠されたフィールドを示します。すべての照合対象が検証可能で一致した場合のみ `verified` が true になります。Bot 更新では値全体が `***` の場合に既存の認証情報を保持し、安全に復元できない場合は更新前に拒否します。
+Bot/Chat の読み取りでは通常の設定を保持し、認証情報を `***` で隠します。作成、更新、Chat のコピー後に取得可能なフィールドを照合し、不一致は `verification_failed` を返します。`verification.observable_fields_match` は照合結果、`unverified_fields` は隠されたフィールドを示します。すべての照合対象が検証可能で一致した場合のみ `verified` が true になります。Bot 更新では値全体が `***` の場合に既存の認証情報を保持し、安全に復元できない場合は更新前に拒否します。
 
 非同期タスクを個別に照会できます：
 
@@ -375,7 +375,7 @@ lbctl knowledge-parser list --mime-type application/pdf
 
 エンジン一覧から `plugin_id` を選びます。creation schema は知識ベース作成設定、retrieval schema は検索設定を定義します。`knowledge-base create`、`ingest`、`retrieve` で取り込みと検索を行います。
 
-## Pipeline の拡張バインディング
+## Chat の拡張バインディング
 
 ```sh
 lbctl pipeline extensions get PIPELINE_UUID -o json
@@ -400,7 +400,7 @@ mcp_resource_agent_read_enabled: false
 
 更新には保存済みで Workspace に紐付いた context、`resource.manage` と `resource.view`、Core の対応 capability が必要です。
 
-## Pipeline の単一ターン試行実行
+## Chat の単一ターン試行実行
 
 ```sh
 lbctl pipeline run PIPELINE_UUID --message 'ナレッジベースを使ってこの質問に答えてください' --timeout 2m -o json
@@ -408,7 +408,7 @@ lbctl pipeline run PIPELINE_UUID --message 'ナレッジベースを使ってこ
 
 保存済みで Workspace に紐付いた context と `runtime.operate`、`resource.view` を使い、設定済みのモデルとツールを実際に呼び出します。実行ごとに新しいセッションを作成します。応答、セッション ID、クエリ ID、利用可能なメッセージ ID を返し、失敗時は非ゼロ終了コードになります。
 
-Core は最大 60 秒待機し、CLI の `--timeout` は HTTP リクエストの待機を制御します。タイムアウトは**実行状態が不明**であることを示します。WebUI の監視ページ（`/home/monitoring`）でメッセージ・セッション ID、または Pipeline と時刻から記録を確認できます。
+Core は最大 60 秒待機し、CLI の `--timeout` は HTTP リクエストの待機を制御します。タイムアウトは**実行状態が不明**であることを示します。WebUI の監視ページ（`/home/monitoring`）でメッセージ・セッション ID、または Chat と時刻から記録を確認できます。
 
 Core は `pipeline.run` capability を宣言します。`--dry-run` で前提条件を確認できます。
 

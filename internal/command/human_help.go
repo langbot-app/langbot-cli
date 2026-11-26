@@ -308,7 +308,7 @@ var commandExamples = map[string]string{
 	"bot.list":       "  lbctl bot list\n  lbctl bot list --filter LangBot\n  lbctl bot list -o json",
 	"bot.get":        i18n.Source("  lbctl bot get <bot-id>\n  # Inspect event_bindings for the bound Agent or Chat\n  lbctl agent get <agent-id>\n  lbctl pipeline get <pipeline-id>"),
 	"bot.update":     i18n.Source("  # Minimal request.yaml: {\"name\":\"my-bot\"}\n  lbctl bot update <bot-id> --file request.yaml --dry-run\n  lbctl bot update <bot-id> --file request.yaml\n  # Get adapter_config before editing to preserve needed values; *** is redacted."),
-	"pipeline.apply": i18n.Source("  # Update example: {\"uuid\":\"<pipeline-id>\",\"name\":\"my-pipeline\"}\n  # Without uuid, creates a pipeline; config depends on the target Core version.\n  lbctl pipeline apply --file pipeline.yaml --dry-run\n  lbctl pipeline apply --file pipeline.yaml"),
+	"pipeline.apply": i18n.Source("  # Update example: {\"uuid\":\"<pipeline-id>\",\"name\":\"my-pipeline\"}\n  # Without uuid, creates a Chat; config depends on the target Core version.\n  lbctl pipeline apply --file pipeline.yaml --dry-run\n  lbctl pipeline apply --file pipeline.yaml"),
 	"model.list":     "  lbctl model list --filter deepseek\n  lbctl model list --type llm --provider <provider-id>\n  lbctl model list -o json",
 	"task.get":       "  lbctl task get 42\n  lbctl task get 42 --wait --wait-timeout 5m",
 }

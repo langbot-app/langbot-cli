@@ -35,12 +35,12 @@
 
 ---
 
-Herramienta independiente de línea de comandos de LangBot, distribuida como `lbctl`. Gestiona recursos de Workspace por HTTP, con múltiples contextos, descubrimiento de identidad y capacidades, gestión de recursos, configuración de RAG, extensiones y pruebas de Pipeline, registros de ejecución y diagnóstico de Sandbox, espera de tareas asíncronas y gestión de instalaciones locales con Docker Compose.
+Herramienta independiente de línea de comandos de LangBot, distribuida como `lbctl`. Gestiona recursos de Workspace por HTTP, con múltiples contextos, descubrimiento de identidad y capacidades, gestión de recursos, configuración de RAG, extensiones y pruebas de Chat, registros de ejecución y diagnóstico de Sandbox, espera de tareas asíncronas y gestión de instalaciones locales con Docker Compose.
 
 Utiliza un LangBot Core que proporcione:
 
 - Autenticación con API Key en `/api/v1/system/context` y `/api/v1/system/capabilities`.
-- API de Bot, Pipeline, Knowledge Base, Provider, Model, Plugin, Skill, MCP Server y tareas.
+- API de Bot, Chat, Knowledge Base, Provider, Model, Plugin, Skill, MCP Server y tareas.
 - Ocultación de secretos en consultas de Provider/Model mediante `include_secret=false`.
 
 `lbctl` ejecuta operaciones según las capacidades, la vinculación al Workspace y los permisos declarados por Core.
@@ -171,7 +171,7 @@ La actualización de un despliegue adoptado cambia las imágenes de `langbot`, `
 
 La actualización automática admite servicios que declaren directamente `rockchin/langbot:<tag>`, con todos los datos en el montaje `data` del directorio Compose y SQLite, Chroma y local storage locales. Verifica configuración, alcance del respaldo y versiones antes de actualizar a una versión superior. `--dry-run` muestra el plan; la ejecución verifica la imagen. Tras editar Compose manualmente, vuelve a ejecutar `adopt` sobre el mismo destino para confirmar el nuevo resumen del archivo.
 
-Los comandos de ciclo de vida local operan sobre la instancia desplegada. Bot, Pipeline, Skill y otros recursos usan los comandos siguientes para gestionar el Workspace del contexto.
+Los comandos de ciclo de vida local operan sobre la instancia desplegada. Bot, Chat, Skill y otros recursos usan los comandos siguientes para gestionar el Workspace del contexto.
 
 <a id="resources"></a>
 
@@ -179,7 +179,7 @@ Los comandos de ciclo de vida local operan sobre la instancia desplegada. Bot, P
 
 Usa archivos JSON o YAML para cuerpos complejos, con los campos de la API HTTP de LangBot. `--file -` lee de stdin.
 
-### Bot y Pipeline
+### Bot y Chat
 
 ```sh
 lbctl bot list
@@ -300,7 +300,7 @@ Las escrituras verifican el contexto guardado, Workspace, identidad, permisos, c
 - Un resultado incierto devuelve `result_unknown` para inspeccionarlo antes de decidir el siguiente paso.
 - Las operaciones de varios pasos conservan recursos creados o `task_id` para seguir su progreso.
 
-Las lecturas de Bot/Pipeline conservan la configuración normal y ocultan credenciales con `***`. Las creaciones, actualizaciones y copias de Pipeline comparan campos observables al releer; las diferencias devuelven `verification_failed`. `verification.observable_fields_match` indica el resultado y `unverified_fields` enumera campos ocultos. `verified` solo es true si todos los campos comprobados son verificables y coinciden. Las actualizaciones de Bot conservan las credenciales existentes para marcadores exactos `***`; los marcadores que no puedan restaurarse con seguridad se rechazan antes de actualizar.
+Las lecturas de Bot/Chat conservan la configuración normal y ocultan credenciales con `***`. Las creaciones, actualizaciones y copias de Chat comparan campos observables al releer; las diferencias devuelven `verification_failed`. `verification.observable_fields_match` indica el resultado y `unverified_fields` enumera campos ocultos. `verified` solo es true si todos los campos comprobados son verificables y coinciden. Las actualizaciones de Bot conservan las credenciales existentes para marcadores exactos `***`; los marcadores que no puedan restaurarse con seguridad se rechazan antes de actualizar.
 
 Consulta tareas asíncronas de forma independiente:
 
@@ -375,7 +375,7 @@ lbctl knowledge-parser list --mime-type application/pdf
 
 Selecciona un `plugin_id` de la lista de motores. El creation schema define parámetros de creación de la base de conocimiento y el retrieval schema, los de consulta. Usa `knowledge-base create`, `ingest` y `retrieve` para ingestión y recuperación.
 
-## Vinculación de extensiones de Pipeline
+## Vinculación de extensiones de Chat
 
 ```sh
 lbctl pipeline extensions get PIPELINE_UUID -o json
@@ -400,7 +400,7 @@ Arrays vacíos con `enable_all_*: false` dejan el tipo de extensión sin vincula
 
 La actualización requiere un contexto guardado y vinculado, permisos `resource.manage` y `resource.view`, y la capacidad correspondiente de Core.
 
-## Pruebas de Pipeline de un turno
+## Pruebas de Chat de un turno
 
 ```sh
 lbctl pipeline run PIPELINE_UUID --message 'Responde a esta pregunta usando la base de conocimiento' --timeout 2m -o json
@@ -408,7 +408,7 @@ lbctl pipeline run PIPELINE_UUID --message 'Responde a esta pregunta usando la b
 
 La prueba usa un contexto guardado y vinculado con `runtime.operate` y `resource.view`, y llama a los modelos y herramientas configurados. Crea una sesión nueva por ejecución. Devuelve respuesta, ID de sesión, ID de consulta e IDs de mensaje disponibles; los fallos devuelven un código distinto de cero.
 
-Core espera hasta 60 segundos; `--timeout` controla la espera HTTP de la CLI. Un timeout indica **estado de ejecución desconocido**. Consulta los registros con IDs de mensaje/sesión en la página de monitorización de WebUI (`/home/monitoring`), o busca por Pipeline y hora tras un timeout del cliente.
+Core espera hasta 60 segundos; `--timeout` controla la espera HTTP de la CLI. Un timeout indica **estado de ejecución desconocido**. Consulta los registros con IDs de mensaje/sesión en la página de monitorización de WebUI (`/home/monitoring`), o busca por Chat y hora tras un timeout del cliente.
 
 Core declara `pipeline.run`; `--dry-run` comprueba los requisitos.
 
