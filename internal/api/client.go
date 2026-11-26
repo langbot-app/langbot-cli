@@ -1100,7 +1100,7 @@ func (c Client) Pipeline(ctx context.Context, target Target, uuid string) (map[s
 		return nil, err
 	}
 	if pipeline["uuid"] != uuid {
-		return nil, protocolError(i18n.T("Server Pipeline UUID does not match the request"), resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
+		return nil, protocolError(i18n.T("Server Chat UUID does not match the request"), resp.StatusCode, responseRequestID(resp.Header, resp.Body, target.secret()))
 	}
 	return pipeline, nil
 }
@@ -2064,7 +2064,7 @@ func projectBot(value map[string]any, secret string) map[string]any {
 	projected := projectScalarFields(value, []string{
 		"uuid", "name", "description", "adapter", "enable", "use_pipeline_name", "use_pipeline_uuid", "created_at", "updated_at",
 	}, secret)
-	projectConfigFields(projected, value, secret, "adapter_config", "pipeline_routing_rules", "event_bindings", "plugin_processors")
+	projectConfigFields(projected, value, secret, "adapter_config", "pipeline_routing_rules", "event_bindings", "plugin_processors", "message_policy", "command_settings")
 	return projected
 }
 

@@ -198,7 +198,7 @@ func init() {
 		"Invalid Bot route response":                                                                           "Bot 路由响应无效",
 		"Change the target of one Bot route":                                                                   "更改一条 Bot 路由的目标",
 		"Target Agent UUID":                                                                                    "目标 Agent UUID",
-		"Target Pipeline UUID":                                                                                 "目标流水线 UUID",
+		"Target Chat UUID":                                                                                     "目标聊天 UUID",
 		"Binding ID from bot get, optional for a single route":                                                 "bot get 返回的路由 ID，仅有一条路由时可省略",
 		"Choose one --agent or --pipeline and a valid binding ID":                                              "请选择 --agent 或 --pipeline 之一，并提供有效的路由 ID",
 		"Bot routes changed. Read the current binding before retrying":                                         "Bot 路由已变化，请核对当前绑定再操作",

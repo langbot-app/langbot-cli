@@ -69,7 +69,7 @@ func newMonitoringCommand(service *app.Service, deps Dependencies, flags *global
 			cmd.Flags().IntVar(&limit, "limit", 100, i18n.T("Number of records: 1..500 (server may impose a lower limit)"))
 			cmd.Flags().IntVar(&offset, "offset", 0, i18n.T("Number of records to skip"))
 			if kind != "embedding-calls" {
-				cmd.Flags().StringArrayVar(&pipelines, "pipeline", nil, i18n.T("Filter by Pipeline; repeatable"))
+				cmd.Flags().StringArrayVar(&pipelines, "pipeline", nil, i18n.T("Filter by Chat; repeatable"))
 			}
 		}
 		if kind != "message" && kind != "embedding-calls" {

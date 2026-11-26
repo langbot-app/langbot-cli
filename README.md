@@ -702,7 +702,16 @@ lbctl assistant chat <conversation-id> --approve --revision 1 --yes
 
 Device login prints the verification URL and code before polling. Use `--wait-timeout` to limit the wait. In a terminal, `lbctl assistant chat` prompts for messages and shows each proposed tool batch. For scripts, inspect the pending calls and pass their current revision with `--approve` or `--reject`. A disconnected chat can be inspected by its conversation ID.
 
-To switch one existing Bot route, get its binding ID with `lbctl bot get <bot-uuid>`. Preview with `lbctl bot routes bind <bot-uuid> --binding <id> --agent <agent-uuid> --dry-run`, then apply with `--yes`. Use `--pipeline` for a Pipeline target. This command requires the Core `bot.routes.bind` operation.
+To switch one existing Bot route, get its binding ID with `lbctl bot get <bot-uuid>`. Preview with `lbctl bot routes bind <bot-uuid> --binding <id> --agent <agent-uuid> --dry-run`, then apply with `--yes`. Use `--pipeline` for a Chat target. This command requires the Core `bot.routes.bind` operation.
+
+### Bot policies and commands
+
+Start with `lbctl -o json bot get <id>`. Copy the complete `data.bot.message_policy` or `data.bot.command_settings` into an update file under the same field name; omit unrelated top-level fields. To edit a route override, copy the complete `event_bindings` list and edit the selected route's `policy`. Set it to `null` to inherit the bot default. Apply with `lbctl bot update <id> --file update.yaml`.
+
+- `message_policy.plugins`: use `{"enable_all":true,"plugins":[]}` or set `enable_all` to `false` and select `[{"author":"example","name":"demo"}]`.
+- `command_settings`: edit `enabled`, `prefixes`, `builtin` (e.g. `{"version":{"enabled":true,"permission":"admins"}}`), `denied_reply` (`silent` or `notice`), and `plugin_permissions` (e.g. `{"example/demo/echo":"everyone"}`). Manage administrators with `bot admins`.
+- `lbctl bot upgrade list` shows the current items and offered actions. Use `bot upgrade action <item_id> <action> --yes`, `bot upgrade confirm <item_id> --yes` or `bot upgrade confirm-all --yes`.
+- `lbctl monitoring executions` returns the handling category (`ai`, `command`, `plugin` or `policy`). Inspect the policy layer/item, command kind/name, permission denial or hook on each row.
 
 `op call` accepts an optional JSON/YAML object via `--file path` or `--file -`, defaulting to `{}`; `op stream` requires `--file`. Generic calls obtain risk and execution mode from `op describe`; catalog-hidden IDs already registered by this CLI use their built-in contracts. Unknown hidden IDs remain unavailable. Writes and high/dangerous-risk operations require interactive confirmation or `--yes`. Friendly commands use their registered operation contracts and the same confirmation rule. Writes require a saved, Workspace-bound context. Stdin cannot simultaneously supply a request body, an API key, or a confirmation answer. Streams emit each event immediately in the selected format, then a completion result; errors or disconnection before `done` fail without retrying.
 

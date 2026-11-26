@@ -511,9 +511,9 @@ func newBotDeleteCommand(service *app.Service, deps Dependencies, flags *globalF
 }
 
 func newPipelineCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
-	command := &cobra.Command{Use: "pipeline", Short: i18n.T("Manage Pipeline resources"), Args: cobra.NoArgs}
+	command := &cobra.Command{Use: "pipeline", Short: i18n.T("Manage Chat resources"), Args: cobra.NoArgs}
 	command.AddCommand(&cobra.Command{
-		Use: "list", Short: i18n.T("List Pipelines"), Args: cobra.NoArgs,
+		Use: "list", Short: i18n.T("List Chats"), Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return emitCall(deps, flags, func() (app.Result, error) {
 				return service.PipelineList(cmd.Context(), connectionOptions(flags))
@@ -521,7 +521,7 @@ func newPipelineCommand(service *app.Service, deps Dependencies, flags *globalFl
 		},
 	})
 	command.AddCommand(&cobra.Command{
-		Use: "get <id>", Short: i18n.T("Read a Pipeline"), Args: cobra.ExactArgs(1),
+		Use: "get <id>", Short: i18n.T("Read a Chat"), Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return emitCall(deps, flags, func() (app.Result, error) {
 				return service.PipelineGet(cmd.Context(), args[0], connectionOptions(flags))
@@ -540,7 +540,7 @@ func newPipelineApplyCommand(service *app.Service, deps Dependencies, flags *glo
 	var file string
 	var dryRun bool
 	command := &cobra.Command{
-		Use: "apply", Short: i18n.T("Create or update a Pipeline"), Args: cobra.NoArgs,
+		Use: "apply", Short: i18n.T("Create or update a Chat"), Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			body, err := loadRequestBody(cmd.Context(), file, flags.apiKeyStdin, deps.In)
 			if err != nil {
@@ -559,7 +559,7 @@ func newPipelineApplyCommand(service *app.Service, deps Dependencies, flags *glo
 func newPipelineCopyCommand(service *app.Service, deps Dependencies, flags *globalFlags) *cobra.Command {
 	var dryRun bool
 	command := &cobra.Command{
-		Use: "copy <id>", Short: i18n.T("Copy a Pipeline"), Args: cobra.ExactArgs(1),
+		Use: "copy <id>", Short: i18n.T("Copy a Chat"), Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return emitCall(deps, flags, func() (app.Result, error) {
 				return service.PipelineCopy(cmd.Context(), args[0], dryRun, connectionOptions(flags))
@@ -574,7 +574,7 @@ func newPipelineDeleteCommand(service *app.Service, deps Dependencies, flags *gl
 	var yes bool
 	var dryRun bool
 	command := &cobra.Command{
-		Use: "delete <id>", Short: i18n.T("Delete a Pipeline"), Args: cobra.ExactArgs(1),
+		Use: "delete <id>", Short: i18n.T("Delete a Chat"), Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return emitCall(deps, flags, func() (app.Result, error) {
 				return service.PipelineDelete(cmd.Context(), args[0], yes, dryRun, connectionOptions(flags))

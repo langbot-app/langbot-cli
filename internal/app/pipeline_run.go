@@ -38,7 +38,7 @@ func (s *Service) PipelineRun(ctx context.Context, id, message string, dryRun bo
 	case "unknown":
 		return value, result.New("network", i18n.T("Test timed out; server execution state unknown, do not retry automatically"))
 	case "failed":
-		return value, result.New("server", i18n.T("Pipeline execution failed; inspect the returned error and run history"))
+		return value, result.New("server", i18n.T("Chat execution failed; inspect the returned error and run history"))
 	default:
 		return value, result.New("incompatible", i18n.T("Test response lacks a valid status; execution state unknown, do not retry automatically"))
 	}

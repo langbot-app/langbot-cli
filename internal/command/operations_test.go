@@ -1536,6 +1536,10 @@ func TestEveryFriendlyOperationMapping(t *testing.T) {
 		t.Run(spec.path, func(t *testing.T) {
 			calls := 0
 			want := map[string]any{"filter": "sample", "limit": float64(3)}
+			input := `{"filter":"sample","limit":3}`
+			if spec.path == "bot upgrade confirm-all" {
+				input, want = `{}`, map[string]any{"item_id": nil}
+			}
 			arguments := strings.Fields(spec.path)
 			for _, field := range strings.Fields(spec.arguments) {
 				arguments = append(arguments, "value-"+field)
@@ -1584,7 +1588,7 @@ func TestEveryFriendlyOperationMapping(t *testing.T) {
 				}
 			}))
 			defer server.Close()
-			code, output := operationCLI(t, server, `{"filter":"sample","limit":3}`, append(arguments, "--file", "-", "--yes")...)
+			code, output := operationCLI(t, server, input, append(arguments, "--file", "-", "--yes")...)
 			if code != 0 || calls != 1 {
 				t.Fatalf("code=%d calls=%d output=%s", code, calls, output)
 			}
@@ -1608,6 +1612,19 @@ func TestFriendlyOperationContracts(t *testing.T) {
 				t.Errorf("%s has unknown input %s", spec.id, field)
 			}
 		}
+	}
+}
+
+func TestUpgradeChecksUnavailable(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if !operationPreflight(writer, request, true) {
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+	code, output := operationCLI(t, server, "", "bot", "upgrade", "list")
+	if code == 0 || !strings.Contains(output, `"incompatible"`) {
+		t.Fatalf("expected unsupported Core diagnostic: %s", output)
 	}
 }
 

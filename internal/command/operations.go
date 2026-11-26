@@ -43,6 +43,10 @@ var friendlyOperations = []operationCommand{
 	{"plugin page-action", "plugin.page_action", "author plugin_name page_id endpoint", false},
 	{"bot routes preview", "bot.routes.preview", "bot_uuid", false},
 	{"bot routes status", "bot.routes.status", "bot_uuid", false},
+	{"bot upgrade list", "bot.upgrade.checks", "", false},
+	{"bot upgrade action", "bot.upgrade.action", "item_id action", false},
+	{"bot upgrade confirm", "bot.upgrade.confirm", "item_id", false},
+	{"bot upgrade confirm-all", "bot.upgrade.confirm", "", false},
 	{"bot message send", "bot.message.send", "bot_uuid", false},
 	{"bot message test", "bot.message.test", "bot_uuid", false},
 	{"bot logs", "bot.logs", "bot_uuid", false},
@@ -352,6 +356,12 @@ func addOperationCommand(parent *cobra.Command, spec operationCommand, service *
 					return app.Result{}, err
 				}
 			}
+			if spec.id == "bot.upgrade.confirm" && spec.path == "confirm-all" {
+				if len(body) != 0 {
+					return app.Result{}, result.New("input", i18n.T("Confirm-all takes no input fields"))
+				}
+				body["item_id"] = nil
+			}
 			if spec.id != "" {
 				for index, field := range fields {
 					if value, exists := body[field]; exists && value != args[index] {
@@ -434,6 +444,9 @@ func addOperationCommand(parent *cobra.Command, spec operationCommand, service *
 				return session.Result(map[string]any{"completed": err == nil}), err
 			}
 			value, err := session.Client.OperationCall(cmd.Context(), session.Target, identifier, body)
+			if err != nil && strings.HasPrefix(identifier, "bot.upgrade.") && result.AsError(err).HTTPStatus == 404 {
+				return session.Result(nil), result.New("incompatible", i18n.T("This Core does not provide message upgrade checks"))
+			}
 			if err == nil && identifier == "plugin.permissions.get" {
 				if permissions, ok := value.(map[string]any); ok && permissions["pending_confirmation"] == true {
 					permissions["approval"] = session.PluginApprovalHint()

@@ -288,9 +288,9 @@ func (watch *monitoringWatch) readList(round *monitoringWatchRound) error {
 				state.offset = 0
 			}
 			state.row = map[string]any{}
-			for _, key := range []string{"status", "status_reason", "status_group", "session_id", "event_id", "created_at_ms", "finished_at_ms", "progress_event"} {
+			for _, key := range []string{"status", "status_reason", "status_group", "session_id", "event_id", "created_at_ms", "finished_at_ms", "progress_event", "handling", "policy_layer", "policy_item", "command_kind", "command_name", "command_denied", "hook"} {
 				switch value := row[key].(type) {
-				case string, json.Number:
+				case string, json.Number, bool:
 					state.row[key] = value
 				}
 			}

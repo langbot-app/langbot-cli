@@ -231,7 +231,7 @@ func TestPipelineApplyCreateUpdateAndPartialResult(t *testing.T) {
 	configureWriteContext(t, configPath, server.URL, "PIPELINE_KEY")
 	env := map[string]string{"PIPELINE_KEY": key}
 	createPath := filepath.Join(t.TempDir(), "pipeline.yaml")
-	if err := os.WriteFile(createPath, []byte("name: Pipeline A\ndescription: test\nconfig:\n  token: pipeline-secret\n"), 0o600); err != nil {
+	if err := os.WriteFile(createPath, []byte("name: Chat A\ndescription: test\nconfig:\n  token: pipeline-secret\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	created := run(t, configPath, env, "", "pipeline", "apply", "--file", createPath)
@@ -240,12 +240,12 @@ func TestPipelineApplyCreateUpdateAndPartialResult(t *testing.T) {
 		t.Fatalf("apply output exposed resource secret: %s", created.out)
 	}
 	updatePath := filepath.Join(t.TempDir(), "pipeline-update.json")
-	if err := os.WriteFile(updatePath, []byte(`{"uuid":"pipeline-a","name":"Pipeline A","config":{"token":"pipeline-secret"}}`), 0o600); err != nil {
+	if err := os.WriteFile(updatePath, []byte(`{"uuid":"pipeline-a","name":"Chat A","config":{"token":"pipeline-secret"}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	updated := run(t, configPath, env, "", "pipeline", "apply", "--file", updatePath)
 	requireSuccess(t, updated)
-	if got := strings.Join(writes, "|"); got != "POST /api/v1/pipelines Pipeline A|PUT /api/v1/pipelines/pipeline-a Pipeline A|PUT /api/v1/pipelines/pipeline-a Pipeline A" {
+	if got := strings.Join(writes, "|"); got != "POST /api/v1/pipelines Chat A|PUT /api/v1/pipelines/pipeline-a Chat A|PUT /api/v1/pipelines/pipeline-a Chat A" {
 		t.Fatalf("pipeline writes = %s", got)
 	}
 

@@ -579,10 +579,10 @@ func TestResourceCommandsUseAuthenticatedContextAndSafeProjection(t *testing.T) 
 			fmt.Fprint(w, `{"code":0,"data":{"bot":{"uuid":"bot-a","name":"Bot A","adapter":"http_bot","adapter_config":{"token":"bot-secret"}}}}`)
 		case "/api/v1/pipelines":
 			resourceCalls.Add(1)
-			fmt.Fprint(w, `{"code":0,"data":{"pipelines":[{"uuid":"pipeline-a","name":"Pipeline A","config":{"api_key":"provider-secret"}}]}}`)
+			fmt.Fprint(w, `{"code":0,"data":{"pipelines":[{"uuid":"pipeline-a","name":"Chat A","config":{"api_key":"provider-secret"}}]}}`)
 		case "/api/v1/pipelines/pipeline-a":
 			resourceCalls.Add(1)
-			fmt.Fprint(w, `{"code":0,"data":{"pipeline":{"uuid":"pipeline-a","name":"Pipeline A","config":{"token":"pipeline-secret"}}}}`)
+			fmt.Fprint(w, `{"code":0,"data":{"pipeline":{"uuid":"pipeline-a","name":"Chat A","config":{"token":"pipeline-secret"}}}}`)
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
