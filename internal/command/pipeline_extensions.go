@@ -15,7 +15,7 @@ func pipeline_extensionsGet(cmd *cobra.Command, service *app.Service, deps Depen
 	})
 }
 func addPipelineExtensions(root *cobra.Command, service *app.Service, deps Dependencies, flags *globalFlags) {
-	extensions := &cobra.Command{Use: "extensions", Short: i18n.T("Manage Pipeline extension bindings"), Args: cobra.NoArgs}
+	extensions := &cobra.Command{Use: "extensions", Short: i18n.T("Manage Chat extension bindings"), Args: cobra.NoArgs}
 	extensions.AddCommand(&cobra.Command{Use: "get <uuid>", Short: i18n.T("Read bindings, available extensions and enable_all toggles"), Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		if err := api.ValidateResourceID(args[0]); err != nil {
 			return err

@@ -40,12 +40,12 @@ anonymous telemetry notice to stderr; disable telemetry with
 `LANGBOT_TELEMETRY=0` or `DO_NOT_TRACK=1`. JSON/YAML and schema output remain
 language-independent. See [output and localization](dev-docs/localization.md).
 
-The standalone LangBot command-line tool, provided as `lbctl`. It manages Workspace resources over HTTP, with multiple contexts, identity and capability discovery, resource management, RAG configuration discovery, Pipeline extensions and test runs, runtime records and Sandbox diagnostics, asynchronous task waiting, and installation, adoption, lifecycle management, and upgrades for native Python and Docker Compose deployments.
+The standalone LangBot command-line tool, provided as `lbctl`. It manages Workspace resources over HTTP, with multiple contexts, identity and capability discovery, resource management, RAG configuration discovery, Chat extensions and test runs, runtime records and Sandbox diagnostics, asynchronous task waiting, and installation, adoption, lifecycle management, and upgrades for native Python and Docker Compose deployments.
 
 Use a LangBot Core that provides:
 
 - API Key authentication for `/api/v1/system/context` and `/api/v1/system/capabilities`.
-- Bot, Pipeline, Knowledge Base, Provider, Model, Plugin, Skill, MCP Server, and task APIs.
+- Bot, Chat, Knowledge Base, Provider, Model, Plugin, Skill, MCP Server, and task APIs.
 - Server-side redaction through `include_secret=false` for Provider/Model queries.
 
 `lbctl` executes operations according to the capabilities, Workspace bindings, and permissions declared by Core.
@@ -264,7 +264,7 @@ Adopted upgrades replace the images for `langbot`, `langbot_plugin_runtime`, and
 
 Automatic upgrades support services declaring `rockchin/langbot:<tag>` directly, with all data under the Compose directory's `data` bind mount and local SQLite, Chroma, and local storage. Compose configuration, backup scope, and versions are checked before upgrading; the target version is newer than the current version. `--dry-run` shows the plan, and execution verifies the target image. After manually editing adopted Compose content, run `adopt` again for the same target to confirm its updated asset digest.
 
-Local lifecycle commands target deployment instances. Resources such as Bots, Pipelines, and Skills use the same commands below to manage the context's Workspace.
+Local lifecycle commands target deployment instances. Resources such as Bots, Chats, and Skills use the same commands below to manage the context's Workspace.
 
 An existing instance's resources can be managed as soon as its context and API key are configured. Docker adoption is needed for local lifecycle operations, deployment logs, and upgrades.
 
@@ -272,7 +272,7 @@ Human help groups commands by purpose, shows applicable and required flags, and 
 
 ```sh
 lbctl bot list --filter my-bot
-lbctl bot get <bot-id>             # Follow event_bindings to the bound Agent or Pipeline
+lbctl bot get <bot-id>             # Follow event_bindings to the bound Agent or Chat
 lbctl model list --type llm --provider <provider-id>
 lbctl model list --filter deepseek -o json
 lbctl bot update --help            # Minimal body example and preflight scope
@@ -289,7 +289,7 @@ Shell completion reads saved context names and static enums without requesting r
 
 Use JSON or YAML files for complex request bodies, with fields matching the LangBot HTTP API. `--file -` reads from stdin.
 
-### Bot and Pipeline
+### Bot and Chat
 
 ```sh
 lbctl bot list
@@ -478,7 +478,7 @@ Writes verify the saved context, Workspace binding, actual identity, permissions
 - Uncertain request outcomes return `result_unknown` for inspection before deciding the next step.
 - Multi-step operations retain created resources or `task_id` values for progress tracking.
 
-Bot/Pipeline reads retain ordinary configuration and mask credentials with `***`. Creates, updates, and Pipeline copies compare observable fields on readback; mismatches return `verification_failed`. `verification.observable_fields_match` describes the comparison, while `unverified_fields` lists masked fields. `verified` is true only when every checked field is verifiable and matches. Bot updates preserve existing credentials for exact `***` placeholders; placeholders that cannot be safely restored are rejected before updating.
+Bot/Chat reads retain ordinary configuration and mask credentials with `***`. Creates, updates, and Chat copies compare observable fields on readback; mismatches return `verification_failed`. `verification.observable_fields_match` describes the comparison, while `unverified_fields` lists masked fields. `verified` is true only when every checked field is verifiable and matches. Bot updates preserve existing credentials for exact `***` placeholders; placeholders that cannot be safely restored are rejected before updating.
 
 Query asynchronous tasks independently:
 
@@ -557,7 +557,7 @@ lbctl knowledge-parser list --mime-type application/pdf
 
 Select a `plugin_id` from the engine list. The creation schema defines knowledge-base creation settings, and the retrieval schema defines query settings. Use `knowledge-base create`, `ingest`, and `retrieve` for ingestion and retrieval.
 
-## Pipeline extension bindings
+## Chat extension bindings
 
 ```sh
 lbctl pipeline extensions get PIPELINE_UUID -o json
@@ -582,7 +582,7 @@ Empty arrays with `enable_all_*: false` leave that extension type unbound; `true
 
 Updates require a saved, Workspace-bound context, `resource.manage` and `resource.view` permissions, and the corresponding Core capability.
 
-## Single-turn Pipeline test runs
+## Single-turn Chat test runs
 
 ```sh
 lbctl pipeline run PIPELINE_UUID --message 'Answer this question using the knowledge base' --timeout 2m -o json
@@ -590,7 +590,7 @@ lbctl pipeline run PIPELINE_UUID --message 'Answer this question using the knowl
 
 Test runs use a saved, Workspace-bound context and require `runtime.operate` and `resource.view`. They call the configured models and tools. Each run creates a fresh session. Results include the reply, session ID, query ID, and available message IDs; failures return a nonzero exit code.
 
-Core waits up to 60 seconds; CLI `--timeout` controls the HTTP request wait. A timeout means **execution status is unknown**. Inspect runtime records using returned message/session identifiers on the LangBot WebUI monitoring page (`/home/monitoring`). After a client timeout, you can also search recent records by Pipeline and time.
+Core waits up to 60 seconds; CLI `--timeout` controls the HTTP request wait. A timeout means **execution status is unknown**. Inspect runtime records using returned message/session identifiers on the LangBot WebUI monitoring page (`/home/monitoring`). After a client timeout, you can also search recent records by Chat and time.
 
 Core declares the `pipeline.run` capability; use `--dry-run` to check prerequisites.
 
@@ -619,7 +619,7 @@ lbctl monitoring watch --bot BOT_UUID --start-time 2026-11-18T00:00:00Z --timeou
 
 Runtime-record queries require `resource.view`. Lists support `--limit 1..500` and `--offset`, subject to Core's limits. `--start-time` and `--end-time` use ISO 8601. See each command's `--help` for filters.
 
-`monitoring watch` emits new and changed executions keyed by source and ID. Its initial replay uses `--since` (default `15m`) or an absolute `--start-time`. Subsequent completed list scans use a rolling 15-minute window. Tracked active executions continue through budgeted detail reads, including a terminal status and reply arriving after their creation time leaves the list window. Agent ledger status and directly recorded delivery evidence have separate fields. Pipeline ledger status is `unknown`. `delivery_status` reports `unknown`, `recorded_success`, `recorded_failure` or `mixed`, with record locators in JSON/YAML.
+`monitoring watch` emits new and changed executions keyed by source and ID. Its initial replay uses `--since` (default `15m`) or an absolute `--start-time`. Subsequent completed list scans use a rolling 15-minute window. Tracked active executions continue through budgeted detail reads, including a terminal status and reply arriving after their creation time leaves the list window. Agent ledger status and directly recorded delivery evidence have separate fields. Chat ledger status is `unknown`. `delivery_status` reports `unknown`, `recorded_success`, `recorded_failure` or `mixed`, with record locators in JSON/YAML.
 
 The default watch continues until Ctrl+C. HTTP requests retain their configured timeout, and an explicit global `--timeout` limits the watch lifetime. Polling defaults to `5s`. Each round fixes its end time and initial list count, reads up to `--max-pages` list pages (default `10`, 100 rows each), and makes up to `--max-details` delivery requests (default `20`). Detail work rotates fairly, carrying long delivery page cursors across rounds. Recent executions, including those with an existing reply, receive delivery refreshes for 15 minutes after their recorded finish time, or creation time when the finish time is missing. Active executions remain eligible within the request budget. Reports include `delivery_watch_until`, `delivery_watch_expired`, the current `scan_start_time`, deferred work and truncation counts.
 
@@ -702,7 +702,16 @@ lbctl assistant chat <conversation-id> --approve --revision 1 --yes
 
 Device login prints the verification URL and code before polling. Use `--wait-timeout` to limit the wait. In a terminal, `lbctl assistant chat` prompts for messages and shows each proposed tool batch. For scripts, inspect the pending calls and pass their current revision with `--approve` or `--reject`. A disconnected chat can be inspected by its conversation ID.
 
-To switch one existing Bot route, get its binding ID with `lbctl bot get <bot-uuid>`. Preview with `lbctl bot routes bind <bot-uuid> --binding <id> --agent <agent-uuid> --dry-run`, then apply with `--yes`. Use `--pipeline` for a Pipeline target. This command requires the Core `bot.routes.bind` operation.
+To switch one existing Bot route, get its binding ID with `lbctl bot get <bot-uuid>`. Preview with `lbctl bot routes bind <bot-uuid> --binding <id> --agent <agent-uuid> --dry-run`, then apply with `--yes`. Use `--pipeline` for a Chat target. This command requires the Core `bot.routes.bind` operation.
+
+### Bot policies and commands
+
+Start with `lbctl -o json bot get <id>`. Copy the complete `data.bot.message_policy` or `data.bot.command_settings` into an update file under the same field name; omit unrelated top-level fields. To edit a route override, copy the complete `event_bindings` list and edit the selected route's `policy`. Set it to `null` to inherit the bot default. Apply with `lbctl bot update <id> --file update.yaml`.
+
+- `message_policy.plugins`: use `{"enable_all":true,"plugins":[]}` or set `enable_all` to `false` and select `[{"author":"example","name":"demo"}]`.
+- `command_settings`: edit `enabled`, `prefixes`, `builtin` (e.g. `{"version":{"enabled":true,"permission":"admins"}}`), `denied_reply` (`silent` or `notice`), and `plugin_permissions` (e.g. `{"example/demo/echo":"everyone"}`). Manage administrators with `bot admins`.
+- `lbctl bot upgrade list` shows the current items and offered actions. Use `bot upgrade action <item_id> <action> --yes`, `bot upgrade confirm <item_id> --yes` or `bot upgrade confirm-all --yes`.
+- `lbctl monitoring executions` returns the handling category (`ai`, `command`, `plugin` or `policy`). Inspect the policy layer/item, command kind/name, permission denial or hook on each row.
 
 `op call` accepts an optional JSON/YAML object via `--file path` or `--file -`, defaulting to `{}`; `op stream` requires `--file`. Generic calls obtain risk and execution mode from `op describe`; catalog-hidden IDs already registered by this CLI use their built-in contracts. Unknown hidden IDs remain unavailable. Writes and high/dangerous-risk operations require interactive confirmation or `--yes`. Friendly commands use their registered operation contracts and the same confirmation rule. Writes require a saved, Workspace-bound context. Stdin cannot simultaneously supply a request body, an API key, or a confirmation answer. Streams emit each event immediately in the selected format, then a completion result; errors or disconnection before `done` fail without retrying.
 
@@ -720,7 +729,7 @@ Friendly positionals populate Core input fields; remaining fields go in `--file`
 | Plugin | Existing list/get/config/logs/delete/upgrade; `permissions get/confirm`, `search`, `readme`, `debug-info`, `config-file upload/delete`, `github releases/assets`, `page-action`, `install local/github/marketplace` |
 | Bot | Existing CRUD; `routes preview/status`, `message send/test`, `logs`, `runtime`, `admins list/add/delete`, `group-filter preview/apply`, `setup <platform> start/status/cancel` |
 | Monitoring | Existing messages/llm-calls/tool-calls/embedding-calls/sessions/errors/message/session; `overview`, `executions`, `execution`, `tokens`, `inflight`, `feedback list/stats`, `export <kind>`, `session analysis/reset` |
-| Pipeline | Existing CRUD/copy/apply/extensions/run; `metadata`, `defaults`, `chat history/reset/connections/broadcast`, `migration preview/execute` |
+| Chat | Existing CRUD/copy/apply/extensions/run; `metadata`, `defaults`, `chat history/reset/connections/broadcast`, `migration preview/execute` |
 | Model | `list/get/create/update/delete/test --type llm\|embedding\|rerank\|asr\|tts`, `default get`, `starred get/set` |
 | Provider | Existing CRUD/scan-models; `models count`, `codex start/poll/status/cancel/disconnect` |
 | Skill | Existing CRUD/files/preview/install; `directory scan/import`, `reload`, `package get`, `github preview`, `zip preview` |
@@ -754,7 +763,7 @@ Confirmation grants all declared permissions unless individual IDs are supplied.
 
 ### Core access boundaries
 
-The catalog is filtered by permission, principal, and exposure; it is not every friendly command. Catalog-hidden operations already known to the CLI can still be invoked using their fixed contracts; Core remains the authorization authority. Workspace members/invitations, provider Codex, Assistant, pipeline migration, and knowledge-base migration automatically use a member session, including equivalent `op call/describe/stream` IDs. Other commands default to API keys even when a member token is configured; `--as-member` explicitly selects the member session. Knowledge migration `preview` uses `/api/v1/knowledge/migration/status`.
+The catalog is filtered by permission, principal, and exposure; it is not every friendly command. Catalog-hidden operations already known to the CLI can still be invoked using their fixed contracts; Core remains the authorization authority. Workspace members/invitations, provider Codex, Assistant, Chat migration, and knowledge-base migration automatically use a member session, including equivalent `op call/describe/stream` IDs. Other commands default to API keys even when a member token is configured; `--as-member` explicitly selects the member session. Knowledge migration `preview` uses `/api/v1/knowledge/migration/status`.
 
 ### Member sessions
 

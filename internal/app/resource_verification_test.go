@@ -9,12 +9,20 @@ import (
 )
 
 func TestResourceVerificationChecksSubmittedFields(t *testing.T) {
+	route := func(policy map[string]any) map[string]any {
+		return map[string]any{"event_bindings": []any{map[string]any{"policy": policy}}}
+	}
 	for _, test := range []struct {
 		name              string
 		expected, actual  map[string]any
 		matches, verified bool
 	}{
 		{"unchanged name", map[string]any{"name": "new"}, map[string]any{"name": "old"}, false, false},
+		{"default policy", map[string]any{"message_policy": map[string]any{"trigger": map[string]any{}}}, map[string]any{"message_policy": map[string]any{"trigger": map[string]any{"access-control": "default"}, "plugins": map[string]any{}}}, true, true},
+		{"command defaults", map[string]any{"command_settings": map[string]any{"enabled": false}}, map[string]any{"command_settings": map[string]any{"enabled": false, "processors": []any{}}}, true, true},
+		{"retained route selection", route(map[string]any{"trigger": map[string]any{}}), route(map[string]any{"trigger": map[string]any{}, "plugins": map[string]any{"enable_all": false}}), true, true},
+		{"retained route switch", route(map[string]any{"plugins": map[string]any{"plugins": []any{}}}), route(map[string]any{"plugins": map[string]any{"plugins": []any{}, "enable_all": false}}), true, true},
+		{"ignored route switch", route(map[string]any{"plugins": map[string]any{"enable_all": false}}), route(map[string]any{"plugins": map[string]any{"enable_all": true, "plugins": []any{}}}), false, false},
 		{"missing false", map[string]any{"enable": false}, map[string]any{}, false, false},
 		{"changed false", map[string]any{"enable": false}, map[string]any{"enable": true}, false, false},
 		{"nested ignored", map[string]any{"config": map[string]any{"temperature": json.Number("0.5")}}, map[string]any{"config": map[string]any{"temperature": json.Number("0.7")}}, false, false},

@@ -35,12 +35,12 @@
 
 ---
 
-Outil autonome en ligne de commande de LangBot, fourni sous le nom `lbctl`. Il gère les ressources Workspace par HTTP : contextes multiples, découverte d'identité et de capacités, ressources, configuration RAG, extensions et essais Pipeline, historiques d'exécution et diagnostic Sandbox, attente de tâches asynchrones, ainsi que l'installation, l'adoption, le cycle de vie et la mise à niveau de déploiements Docker Compose locaux.
+Outil autonome en ligne de commande de LangBot, fourni sous le nom `lbctl`. Il gère les ressources Workspace par HTTP : contextes multiples, découverte d'identité et de capacités, ressources, configuration RAG, extensions et essais Chat, historiques d'exécution et diagnostic Sandbox, attente de tâches asynchrones, ainsi que l'installation, l'adoption, le cycle de vie et la mise à niveau de déploiements Docker Compose locaux.
 
 Utilisez une version de LangBot Core fournissant :
 
 - L'authentification API Key pour `/api/v1/system/context` et `/api/v1/system/capabilities`.
-- Les API Bot, Pipeline, Knowledge Base, Provider, Model, Plugin, Skill, MCP Server et tâches.
+- Les API Bot, Chat, Knowledge Base, Provider, Model, Plugin, Skill, MCP Server et tâches.
 - Le masquage côté serveur via `include_secret=false` pour Provider/Model.
 
 `lbctl` exécute les opérations selon les capacités, les liens Workspace et les permissions déclarés par Core.
@@ -171,7 +171,7 @@ La mise à niveau remplace les images de `langbot`, `langbot_plugin_runtime` et 
 
 La mise à niveau automatique prend en charge les services déclarant directement `rockchin/langbot:<tag>`, dont toutes les données sont dans le montage `data` du répertoire Compose, avec SQLite, Chroma et local storage locaux. Configuration, périmètre de sauvegarde et versions sont vérifiés avant une mise à niveau vers une version supérieure. `--dry-run` affiche le plan ; l'exécution vérifie l'image. Après une modification manuelle de Compose, relancez `adopt` sur la même destination pour confirmer la nouvelle empreinte.
 
-Le cycle de vie local cible l'instance déployée. Bot, Pipeline, Skill et les autres ressources utilisent les commandes communes ci-dessous pour gérer le Workspace du contexte.
+Le cycle de vie local cible l'instance déployée. Bot, Chat, Skill et les autres ressources utilisent les commandes communes ci-dessous pour gérer le Workspace du contexte.
 
 <a id="resources"></a>
 
@@ -179,7 +179,7 @@ Le cycle de vie local cible l'instance déployée. Bot, Pipeline, Skill et les a
 
 Utilisez des fichiers JSON ou YAML pour les corps complexes, avec les champs de l'API HTTP LangBot. `--file -` lit stdin.
 
-### Bot et Pipeline
+### Bot et Chat
 
 ```sh
 lbctl bot list
@@ -300,7 +300,7 @@ Les écritures vérifient le contexte enregistré, le lien Workspace, l'identit�
 - Un résultat incertain renvoie `result_unknown` pour examen avant la prochaine décision.
 - Les opérations en plusieurs étapes conservent les ressources créées ou les `task_id` pour le suivi.
 
-Les lectures de Bot/Pipeline conservent la configuration ordinaire et masquent les identifiants avec `***`. Les créations, mises à jour et copies de Pipeline comparent les champs observables après relecture ; les différences renvoient `verification_failed`. `verification.observable_fields_match` indique le résultat et `unverified_fields` liste les champs masqués. `verified` vaut true uniquement si tous les champs contrôlés sont vérifiables et identiques. Les mises à jour de Bot préservent les identifiants existants pour les valeurs exactement égales à `***` ; les valeurs impossibles à restaurer en toute sécurité sont refusées avant la mise à jour.
+Les lectures de Bot/Chat conservent la configuration ordinaire et masquent les identifiants avec `***`. Les créations, mises à jour et copies de Chat comparent les champs observables après relecture ; les différences renvoient `verification_failed`. `verification.observable_fields_match` indique le résultat et `unverified_fields` liste les champs masqués. `verified` vaut true uniquement si tous les champs contrôlés sont vérifiables et identiques. Les mises à jour de Bot préservent les identifiants existants pour les valeurs exactement égales à `***` ; les valeurs impossibles à restaurer en toute sécurité sont refusées avant la mise à jour.
 
 Consultez les tâches asynchrones indépendamment :
 
@@ -375,7 +375,7 @@ lbctl knowledge-parser list --mime-type application/pdf
 
 Choisissez un `plugin_id` dans la liste des moteurs. Le creation schema définit la création de la base de connaissances, le retrieval schema les paramètres de recherche. Utilisez `knowledge-base create`, `ingest` et `retrieve` pour l'ingestion et la recherche.
 
-## Liens d'extensions Pipeline
+## Liens d'extensions Chat
 
 ```sh
 lbctl pipeline extensions get PIPELINE_UUID -o json
@@ -400,7 +400,7 @@ Des tableaux vides avec `enable_all_*: false` laissent ce type sans lien ; `true
 
 La mise à jour exige un contexte enregistré et lié au Workspace, `resource.manage`, `resource.view` et la capacité Core correspondante.
 
-## Essai Pipeline en un tour
+## Essai Chat en un tour
 
 ```sh
 lbctl pipeline run PIPELINE_UUID --message 'Réponds à cette question avec la base de connaissances' --timeout 2m -o json
@@ -408,7 +408,7 @@ lbctl pipeline run PIPELINE_UUID --message 'Réponds à cette question avec la b
 
 L'essai utilise un contexte enregistré et lié, avec `runtime.operate` et `resource.view`, et appelle les modèles et outils configurés. Chaque exécution crée une nouvelle session. Le résultat contient la réponse, l'ID de session, l'ID de requête et les IDs de message disponibles ; un échec renvoie un code non nul.
 
-Core attend jusqu'à 60 secondes ; `--timeout` contrôle l'attente HTTP de la CLI. Un dépassement signifie **état d'exécution inconnu**. Consultez les historiques avec les IDs de message/session dans WebUI (`/home/monitoring`), ou recherchez les enregistrements récents par Pipeline et heure.
+Core attend jusqu'à 60 secondes ; `--timeout` contrôle l'attente HTTP de la CLI. Un dépassement signifie **état d'exécution inconnu**. Consultez les historiques avec les IDs de message/session dans WebUI (`/home/monitoring`), ou recherchez les enregistrements récents par Chat et heure.
 
 Core déclare `pipeline.run` ; `--dry-run` vérifie les prérequis.
 

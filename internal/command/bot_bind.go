@@ -47,7 +47,7 @@ func addBotRouteBind(root *cobra.Command, service *app.Service, deps Dependencie
 	var dryRun, yes bool
 	cmd := &cobra.Command{Use: "bind <bot_uuid>", Short: i18n.T("Change the target of one Bot route"), Args: cobra.ExactArgs(1)}
 	cmd.Flags().StringVar(&agent, "agent", "", i18n.T("Target Agent UUID"))
-	cmd.Flags().StringVar(&pipeline, "pipeline", "", i18n.T("Target Pipeline UUID"))
+	cmd.Flags().StringVar(&pipeline, "pipeline", "", i18n.T("Target Chat UUID"))
 	cmd.Flags().StringVar(&bindingID, "binding", "", i18n.T("Binding ID from bot get, optional for a single route"))
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, i18n.T("Preview changes"))
 	cmd.Flags().BoolVar(&yes, "yes", false, i18n.T("Confirm write"))

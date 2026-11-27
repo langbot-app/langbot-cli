@@ -35,12 +35,12 @@
 
 ---
 
-LangBot 的獨立命令列工具，執行檔名稱為 `lbctl`。透過 HTTP 管理 Workspace 資源，支援多個 context、身分與能力探索、資源管理、RAG 設定探索、Pipeline 擴充與試執行、執行紀錄與 Sandbox 診斷、非同步任務等待，以及本機 Docker Compose 部署的安裝、接管、啟停與升級。
+LangBot 的獨立命令列工具，執行檔名稱為 `lbctl`。透過 HTTP 管理 Workspace 資源，支援多個 context、身分與能力探索、資源管理、RAG 設定探索、聊天 擴充與試執行、執行紀錄與 Sandbox 診斷、非同步任務等待，以及本機 Docker Compose 部署的安裝、接管、啟停與升級。
 
 搭配提供以下能力的 LangBot Core：
 
 - API Key 驗證的 `/api/v1/system/context` 與 `/api/v1/system/capabilities`。
-- Bot、Pipeline、Knowledge Base、Provider、Model、Plugin、Skill、MCP Server 與任務查詢介面。
+- Bot、聊天、Knowledge Base、Provider、Model、Plugin、Skill、MCP Server 與任務查詢介面。
 - Provider/Model 查詢的伺服器端遮罩參數 `include_secret=false`。
 
 `lbctl` 依據 Core 宣告的 capability、Workspace 綁定與權限執行操作。
@@ -171,7 +171,7 @@ lbctl upgrade --version <newer-vX.Y.Z> --yes -o json
 
 自動升級支援直接宣告 `rockchin/langbot:<tag>` 的服務，資料完整位於 Compose 目錄的 `data` 綁定目錄，並使用本機 SQLite、Chroma 與 local storage。升級前驗證 Compose、備份範圍與版本；目標版本高於目前版本。`--dry-run` 顯示計畫，執行時驗證目標映像。手動修改接管的 Compose 後，再次對相同目標執行 `adopt`，確認新的資產摘要。
 
-本機生命週期命令以部署實例為目標；Bot、Pipeline、Skill 等資源透過下方同一套命令管理 context 所屬的 Workspace。
+本機生命週期命令以部署實例為目標；Bot、聊天、Skill 等資源透過下方同一套命令管理 context 所屬的 Workspace。
 
 <a id="resources"></a>
 
@@ -179,7 +179,7 @@ lbctl upgrade --version <newer-vX.Y.Z> --yes -o json
 
 複雜請求內容使用 JSON 或 YAML 檔案，欄位與 LangBot HTTP API 一致。`--file -` 從 stdin 讀取。
 
-### Bot 與 Pipeline
+### Bot 與 聊天
 
 ```sh
 lbctl bot list
@@ -300,7 +300,7 @@ lbctl mcp-server delete <name> --yes
 - 結果不確定時回傳 `result_unknown`，便於核查後決定下一步。
 - 多步操作保留已建立的資源或 `task_id`，便於追蹤進度。
 
-Bot/Pipeline 讀取保留一般設定，憑證以 `***` 遮蔽。建立、更新與 Pipeline 複製會重新讀取並核對可觀察欄位，不一致時回傳 `verification_failed`。`verification.observable_fields_match` 表示核對結果，`unverified_fields` 列出隱藏欄位；僅在所有核對欄位都可驗證且一致時，`verified` 才為 true。Bot 更新會為完整的 `***` 佔位符保留原憑證，無法安全還原的佔位符會在更新前遭拒絕。
+Bot/聊天 讀取保留一般設定，憑證以 `***` 遮蔽。建立、更新與 聊天 複製會重新讀取並核對可觀察欄位，不一致時回傳 `verification_failed`。`verification.observable_fields_match` 表示核對結果，`unverified_fields` 列出隱藏欄位；僅在所有核對欄位都可驗證且一致時，`verified` 才為 true。Bot 更新會為完整的 `***` 佔位符保留原憑證，無法安全還原的佔位符會在更新前遭拒絕。
 
 非同步任務也可獨立查詢：
 
@@ -375,7 +375,7 @@ lbctl knowledge-parser list --mime-type application/pdf
 
 從引擎列表選擇 `plugin_id`；creation schema 定義知識庫建立參數，retrieval schema 定義檢索參數。接著使用 `knowledge-base create`、`ingest`、`retrieve` 進行匯入與檢索。
 
-## Pipeline 擴充綁定
+## 聊天 擴充綁定
 
 ```sh
 lbctl pipeline extensions get PIPELINE_UUID -o json
@@ -400,7 +400,7 @@ mcp_resource_agent_read_enabled: false
 
 更新要求已儲存且綁定 Workspace 的 context、`resource.manage` 與 `resource.view` 權限及 Core 對應 capability。
 
-## Pipeline 單輪試執行
+## 聊天 單輪試執行
 
 ```sh
 lbctl pipeline run PIPELINE_UUID --message '请根据知识库回答这个问题' --timeout 2m -o json
@@ -408,7 +408,7 @@ lbctl pipeline run PIPELINE_UUID --message '请根据知识库回答这个问题
 
 試執行使用已儲存且綁定 Workspace 的 context，要求 `runtime.operate` 與 `resource.view`，並呼叫設定的模型與工具。每次建立新工作階段，回傳回覆、工作階段 ID、查詢 ID 與可用訊息 ID；失敗回傳非零結束代碼。
 
-Core 最多等待 60 秒，CLI 的 `--timeout` 控制 HTTP 請求等待。逾時表示**執行狀態未知**；可在 WebUI 監控頁（`/home/monitoring`）以訊息或工作階段 ID 查詢紀錄，也可依 Pipeline 與時間查詢近期紀錄。
+Core 最多等待 60 秒，CLI 的 `--timeout` 控制 HTTP 請求等待。逾時表示**執行狀態未知**；可在 WebUI 監控頁（`/home/monitoring`）以訊息或工作階段 ID 查詢紀錄，也可依 聊天 與時間查詢近期紀錄。
 
 Core 宣告 `pipeline.run` capability；`--dry-run` 可檢查前置條件。
 

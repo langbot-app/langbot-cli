@@ -35,12 +35,12 @@
 
 ---
 
-LangBot의 독립 명령줄 도구 `lbctl`입니다. HTTP로 Workspace 리소스를 관리하며 여러 context, ID 및 기능 검색, 리소스 관리, RAG 설정 검색, Pipeline 확장과 시험 실행, 실행 기록 및 Sandbox 진단, 비동기 작업 대기, 로컬 Docker Compose 설치·관리·업그레이드를 제공합니다.
+LangBot의 독립 명령줄 도구 `lbctl`입니다. HTTP로 Workspace 리소스를 관리하며 여러 context, ID 및 기능 검색, 리소스 관리, RAG 설정 검색, Chat 확장과 시험 실행, 실행 기록 및 Sandbox 진단, 비동기 작업 대기, 로컬 Docker Compose 설치·관리·업그레이드를 제공합니다.
 
 다음 기능을 제공하는 LangBot Core와 함께 사용합니다:
 
 - API Key 인증을 사용하는 `/api/v1/system/context`와 `/api/v1/system/capabilities`.
-- Bot, Pipeline, Knowledge Base, Provider, Model, Plugin, Skill, MCP Server 및 작업 API.
+- Bot, Chat, Knowledge Base, Provider, Model, Plugin, Skill, MCP Server 및 작업 API.
 - Provider/Model 조회에서 서버 측 비밀 정보 마스킹을 위한 `include_secret=false`.
 
 `lbctl`은 Core가 선언한 capability, Workspace 연결 및 권한에 따라 작업을 실행합니다.
@@ -171,7 +171,7 @@ lbctl upgrade --version <newer-vX.Y.Z> --yes -o json
 
 자동 업그레이드는 `rockchin/langbot:<tag>`를 직접 선언하고 모든 데이터가 Compose 디렉터리의 `data` 바인드 마운트에 있으며 로컬 SQLite, Chroma, local storage를 사용하는 구성을 지원합니다. 설정, 백업 범위와 버전을 확인한 뒤 더 높은 버전으로 업그레이드합니다. `--dry-run`은 계획을 표시하고 실행 시 이미지를 검증합니다. Compose를 수동 변경한 후 같은 대상에 `adopt`를 다시 실행하여 새 다이제스트를 확인합니다.
 
-로컬 수명 주기 명령은 배포 인스턴스를 대상으로 합니다. Bot, Pipeline, Skill 등의 리소스는 아래 공통 명령으로 context의 Workspace를 관리합니다.
+로컬 수명 주기 명령은 배포 인스턴스를 대상으로 합니다. Bot, Chat, Skill 등의 리소스는 아래 공통 명령으로 context의 Workspace를 관리합니다.
 
 <a id="resources"></a>
 
@@ -179,7 +179,7 @@ lbctl upgrade --version <newer-vX.Y.Z> --yes -o json
 
 복잡한 요청 본문은 LangBot HTTP API와 같은 필드의 JSON 또는 YAML 파일로 전달합니다. `--file -`는 stdin에서 읽습니다.
 
-### Bot과 Pipeline
+### Bot과 Chat
 
 ```sh
 lbctl bot list
@@ -300,7 +300,7 @@ lbctl mcp-server delete <name> --yes
 - 결과가 불확실하면 `result_unknown`을 반환하여 확인 후 다음 작업을 결정할 수 있습니다.
 - 다단계 작업은 생성한 리소스 또는 `task_id`를 유지하여 진행 상황을 추적합니다.
 
-Bot/Pipeline 조회는 일반 설정을 유지하고 인증 정보는 `***`로 가립니다. 생성, 수정, Pipeline 복사 후 다시 조회하여 확인 가능한 필드를 비교하며, 불일치는 `verification_failed`를 반환합니다. `verification.observable_fields_match`는 비교 결과를, `unverified_fields`는 가려진 필드를 나타냅니다. 모든 비교 대상 필드를 검증할 수 있고 값이 일치할 때만 `verified`가 true입니다. Bot 수정은 값 전체가 `***`인 자리표시자의 기존 인증 정보를 유지하며, 안전하게 복원할 수 없으면 수정 전에 거부합니다.
+Bot/Chat 조회는 일반 설정을 유지하고 인증 정보는 `***`로 가립니다. 생성, 수정, Chat 복사 후 다시 조회하여 확인 가능한 필드를 비교하며, 불일치는 `verification_failed`를 반환합니다. `verification.observable_fields_match`는 비교 결과를, `unverified_fields`는 가려진 필드를 나타냅니다. 모든 비교 대상 필드를 검증할 수 있고 값이 일치할 때만 `verified`가 true입니다. Bot 수정은 값 전체가 `***`인 자리표시자의 기존 인증 정보를 유지하며, 안전하게 복원할 수 없으면 수정 전에 거부합니다.
 
 비동기 작업을 별도로 조회합니다:
 
@@ -375,7 +375,7 @@ lbctl knowledge-parser list --mime-type application/pdf
 
 엔진 목록에서 `plugin_id`를 선택합니다. creation schema는 지식 베이스 생성 설정을, retrieval schema는 검색 설정을 정의합니다. `knowledge-base create`, `ingest`, `retrieve`로 수집 및 검색합니다.
 
-## Pipeline 확장 연결
+## Chat 확장 연결
 
 ```sh
 lbctl pipeline extensions get PIPELINE_UUID -o json
@@ -400,7 +400,7 @@ mcp_resource_agent_read_enabled: false
 
 업데이트에는 저장된 Workspace 연결 context, `resource.manage`, `resource.view` 및 해당 Core capability가 필요합니다.
 
-## Pipeline 단일 턴 시험 실행
+## Chat 단일 턴 시험 실행
 
 ```sh
 lbctl pipeline run PIPELINE_UUID --message '지식 베이스를 사용해 이 질문에 답해주세요' --timeout 2m -o json
@@ -408,7 +408,7 @@ lbctl pipeline run PIPELINE_UUID --message '지식 베이스를 사용해 이 �
 
 저장된 Workspace 연결 context와 `runtime.operate`, `resource.view` 권한을 사용하며 설정된 모델과 도구를 호출합니다. 실행마다 새 세션을 만듭니다. 응답, 세션 ID, 쿼리 ID, 사용 가능한 메시지 ID를 반환하며 실패 시 0이 아닌 코드로 종료합니다.
 
-Core는 최대 60초 기다리고 CLI `--timeout`은 HTTP 대기 시간을 제어합니다. 시간 초과는 **실행 상태 알 수 없음**을 의미합니다. WebUI 모니터링 페이지(`/home/monitoring`)에서 메시지·세션 ID 또는 Pipeline과 시간으로 기록을 확인합니다.
+Core는 최대 60초 기다리고 CLI `--timeout`은 HTTP 대기 시간을 제어합니다. 시간 초과는 **실행 상태 알 수 없음**을 의미합니다. WebUI 모니터링 페이지(`/home/monitoring`)에서 메시지·세션 ID 또는 Chat과 시간으로 기록을 확인합니다.
 
 Core는 `pipeline.run` capability를 선언하며 `--dry-run`으로 사전 조건을 확인합니다.
 

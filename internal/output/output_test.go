@@ -388,7 +388,7 @@ func TestRenderPipelineListYAML(t *testing.T) {
 			"pipelines": []any{
 				map[string]any{
 					"uuid":   "pipeline-a",
-					"name":   "Pipeline A",
+					"name":   "Chat A",
 					"config": map[string]any{"provider": map[string]any{"api_key": "pipeline-secret"}},
 				},
 			},
@@ -397,7 +397,7 @@ func TestRenderPipelineListYAML(t *testing.T) {
 	if err := Render(&out, value, FormatYAML); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), "pipeline-a") || !strings.Contains(out.String(), "Pipeline A") {
+	if !strings.Contains(out.String(), "pipeline-a") || !strings.Contains(out.String(), "Chat A") {
 		t.Fatalf("resource YAML omitted list rows: %s", out.String())
 	}
 	if strings.Contains(out.String(), "pipeline-secret") {

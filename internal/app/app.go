@@ -2204,10 +2204,28 @@ func (s *Service) BotUpdate(ctx context.Context, uuid string, body map[string]an
 	if err != nil {
 		return Result{Meta: preflight.Meta()}, err
 	}
+	client, target := s.writeClient(preflight)
+	_, policy := body["message_policy"]
+	_, commands := body["command_settings"]
+	bindings, _ := body["event_bindings"].([]any)
+	for _, value := range bindings {
+		binding, _ := value.(map[string]any)
+		if _, override := binding["policy"]; override {
+			policy = true
+		}
+	}
+	if policy || commands {
+		current, err := client.Bot(ctx, target, uuid)
+		if err != nil {
+			return Result{Meta: preflight.Meta()}, err
+		}
+		if _, supported := current["message_policy"]; !supported {
+			return Result{Meta: preflight.Meta()}, result.New("incompatible", i18n.T("This Core does not support bot message policies"))
+		}
+	}
 	if dryRun {
 		return writePlan(preflight, "bot.update", uuid), nil
 	}
-	client, target := s.writeClient(preflight)
 	if _, err := client.BotUpdate(ctx, target, uuid, withoutUUID(body)); err != nil {
 		return Result{Meta: preflight.Meta()}, err
 	}
@@ -2323,7 +2341,7 @@ func (s *Service) PipelineCopy(ctx context.Context, uuid string, dryRun bool, op
 	}
 	data := writeResultData("pipeline.copy", written.UUID)
 	if written.UUID == uuid {
-		return Result{Data: data, Meta: preflight.Meta()}, verificationError(i18n.T("Copy response did not return a new Pipeline UUID"))
+		return Result{Data: data, Meta: preflight.Meta()}, verificationError(i18n.T("Copy response did not return a new Chat UUID"))
 	}
 	pipeline, err := client.Pipeline(ctx, target, written.UUID)
 	if err != nil {
@@ -2346,7 +2364,7 @@ func (s *Service) PipelineDelete(ctx context.Context, uuid string, confirmed, dr
 		return Result{}, err
 	}
 	if !dryRun && !confirmed {
-		return Result{}, result.New("input", i18n.T("Deleting a Pipeline requires --yes"))
+		return Result{}, result.New("input", i18n.T("Deleting a Chat requires --yes"))
 	}
 	preflight, err := s.WritePreflight(ctx, "pipeline.delete", options)
 	if err != nil {
@@ -2473,7 +2491,7 @@ func verificationError(message string) *result.Error {
 
 func partialWriteError(cause error) *result.Error {
 	failure := result.AsError(cause)
-	err := result.New(failure.Kind, i18n.T("Pipeline created, but full configuration was not applied"))
+	err := result.New(failure.Kind, i18n.T("Chat created, but full configuration was not applied"))
 	err.Type = "partial_write"
 	err.HTTPStatus = failure.HTTPStatus
 	err.ServerCode = failure.ServerCode

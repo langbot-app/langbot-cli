@@ -35,12 +35,12 @@
 
 ---
 
-Công cụ dòng lệnh độc lập của LangBot, có tên `lbctl`. Quản lý tài nguyên Workspace qua HTTP, hỗ trợ nhiều context, khám phá danh tính và khả năng, quản lý tài nguyên, cấu hình RAG, tiện ích mở rộng và chạy thử Pipeline, bản ghi thực thi và chẩn đoán Sandbox, chờ tác vụ bất đồng bộ, cùng cài đặt, tiếp quản, quản lý vòng đời và nâng cấp triển khai Docker Compose cục bộ.
+Công cụ dòng lệnh độc lập của LangBot, có tên `lbctl`. Quản lý tài nguyên Workspace qua HTTP, hỗ trợ nhiều context, khám phá danh tính và khả năng, quản lý tài nguyên, cấu hình RAG, tiện ích mở rộng và chạy thử Chat, bản ghi thực thi và chẩn đoán Sandbox, chờ tác vụ bất đồng bộ, cùng cài đặt, tiếp quản, quản lý vòng đời và nâng cấp triển khai Docker Compose cục bộ.
 
 Sử dụng với LangBot Core cung cấp các khả năng sau:
 
 - Xác thực API Key cho `/api/v1/system/context` và `/api/v1/system/capabilities`.
-- API Bot, Pipeline, Knowledge Base, Provider, Model, Plugin, Skill, MCP Server và tác vụ.
+- API Bot, Chat, Knowledge Base, Provider, Model, Plugin, Skill, MCP Server và tác vụ.
 - Che thông tin bí mật phía máy chủ qua `include_secret=false` cho truy vấn Provider/Model.
 
 `lbctl` thực hiện thao tác theo capability, liên kết Workspace và quyền mà Core khai báo.
@@ -171,7 +171,7 @@ Nâng cấp thay image của `langbot`, `langbot_plugin_runtime` và `langbot_bo
 
 Nâng cấp tự động hỗ trợ khai báo trực tiếp `rockchin/langbot:<tag>`, toàn bộ dữ liệu trong bind mount `data` của thư mục Compose, dùng SQLite, Chroma và local storage cục bộ. Cấu hình, phạm vi sao lưu và phiên bản được kiểm tra trước khi nâng cấp lên phiên bản cao hơn. `--dry-run` hiển thị kế hoạch; khi thực thi sẽ xác minh image. Sau khi sửa Compose thủ công, chạy lại `adopt` cho cùng đích để xác nhận digest mới.
 
-Lệnh vòng đời cục bộ tác động đến instance triển khai. Bot, Pipeline, Skill và tài nguyên khác dùng bộ lệnh chung dưới đây để quản lý Workspace của context.
+Lệnh vòng đời cục bộ tác động đến instance triển khai. Bot, Chat, Skill và tài nguyên khác dùng bộ lệnh chung dưới đây để quản lý Workspace của context.
 
 <a id="resources"></a>
 
@@ -179,7 +179,7 @@ Lệnh vòng đời cục bộ tác động đến instance triển khai. Bot, P
 
 Dùng tệp JSON hoặc YAML cho nội dung yêu cầu phức tạp, với trường tương ứng API HTTP LangBot. `--file -` đọc từ stdin.
 
-### Bot và Pipeline
+### Bot và Chat
 
 ```sh
 lbctl bot list
@@ -300,7 +300,7 @@ Thao tác ghi kiểm tra context đã lưu, liên kết Workspace, danh tính th
 - Kết quả chưa chắc chắn trả về `result_unknown` để kiểm tra trước khi quyết định bước tiếp theo.
 - Thao tác nhiều bước giữ tài nguyên đã tạo hoặc `task_id` để theo dõi tiến độ.
 
-Khi đọc Bot/Pipeline, cấu hình thông thường được giữ lại và thông tin xác thực được che bằng `***`. Sau khi tạo, cập nhật hoặc sao chép Pipeline, CLI đọc lại để so sánh các trường quan sát được; nếu không khớp, trả về `verification_failed`. `verification.observable_fields_match` cho biết kết quả, còn `unverified_fields` liệt kê các trường bị che. `verified` chỉ là true khi mọi trường được kiểm tra đều có thể xác minh và khớp. Khi cập nhật Bot, giá trị chính xác `***` giữ nguyên thông tin xác thực hiện có; nếu không thể khôi phục an toàn, CLI từ chối trước khi cập nhật.
+Khi đọc Bot/Chat, cấu hình thông thường được giữ lại và thông tin xác thực được che bằng `***`. Sau khi tạo, cập nhật hoặc sao chép Chat, CLI đọc lại để so sánh các trường quan sát được; nếu không khớp, trả về `verification_failed`. `verification.observable_fields_match` cho biết kết quả, còn `unverified_fields` liệt kê các trường bị che. `verified` chỉ là true khi mọi trường được kiểm tra đều có thể xác minh và khớp. Khi cập nhật Bot, giá trị chính xác `***` giữ nguyên thông tin xác thực hiện có; nếu không thể khôi phục an toàn, CLI từ chối trước khi cập nhật.
 
 Có thể truy vấn tác vụ bất đồng bộ riêng:
 
@@ -375,7 +375,7 @@ lbctl knowledge-parser list --mime-type application/pdf
 
 Chọn `plugin_id` từ danh sách engine. Creation schema định nghĩa cấu hình tạo cơ sở tri thức, retrieval schema định nghĩa tham số truy xuất. Dùng `knowledge-base create`, `ingest`, `retrieve` để nạp và truy xuất.
 
-## Liên kết tiện ích mở rộng Pipeline
+## Liên kết tiện ích mở rộng Chat
 
 ```sh
 lbctl pipeline extensions get PIPELINE_UUID -o json
@@ -400,7 +400,7 @@ Mảng rỗng với `enable_all_*: false` để loại tiện ích đó không �
 
 Cập nhật cần context đã lưu và liên kết Workspace, quyền `resource.manage`, `resource.view` và capability tương ứng của Core.
 
-## Chạy thử Pipeline một lượt
+## Chạy thử Chat một lượt
 
 ```sh
 lbctl pipeline run PIPELINE_UUID --message 'Trả lời câu hỏi này bằng cơ sở tri thức' --timeout 2m -o json
@@ -408,7 +408,7 @@ lbctl pipeline run PIPELINE_UUID --message 'Trả lời câu hỏi này bằng c
 
 Chạy thử dùng context đã lưu và liên kết Workspace, cần `runtime.operate`, `resource.view`, và gọi mô hình cùng công cụ đã cấu hình. Mỗi lần tạo phiên mới. Trả về câu trả lời, ID phiên, ID truy vấn và ID thông điệp có sẵn; thất bại trả mã thoát khác 0.
 
-Core chờ tối đa 60 giây; `--timeout` của CLI kiểm soát thời gian chờ HTTP. Hết thời gian nghĩa là **trạng thái thực thi chưa xác định**. Xem bản ghi bằng ID thông điệp/phiên tại trang giám sát WebUI (`/home/monitoring`), hoặc tìm theo Pipeline và thời gian.
+Core chờ tối đa 60 giây; `--timeout` của CLI kiểm soát thời gian chờ HTTP. Hết thời gian nghĩa là **trạng thái thực thi chưa xác định**. Xem bản ghi bằng ID thông điệp/phiên tại trang giám sát WebUI (`/home/monitoring`), hoặc tìm theo Chat và thời gian.
 
 Core khai báo `pipeline.run`; dùng `--dry-run` kiểm tra điều kiện trước.
 

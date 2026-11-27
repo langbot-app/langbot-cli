@@ -33,12 +33,12 @@
 
 ---
 
-LangBot 的独立命令行工具，二进制名为 `lbctl`。它通过 HTTP 管理 Workspace 资源，支持多 context、身份与能力发现、资源管理、RAG 配置发现、Pipeline 扩展与试运行、运行记录和 Sandbox 诊断、异步任务等待，以及原生 Python 和 Docker Compose 部署的安装、接管、启停和升级。
+LangBot 的独立命令行工具，二进制名为 `lbctl`。它通过 HTTP 管理 Workspace 资源，支持多 context、身份与能力发现、资源管理、RAG 配置发现、聊天 扩展与试运行、运行记录和 Sandbox 诊断、异步任务等待，以及原生 Python 和 Docker Compose 部署的安装、接管、启停和升级。
 
 当前源码需配套包含以下能力的 LangBot Core：
 
 - API Key 鉴权的 `/api/v1/system/context` 与 `/api/v1/system/capabilities`。
-- Bot、Pipeline、Knowledge Base、Provider、Model、Plugin、Skill、MCP Server 与任务查询接口。
+- Bot、聊天、Knowledge Base、Provider、Model、Plugin、Skill、MCP Server 与任务查询接口。
 - Provider/Model 查询的服务端脱敏参数 `include_secret=false`。
 
 `lbctl` 根据 Core 声明的 capability、Workspace 绑定和权限执行操作。
@@ -237,7 +237,7 @@ lbctl upgrade --version <newer-vX.Y.Z> --yes -o json
 
 自动升级支持直接声明 `rockchin/langbot:<tag>` 的服务，数据完整位于 Compose 目录的 `data` 绑定目录，且使用本地 SQLite、Chroma 和 local storage。升级前会校验 Compose 配置、备份范围和版本；目标版本高于当前版本。`--dry-run` 显示升级计划，执行升级时验证目标镜像。接管后手动改变 Compose，需要再次执行相同目标的 `adopt`，明确确认新的资产摘要。
 
-本机生命周期作用于部署实例；Bot、Pipeline、Skill 等资源仍通过下面同一套命令管理 context 对应的 Workspace。
+本机生命周期作用于部署实例；Bot、聊天、Skill 等资源仍通过下面同一套命令管理 context 对应的 Workspace。
 
 已有实例完成 context 和 API Key 配置后即可管理资源，无须先接管 Docker。`adopt` 用于启停、部署日志和升级等本机管理。
 
@@ -245,7 +245,7 @@ lbctl upgrade --version <newer-vX.Y.Z> --yes -o json
 
 ```sh
 lbctl bot list --filter my-bot
-lbctl bot get <bot-id>             # 根据 event_bindings 查看关联的 Agent 或 Pipeline
+lbctl bot get <bot-id>             # 根据 event_bindings 查看关联的 Agent 或 聊天
 lbctl model list --type llm --provider <provider-id>
 lbctl model list --filter deepseek -o json
 lbctl bot update --help            # 查看最小请求体示例和预检说明
@@ -262,7 +262,7 @@ Shell 补全读取已保存的 context 和静态枚举，不请求远端资源�
 
 复杂请求体使用 JSON 或 YAML 文件，具体字段与对应 LangBot HTTP 接口一致。`--file -` 表示从 stdin 读取。
 
-### Bot 与 Pipeline
+### Bot 与 聊天
 
 ```sh
 lbctl bot list
@@ -451,7 +451,7 @@ lbctl mcp-server delete <name> --yes
 - 请求结果无法确认时返回 `result_unknown`，便于核查后决定下一步。
 - 多步操作保留已经产生的资源或 `task_id`，便于跟踪执行进度。
 
-Bot/Pipeline 读取保留普通配置，凭据使用 `***` 脱敏。创建、更新和 Pipeline 复制会回读核对可观察字段，不一致时返回 `verification_failed`。`verification.observable_fields_match` 表示核对结果，`unverified_fields` 列出被隐藏的字段；只有所有核对字段都可验证且一致时，`verified` 才为 true。Bot 更新会为完整的 `***` 占位符保留原凭据，无法安全恢复的占位符会在更新前被拒绝。
+Bot/聊天 读取保留普通配置，凭据使用 `***` 脱敏。创建、更新和 聊天 复制会回读核对可观察字段，不一致时返回 `verification_failed`。`verification.observable_fields_match` 表示核对结果，`unverified_fields` 列出被隐藏的字段；只有所有核对字段都可验证且一致时，`verified` 才为 true。Bot 更新会为完整的 `***` 占位符保留原凭据，无法安全恢复的占位符会在更新前被拒绝。
 
 异步任务也可以单独查询：
 
@@ -530,7 +530,7 @@ lbctl knowledge-parser list --mime-type application/pdf
 
 从引擎列表选择 `plugin_id`；creation schema 定义创建知识库的参数，retrieval schema 定义检索参数。随后使用 `knowledge-base create`、`ingest`、`retrieve` 命令完成入库和检索。
 
-## Pipeline 扩展绑定
+## 聊天 扩展绑定
 
 ```sh
 lbctl pipeline extensions get PIPELINE_UUID -o json
@@ -555,7 +555,7 @@ mcp_resource_agent_read_enabled: false
 
 更新要求已保存且绑定 Workspace 的 context、`resource.manage` 和 `resource.view` 权限，以及 Core 对应 capability。
 
-## Pipeline 单轮试运行
+## 聊天 单轮试运行
 
 ```sh
 lbctl pipeline run PIPELINE_UUID --message '请根据知识库回答这个问题' --timeout 2m -o json
@@ -563,7 +563,7 @@ lbctl pipeline run PIPELINE_UUID --message '请根据知识库回答这个问题
 
 试运行要求已保存且绑定 Workspace 的 context，以及 `runtime.operate` 和 `resource.view` 权限；会实际调用模型和配置的工具。每次新建会话，不复用之前的历史。返回回复、会话 ID、查询 ID 和可用的消息 ID；执行失败返回非零退出码。
 
-Core 最多等待 60 秒，CLI 的 `--timeout` 控制单次 HTTP 请求等待时间。超时表示**执行状态未知**；后续可在 LangBot Web 管理界面的监控页（`/home/monitoring`）用返回的消息或会话标识查询运行记录。客户端超时时，也可按 Pipeline 和时间查近期记录。
+Core 最多等待 60 秒，CLI 的 `--timeout` 控制单次 HTTP 请求等待时间。超时表示**执行状态未知**；后续可在 LangBot Web 管理界面的监控页（`/home/monitoring`）用返回的消息或会话标识查询运行记录。客户端超时时，也可按 聊天 和时间查近期记录。
 
 服务端需要声明 `pipeline.run` capability；可用 `--dry-run` 检查前置条件。
 
@@ -592,7 +592,7 @@ lbctl monitoring watch --bot BOT_UUID --start-time 2026-11-18T00:00:00Z --timeou
 
 运行记录查询要求 `resource.view`。列表支持 `--limit 1..500` 和 `--offset`，Core 可进一步限制；`--start-time`、`--end-time` 使用 ISO 8601 时间。可用筛选条件见各命令 `--help`。
 
-`monitoring watch` 以 source、ID 区分新增执行和观测到的变化。初轮按 `--since`（默认 `15m`）或绝对 `--start-time` 回放，后续完成的列表扫描使用滚动 15 分钟窗口。已跟踪的活动执行继续接受有预算的详情读取，可在创建时间移出列表窗口后更新终态和迟到回复。Agent 账本状态与直接记录的投递证据分别呈现，Pipeline 账本状态为 `unknown`。`delivery_status` 以 `unknown`、`recorded_success`、`recorded_failure`、`mixed` 表示，JSON/YAML 提供原始记录定位。
+`monitoring watch` 以 source、ID 区分新增执行和观测到的变化。初轮按 `--since`（默认 `15m`）或绝对 `--start-time` 回放，后续完成的列表扫描使用滚动 15 分钟窗口。已跟踪的活动执行继续接受有预算的详情读取，可在创建时间移出列表窗口后更新终态和迟到回复。Agent 账本状态与直接记录的投递证据分别呈现，聊天 账本状态为 `unknown`。`delivery_status` 以 `unknown`、`recorded_success`、`recorded_failure`、`mixed` 表示，JSON/YAML 提供原始记录定位。
 
 默认持续观测到 Ctrl+C，HTTP 请求保留配置的超时，显式全局 `--timeout` 限定值守总时长。轮询默认 `5s`，每轮固定结束时间和首批列表总量，最多读取 `--max-pages` 页列表（默认 `10`，每页 100 条），最多发出 `--max-details` 次投递详情请求（默认 `20`）。详情工作公平轮转，较长投递历史的分页游标跨轮保留。近期执行包含已有回复的执行，会在记录的结束时间后持续复查投递 15 分钟，缺少结束时间时按创建时间计算。活动执行在请求预算内继续观测。报告包含 `delivery_watch_until`、`delivery_watch_expired`、当前 `scan_start_time`、待查工作和截断计数。
 
@@ -675,7 +675,7 @@ lbctl assistant chat <会话ID> --approve --revision 1 --yes
 
 设备登录先显示授权网址与设备代码，再轮询授权结果。`--wait-timeout` 可限制等待时长。在终端运行 `lbctl assistant chat` 可连续输入消息，并逐批审阅工具调用。脚本先读出待审批内容，再携带该修订号，通过 `--approve` 或 `--reject` 提交决定。断线后用会话 ID 查看执行进度。
 
-要切换一条已有 Bot 路由，先用 `lbctl bot get <bot-uuid>` 找到绑定 ID。执行 `lbctl bot routes bind <bot-uuid> --binding <id> --agent <agent-uuid> --dry-run` 预览，再用 `--yes` 应用。绑定到流水线时使用 `--pipeline`。此命令要求 Core 提供 `bot.routes.bind` 操作。
+要切换一条已有 Bot 路由，先用 `lbctl bot get <bot-uuid>` 找到绑定 ID。执行 `lbctl bot routes bind <bot-uuid> --binding <id> --agent <agent-uuid> --dry-run` 预览，再用 `--yes` 应用。绑定到聊天时使用 `--pipeline`。此命令要求 Core 提供 `bot.routes.bind` 操作。
 
 `op call` 的 `--file path|-` 可选，接受 JSON/YAML 对象，默认 `{}`；`op stream` 必须提供 `--file`。通用调用从 `op describe` 获取风险与执行模式；目录隐藏但 CLI 已登记的 ID 使用内置契约，未知隐藏 ID 仍不可调用。write/high/dangerous 操作交互时确认，非交互时必须 `--yes`。友好命令使用登记的操作契约并遵循相同确认规则。写操作要求保存且绑定 Workspace 的 context；请求体、API Key 和确认答案不能同时读取 stdin。SSE 每收到事件即按选定格式输出，最后输出完成结果；错误或未收到 `done` 就断开连接会失败，不自动重试。
 
@@ -693,7 +693,7 @@ lbctl assistant chat <会话ID> --approve --revision 1 --yes
 | Plugin | 原有 list/get/config/logs/delete/upgrade；`permissions get/confirm`、`search`、`readme`、`debug-info`、`config-file upload/delete`、`github releases/assets`、`page-action`、`install local/github/marketplace` |
 | Bot | 原有 CRUD；`routes preview/status`、`message send/test`、`logs`、`runtime`、`admins list/add/delete`、`group-filter preview/apply`、`setup <platform> start/status/cancel` |
 | Monitoring | 原有 messages/llm-calls/tool-calls/embedding-calls/sessions/errors/message/session；`overview`、`executions`、`execution`、`tokens`、`inflight`、`feedback list/stats`、`export <kind>`、`session analysis/reset` |
-| Pipeline | 原有 CRUD/copy/apply/extensions/run；`metadata`、`defaults`、`chat history/reset/connections/broadcast`、`migration preview/execute` |
+| 聊天 | 原有 CRUD/copy/apply/extensions/run；`metadata`、`defaults`、`chat history/reset/connections/broadcast`、`migration preview/execute` |
 | Model | `list/get/create/update/delete/test --type llm\|embedding\|rerank\|asr\|tts`、`default get`、`starred get/set` |
 | Provider | 原有 CRUD/scan-models；`models count`、`codex start/poll/status/cancel/disconnect` |
 | Skill | 原有 CRUD/files/preview/install；`directory scan/import`、`reload`、`package get`、`github preview`、`zip preview` |
@@ -727,7 +727,7 @@ lbctl plugin permissions confirm <author> <name> --capability storage.plugin --o
 
 ### Core 权限边界
 
-操作目录按权限、principal 和 exposure 过滤，不等于全部友好命令。目录隐藏但 CLI 已登记的操作可使用固定契约调用，最终权限仍由 Core 校验。Workspace 成员/邀请、provider codex、Assistant、Pipeline 迁移、知识库迁移自动使用成员会话，等价的 `op call/describe/stream` ID 同样适用。其他命令即使已配置成员 token 也默认使用 API Key；显式传入 `--as-member` 才改用成员会话。知识库迁移 `preview` 对应 `/api/v1/knowledge/migration/status`。
+操作目录按权限、principal 和 exposure 过滤，不等于全部友好命令。目录隐藏但 CLI 已登记的操作可使用固定契约调用，最终权限仍由 Core 校验。Workspace 成员/邀请、provider codex、Assistant、聊天 迁移、知识库迁移自动使用成员会话，等价的 `op call/describe/stream` ID 同样适用。其他命令即使已配置成员 token 也默认使用 API Key；显式传入 `--as-member` 才改用成员会话。知识库迁移 `preview` 对应 `/api/v1/knowledge/migration/status`。
 
 ### 成员会话
 

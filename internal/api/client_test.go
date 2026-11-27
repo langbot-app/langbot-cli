@@ -646,9 +646,9 @@ func TestResourceReadsKeepPrefixAndProjectSensitiveFields(t *testing.T) {
 		case "/proxy/api/v1/platform/bots/bot-a":
 			_, _ = w.Write([]byte(`{"code":0,"data":{"bot":{"uuid":"bot-a","name":"Bot A","adapter":"http_bot","event_bindings":[],"plugin_processors":[],"config":{"api_key":"bot-secret"}}}}`))
 		case "/proxy/api/v1/pipelines":
-			_, _ = w.Write([]byte(`{"code":0,"data":{"pipelines":[{"uuid":"pipeline-a","name":"Pipeline A","description":"desc","is_default":false,"config":{"provider":{"secret":"provider-secret","token":"provider-token","key":"provider-key","url":"https://provider.example/key"}},"created_at":"2026-01-01T00:00:00"}]}}`))
+			_, _ = w.Write([]byte(`{"code":0,"data":{"pipelines":[{"uuid":"pipeline-a","name":"Chat A","description":"desc","is_default":false,"config":{"provider":{"secret":"provider-secret","token":"provider-token","key":"provider-key","url":"https://provider.example/key"}},"created_at":"2026-01-01T00:00:00"}]}}`))
 		case "/proxy/api/v1/pipelines/pipeline-a":
-			_, _ = w.Write([]byte(`{"code":0,"data":{"pipeline":{"uuid":"pipeline-a","name":"Pipeline A","config":{"provider":{"secret":"pipeline-secret","token":"pipeline-token","key":"pipeline-key","url":"https://pipeline.example/key"}}}}}`))
+			_, _ = w.Write([]byte(`{"code":0,"data":{"pipeline":{"uuid":"pipeline-a","name":"Chat A","config":{"provider":{"secret":"pipeline-secret","token":"pipeline-token","key":"pipeline-key","url":"https://pipeline.example/key"}}}}}`))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -696,26 +696,26 @@ func TestResourceReadsKeepPrefixAndProjectSensitiveFields(t *testing.T) {
 	}
 	pipelines, err := (Client{}).Pipelines(context.Background(), target)
 	if err != nil || len(pipelines) != 1 || pipelines[0]["uuid"] != "pipeline-a" {
-		t.Fatalf("Pipelines() = %#v, err=%v", pipelines, err)
+		t.Fatalf("Chats() = %#v, err=%v", pipelines, err)
 	}
 	if _, ok := pipelines[0]["config"]; !ok {
-		t.Fatal("Pipeline projection lost config")
+		t.Fatal("Chat projection lost config")
 	}
 	for _, secret := range []string{"provider-secret", "provider-token", "provider-key"} {
 		if strings.Contains(fmt.Sprint(pipelines), secret) {
-			t.Fatalf("Pipeline projection exposed %q", secret)
+			t.Fatalf("Chat projection exposed %q", secret)
 		}
 	}
 	pipeline, err := (Client{}).Pipeline(context.Background(), target, "pipeline-a")
 	if err != nil || pipeline["uuid"] != "pipeline-a" {
-		t.Fatalf("Pipeline() = %#v, err=%v", pipeline, err)
+		t.Fatalf("Chat() = %#v, err=%v", pipeline, err)
 	}
 	if _, ok := pipeline["config"]; !ok {
-		t.Fatal("Pipeline projection lost config")
+		t.Fatal("Chat projection lost config")
 	}
 	for _, secret := range []string{"pipeline-secret", "pipeline-token", "pipeline-key"} {
 		if strings.Contains(fmt.Sprint(pipeline), secret) {
-			t.Fatalf("Pipeline projection exposed %q", secret)
+			t.Fatalf("Chat projection exposed %q", secret)
 		}
 	}
 	wantPaths := []string{
@@ -738,7 +738,7 @@ func TestResourceResponsesRequireUUIDAndMatchingRequestedID(t *testing.T) {
 		case "/api/v1/platform/bots/requested":
 			_, _ = fmt.Fprintf(w, `{"code":0,"msg":%q,"data":{"bot":{"uuid":"other","name":"Bot","config":{"token":%q}}}}`, secret, secret)
 		case "/api/v1/pipelines/requested":
-			_, _ = fmt.Fprintf(w, `{"code":0,"msg":%q,"data":{"pipeline":{"uuid":"other","name":"Pipeline","config":{"token":%q}}}}`, secret, secret)
+			_, _ = fmt.Fprintf(w, `{"code":0,"msg":%q,"data":{"pipeline":{"uuid":"other","name":"Chat","config":{"token":%q}}}}`, secret, secret)
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -829,10 +829,10 @@ func TestResourceWritesUseFixedMethodsPathsAndReturnUUIDs(t *testing.T) {
 	if _, err := (Client{}).BotDelete(context.Background(), target, "bot-a"); err != nil {
 		t.Fatalf("BotDelete() error = %v", err)
 	}
-	if got, err := (Client{}).PipelineCreate(context.Background(), target, map[string]any{"name": "Pipeline A"}); err != nil || got.UUID != "created-resource" {
+	if got, err := (Client{}).PipelineCreate(context.Background(), target, map[string]any{"name": "Chat A"}); err != nil || got.UUID != "created-resource" {
 		t.Fatalf("PipelineCreate() = %#v, error = %v", got, err)
 	}
-	if _, err := (Client{}).PipelineUpdate(context.Background(), target, "pipeline-a", map[string]any{"name": "Pipeline B"}); err != nil {
+	if _, err := (Client{}).PipelineUpdate(context.Background(), target, "pipeline-a", map[string]any{"name": "Chat B"}); err != nil {
 		t.Fatalf("PipelineUpdate() error = %v", err)
 	}
 	if _, err := (Client{}).PipelineDelete(context.Background(), target, "pipeline-a"); err != nil {
@@ -845,8 +845,8 @@ func TestResourceWritesUseFixedMethodsPathsAndReturnUUIDs(t *testing.T) {
 		"POST /proxy/api/v1/platform/bots {\"name\":\"Bot A\"}",
 		"PUT /proxy/api/v1/platform/bots/bot-a {\"name\":\"Bot B\"}",
 		"DELETE /proxy/api/v1/platform/bots/bot-a ",
-		"POST /proxy/api/v1/pipelines {\"name\":\"Pipeline A\"}",
-		"PUT /proxy/api/v1/pipelines/pipeline-a {\"name\":\"Pipeline B\"}",
+		"POST /proxy/api/v1/pipelines {\"name\":\"Chat A\"}",
+		"PUT /proxy/api/v1/pipelines/pipeline-a {\"name\":\"Chat B\"}",
 		"DELETE /proxy/api/v1/pipelines/pipeline-a ",
 		"POST /proxy/api/v1/pipelines/pipeline-a/copy ",
 	}
@@ -926,7 +926,7 @@ func TestResourceWriteRejectsUnsafeReturnedUUID(t *testing.T) {
 		fmt.Fprint(w, `{"code":0,"data":{"uuid":"unsafe/id"}}`)
 	}))
 	defer server.Close()
-	_, err := (Client{}).PipelineCreate(context.Background(), Target{Endpoint: server.URL}, map[string]any{"name": "Pipeline"})
+	_, err := (Client{}).PipelineCreate(context.Background(), Target{Endpoint: server.URL}, map[string]any{"name": "Chat"})
 	if failure := result.AsError(err); failure.Type != "result_unknown" {
 		t.Fatalf("unsafe returned UUID error = %+v", failure)
 	}

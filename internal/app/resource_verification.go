@@ -40,7 +40,10 @@ func verifyResourceValue(expected, actual any, path string, checked, hidden *[]s
 		// Core adds IDs and defaults to binding records. Nested configuration
 		// objects still use exact replacement semantics.
 		binding := (strings.HasPrefix(path, "event_bindings[") || strings.HasPrefix(path, "plugin_processors[")) && strings.IndexByte(path, ']') == len(path)-1
-		if !ok || (path != "" && !binding && len(value) != len(got)) {
+		_, routeField, _ := strings.Cut(path, "].")
+		routePolicy := strings.HasPrefix(path, "event_bindings[") && (routeField == "policy" || strings.HasPrefix(routeField, "policy."))
+		defaulted := routePolicy || path == "message_policy" || strings.HasPrefix(path, "message_policy.") || path == "command_settings" || strings.HasPrefix(path, "command_settings.builtin.")
+		if !ok || (path != "" && !binding && !defaulted && len(value) != len(got)) {
 			return false
 		}
 		matched := true
@@ -51,6 +54,10 @@ func verifyResourceValue(expected, actual any, path string, checked, hidden *[]s
 			}
 			actualItem, exists := got[key]
 			if !exists {
+				if binding && key == "policy" && item == nil {
+					*checked = append(*checked, child)
+					continue
+				}
 				matched = false
 				continue
 			}
